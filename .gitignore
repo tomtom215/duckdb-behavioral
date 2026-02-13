@@ -1,0 +1,43 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Cargo lock for libraries (keep for reproducible builds)
+# Cargo.lock is committed for this extension crate
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# DuckDB extension artifacts
+*.duckdb_extension
+*.duckdb_extension.tmp
+*.duckdb
+*.wal
+
+# Profiling
+perf.data
+perf.data.old
+flamegraph.svg
+*.prof
+
+# Coverage
+lcov.info
+coverage/
+tarpaulin-report.html
+
+# Benchmark output
+target/criterion/
+
+# Mutation testing output
+mutants.out/
+
+# mdBook build output
+docs/book/

@@ -1,0 +1,239 @@
+# name: test/sql/git_mining.test
+# group: [behavioral]
+# description: Git repository mining examples using behavioral analytics functions.
+#   Each example is grounded in published academic research on software engineering.
+#   References:
+#     - Eyolfson, Tan, Lam. "Do Time of Day and Developer Experience Affect
+#       Commit Bugginess?" MSR 2011.
+#     - Casalnuovo et al. "Developer Onboarding in GitHub." ESEC/FSE 2015.
+#     - Gousios, Pinzger, van Deursen. "An Exploratory Study of the Pull-Based
+#       Software Development Model." ICSE 2014.
+#     - Vasilescu et al. "Continuous Integration in a Social-Coded World." ICSE 2014.
+#     - Gall, Hajek, Jazayeri. "Detection of Logical Coupling Based on Product
+#       Release History." ICSM 1998.
+
+require behavioral
+
+# --- Sample git data ---
+
+statement ok
+CREATE TABLE git_commits AS SELECT * FROM (VALUES
+    ('alice', TIMESTAMP '2024-03-15 09:00:00', 45,  false),
+    ('alice', TIMESTAMP '2024-03-15 09:45:00', 12,  false),
+    ('alice', TIMESTAMP '2024-03-15 10:30:00', 8,   false),
+    ('alice', TIMESTAMP '2024-03-15 16:00:00', 520, false),
+    ('alice', TIMESTAMP '2024-03-15 16:30:00', 15,  true),
+    ('bob',   TIMESTAMP '2024-03-15 14:00:00', 30,  false),
+    ('bob',   TIMESTAMP '2024-03-15 14:20:00', 200, false),
+    ('bob',   TIMESTAMP '2024-03-16 10:00:00', 600, false),
+    ('bob',   TIMESTAMP '2024-03-16 11:00:00', 5,   true)
+) AS t(author, commit_time, lines_changed, is_bug_fix);
+
+statement ok
+CREATE TABLE pr_events AS SELECT * FROM (VALUES
+    (1001, 'alice', TIMESTAMP '2024-03-15 10:00:00', 'pr_opened'),
+    (1001, 'bob',   TIMESTAMP '2024-03-15 14:30:00', 'first_review'),
+    (1001, 'carol', TIMESTAMP '2024-03-16 09:00:00', 'approved'),
+    (1001, 'alice', TIMESTAMP '2024-03-16 10:00:00', 'merged'),
+    (1002, 'bob',   TIMESTAMP '2024-03-15 11:00:00', 'pr_opened'),
+    (1002, 'alice', TIMESTAMP '2024-03-15 11:30:00', 'first_review'),
+    (1002, 'carol', TIMESTAMP '2024-03-15 12:00:00', 'approved'),
+    (1002, 'bob',   TIMESTAMP '2024-03-15 12:15:00', 'merged'),
+    (1003, 'carol', TIMESTAMP '2024-03-17 08:00:00', 'pr_opened')
+) AS t(pr_id, author, event_time, event_type);
+
+statement ok
+CREATE TABLE file_changes AS SELECT * FROM (VALUES
+    ('alice', TIMESTAMP '2024-03-15 09:00:00', 'src/parser.rs'),
+    ('alice', TIMESTAMP '2024-03-15 09:01:00', 'src/executor.rs'),
+    ('alice', TIMESTAMP '2024-03-15 09:02:00', 'tests/parser_test.rs'),
+    ('bob',   TIMESTAMP '2024-03-15 14:00:00', 'src/parser.rs'),
+    ('bob',   TIMESTAMP '2024-03-15 14:01:00', 'src/ast.rs'),
+    ('carol', TIMESTAMP '2024-03-16 10:00:00', 'src/main.rs'),
+    ('carol', TIMESTAMP '2024-03-16 10:01:00', 'src/config.rs')
+) AS t(author, commit_time, file_path);
+
+statement ok
+CREATE TABLE ci_events AS SELECT * FROM (VALUES
+    ('alice', TIMESTAMP '2024-03-15 09:00:00', 'push'),
+    ('alice', TIMESTAMP '2024-03-15 09:05:00', 'ci_success'),
+    ('bob',   TIMESTAMP '2024-03-15 14:00:00', 'push'),
+    ('bob',   TIMESTAMP '2024-03-15 14:10:00', 'ci_failure'),
+    ('bob',   TIMESTAMP '2024-03-15 14:30:00', 'push'),
+    ('bob',   TIMESTAMP '2024-03-15 14:40:00', 'ci_success'),
+    ('bob',   TIMESTAMP '2024-03-16 10:00:00', 'push'),
+    ('bob',   TIMESTAMP '2024-03-16 10:15:00', 'ci_failure'),
+    ('bob',   TIMESTAMP '2024-03-16 10:45:00', 'push'),
+    ('bob',   TIMESTAMP '2024-03-16 10:55:00', 'ci_success')
+) AS t(author, event_time, event_type);
+
+statement ok
+CREATE TABLE developer_activity AS SELECT * FROM (VALUES
+    ('alice', 1, 1), ('alice', 1, 2), ('alice', 1, 3),
+    ('bob',   1, 1), ('bob',   1, 2),
+    ('carol', 2, 2), ('carol', 2, 3), ('carol', 2, 4)
+) AS t(author, first_month, active_month);
+
+
+# ============================================================
+# GIT-1: Developer Work Session Analysis (sessionize)
+# Reference: Eyolfson et al., MSR 2011 — temporal patterns in commits
+# ============================================================
+
+query ITI
+SELECT author, commit_time,
+    sessionize(commit_time, INTERVAL '4 hours')
+        OVER (PARTITION BY author ORDER BY commit_time)
+        AS work_session
+FROM git_commits
+ORDER BY author, commit_time;
+----
+alice	2024-03-15 09:00:00	0
+alice	2024-03-15 09:45:00	0
+alice	2024-03-15 10:30:00	0
+alice	2024-03-15 16:00:00	1
+alice	2024-03-15 16:30:00	1
+bob	2024-03-15 14:00:00	0
+bob	2024-03-15 14:20:00	0
+bob	2024-03-16 10:00:00	1
+bob	2024-03-16 11:00:00	1
+
+
+# ============================================================
+# GIT-2: Contributor Retention Cohort Analysis (retention)
+# Reference: Casalnuovo et al., ESEC/FSE 2015 — developer onboarding
+# ============================================================
+
+query TT
+SELECT author,
+    retention(
+        active_month = first_month,
+        active_month = first_month + 1,
+        active_month = first_month + 2,
+        active_month = first_month + 3
+    ) AS retained
+FROM developer_activity
+GROUP BY author
+ORDER BY author;
+----
+alice	[true, true, true, false]
+bob	[true, true, false, false]
+carol	[true, true, true, false]
+
+
+# ============================================================
+# GIT-3: Bug-Introducing Commit Pattern Detection (sequence_match)
+# Reference: Eyolfson et al., MSR 2011 — commit bugginess patterns
+# Detect: large commit (>500 LOC) followed by bug-fix within 7 days
+# ============================================================
+
+query TT
+SELECT author,
+    sequence_match(
+        '(?1)(?t<=604800)(?2)',
+        commit_time,
+        lines_changed > 500,
+        is_bug_fix
+    ) AS has_bug_pattern
+FROM git_commits
+GROUP BY author
+ORDER BY author;
+----
+alice	true
+bob	true
+
+
+# ============================================================
+# GIT-4: CI/CD Pipeline Failure Frequency (sequence_count)
+# Reference: Vasilescu et al., ICSE 2014 — CI behavioral patterns
+# Count: push -> ci_failure -> push cycles
+# ============================================================
+
+query TI
+SELECT author,
+    sequence_count(
+        '(?1)(?2)(?3)',
+        event_time,
+        event_type = 'push',
+        event_type = 'ci_failure',
+        event_type = 'push'
+    ) AS fail_fix_cycles
+FROM ci_events
+GROUP BY author
+ORDER BY author;
+----
+alice	0
+bob	2
+
+
+# ============================================================
+# GIT-5: Developer Onboarding Funnel (window_funnel)
+# Reference: Casalnuovo et al., ESEC/FSE 2015 — onboarding sequences
+# Model PR lifecycle as a conversion funnel within a 24-hour window
+# ============================================================
+
+query TI
+SELECT author,
+    window_funnel(
+        INTERVAL '24 hours',
+        event_time,
+        event_type = 'pr_opened',
+        event_type = 'first_review',
+        event_type = 'approved',
+        event_type = 'merged'
+    ) AS pr_funnel_step
+FROM pr_events
+GROUP BY author
+ORDER BY author;
+----
+alice	1
+bob	1
+carol	1
+
+
+# ============================================================
+# GIT-6: PR Review-to-Merge Timeline (sequence_match_events)
+# Reference: Gousios et al., ICSE 2014 — pull-based development model
+# Extract timestamps of PR lifecycle events per PR
+# ============================================================
+
+query IT
+SELECT pr_id,
+    sequence_match_events(
+        '(?1)(?2)(?3)(?4)',
+        event_time,
+        event_type = 'pr_opened',
+        event_type = 'first_review',
+        event_type = 'approved',
+        event_type = 'merged'
+    ) AS lifecycle_timestamps
+FROM pr_events
+GROUP BY pr_id
+ORDER BY pr_id;
+----
+1001	[2024-03-15 10:00:00, 2024-03-15 14:30:00, 2024-03-16 09:00:00, 2024-03-16 10:00:00]
+1002	[2024-03-15 11:00:00, 2024-03-15 11:30:00, 2024-03-15 12:00:00, 2024-03-15 12:15:00]
+1003	[]
+
+
+# ============================================================
+# GIT-7: File Co-Change Pattern Mining (sequence_next_node)
+# Reference: Gall, Hajek, Jazayeri, ICSM 1998 — logical coupling
+# What file do developers modify AFTER touching src/parser.rs?
+# ============================================================
+
+query TT
+SELECT author,
+    sequence_next_node(
+        'forward', 'first_match',
+        commit_time, file_path,
+        file_path = 'src/parser.rs',
+        file_path = 'src/parser.rs'
+    ) AS next_file
+FROM file_changes
+GROUP BY author
+ORDER BY author;
+----
+alice	src/executor.rs
+bob	src/ast.rs
+carol	NULL

@@ -1,0 +1,77 @@
+# name: test/sql/window_funnel.test
+# group: [behavioral]
+
+require behavioral
+
+statement ok
+CREATE TABLE funnel_events (user_id INTEGER, ts TIMESTAMP, event VARCHAR);
+
+statement ok
+INSERT INTO funnel_events VALUES
+    (1, '2024-01-01 00:00:00', 'view'),
+    (1, '2024-01-01 00:05:00', 'cart'),
+    (1, '2024-01-01 00:10:00', 'purchase'),
+    (2, '2024-01-01 00:00:00', 'view'),
+    (2, '2024-01-01 00:05:00', 'cart'),
+    (3, '2024-01-01 00:00:00', 'view'),
+    (3, '2024-01-01 05:00:00', 'cart');
+
+# Basic 3-step funnel with 1 hour window
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '1 hour',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1
+
+# Window too small: user 3's cart event is outside 30 min window
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '30 minutes',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1
+
+# No matching first step
+query I
+SELECT window_funnel(
+    INTERVAL '1 hour',
+    ts,
+    event = 'nonexistent',
+    event = 'cart'
+) FROM funnel_events WHERE user_id = 1;
+----
+0
+
+# Funnel with strict_increase mode
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '1 hour',
+    'strict_increase',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1

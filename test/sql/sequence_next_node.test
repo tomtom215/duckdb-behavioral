@@ -1,0 +1,65 @@
+# name: test/sql/sequence_next_node.test
+# group: [behavioral]
+
+require behavioral
+
+statement ok
+CREATE TABLE page_events (user_id INTEGER, ts TIMESTAMP, page VARCHAR, is_home BOOLEAN, is_product BOOLEAN, is_cart BOOLEAN);
+
+statement ok
+INSERT INTO page_events VALUES
+    (1, '2024-01-01 00:00:00', 'home', true, false, false),
+    (1, '2024-01-01 00:01:00', 'product', false, true, false),
+    (1, '2024-01-01 00:02:00', 'cart', false, false, true),
+    (1, '2024-01-01 00:03:00', 'checkout', false, false, false),
+    (2, '2024-01-01 00:00:00', 'home', true, false, false),
+    (2, '2024-01-01 00:01:00', 'search', false, false, false),
+    (2, '2024-01-01 00:02:00', 'product', false, true, false);
+
+# Forward, first_match: what comes after home -> product?
+query IT
+SELECT user_id, sequence_next_node(
+    'forward',
+    'first_match',
+    ts,
+    page,
+    is_home,
+    is_product
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	cart
+2	NULL
+
+# Forward, first_match with single step: what comes after home?
+query IT
+SELECT user_id, sequence_next_node(
+    'forward',
+    'first_match',
+    ts,
+    page,
+    is_home,
+    is_home
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	product
+2	search
+
+# Backward, first_match: what comes before product?
+query IT
+SELECT user_id, sequence_next_node(
+    'backward',
+    'first_match',
+    ts,
+    page,
+    is_product,
+    is_product
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	home
+2	search

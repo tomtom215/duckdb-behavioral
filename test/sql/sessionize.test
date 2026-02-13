@@ -1,0 +1,46 @@
+# name: test/sql/sessionize.test
+# group: [behavioral]
+
+require behavioral
+
+statement ok
+CREATE TABLE session_events (ts TIMESTAMP, user_id INTEGER);
+
+statement ok
+INSERT INTO session_events VALUES
+    ('2024-01-01 00:00:00', 1),
+    ('2024-01-01 00:05:00', 1),
+    ('2024-01-01 00:10:00', 1),
+    ('2024-01-01 02:00:00', 1),
+    ('2024-01-01 02:05:00', 1);
+
+# Basic sessionize: 30 minute window
+query II
+SELECT ts, sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) AS session_id
+FROM session_events
+ORDER BY ts;
+----
+2024-01-01 00:00:00	0
+2024-01-01 00:05:00	0
+2024-01-01 00:10:00	0
+2024-01-01 02:00:00	1
+2024-01-01 02:05:00	1
+
+# Sessionize with partition
+query III
+SELECT user_id, ts, sessionize(ts, INTERVAL '30 minutes') OVER (PARTITION BY user_id ORDER BY ts) AS session_id
+FROM session_events
+ORDER BY user_id, ts;
+----
+1	2024-01-01 00:00:00	0
+1	2024-01-01 00:05:00	0
+1	2024-01-01 00:10:00	0
+1	2024-01-01 02:00:00	1
+1	2024-01-01 02:05:00	1
+
+# Single event should be session 0
+query II
+SELECT ts, sessionize(ts, INTERVAL '1 hour') OVER (ORDER BY ts) AS session_id
+FROM (SELECT TIMESTAMP '2024-01-01 00:00:00' AS ts);
+----
+2024-01-01 00:00:00	0

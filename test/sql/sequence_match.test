@@ -1,0 +1,65 @@
+# name: test/sql/sequence_match.test
+# group: [behavioral]
+
+require behavioral
+
+statement ok
+CREATE TABLE click_events (user_id INTEGER, ts TIMESTAMP, is_view BOOLEAN, is_cart BOOLEAN, is_purchase BOOLEAN);
+
+statement ok
+INSERT INTO click_events VALUES
+    (1, '2024-01-01 00:00:00', true, false, false),
+    (1, '2024-01-01 00:05:00', false, true, false),
+    (1, '2024-01-01 00:10:00', false, false, true),
+    (2, '2024-01-01 00:00:00', true, false, false),
+    (2, '2024-01-01 00:05:00', true, false, false),
+    (3, '2024-01-01 00:00:00', true, false, false),
+    (3, '2024-01-01 00:05:00', false, false, true);
+
+# Basic sequence match: view -> cart -> purchase
+query II
+SELECT user_id, sequence_match(
+    '(?1)(?2)(?3)',
+    ts,
+    is_view,
+    is_cart,
+    is_purchase
+) FROM click_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	true
+2	false
+3	false
+
+# Pattern with wildcard: view then eventually purchase
+query II
+SELECT user_id, sequence_match(
+    '(?1).*(?3)',
+    ts,
+    is_view,
+    is_cart,
+    is_purchase
+) FROM click_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	true
+2	false
+3	true
+
+# Sequence count
+query II
+SELECT user_id, sequence_count(
+    '(?1).*(?3)',
+    ts,
+    is_view,
+    is_cart,
+    is_purchase
+) FROM click_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	1
+2	0
+3	1

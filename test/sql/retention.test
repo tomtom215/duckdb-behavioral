@@ -1,0 +1,55 @@
+# name: test/sql/retention.test
+# group: [behavioral]
+
+require behavioral
+
+statement ok
+CREATE TABLE user_actions (user_id INTEGER, day DATE, action VARCHAR);
+
+statement ok
+INSERT INTO user_actions VALUES
+    (1, '2024-01-01', 'signup'),
+    (1, '2024-01-02', 'login'),
+    (1, '2024-01-03', 'purchase'),
+    (2, '2024-01-01', 'signup'),
+    (2, '2024-01-03', 'login'),
+    (3, '2024-01-01', 'signup');
+
+# Basic retention: signed up on day 1, returned on day 2, returned on day 3
+query I
+SELECT retention(
+    day = '2024-01-01',
+    day = '2024-01-02',
+    day = '2024-01-03'
+) FROM user_actions WHERE user_id = 1;
+----
+[true, true, true]
+
+# User 2: signed up day 1, missed day 2, returned day 3
+query I
+SELECT retention(
+    day = '2024-01-01',
+    day = '2024-01-02',
+    day = '2024-01-03'
+) FROM user_actions WHERE user_id = 2;
+----
+[true, false, true]
+
+# User 3: signed up day 1 only
+query I
+SELECT retention(
+    day = '2024-01-01',
+    day = '2024-01-02',
+    day = '2024-01-03'
+) FROM user_actions WHERE user_id = 3;
+----
+[true, false, false]
+
+# All false when base condition not met
+query I
+SELECT retention(
+    day = '2024-01-05',
+    day = '2024-01-02'
+) FROM user_actions WHERE user_id = 1;
+----
+[false, false]

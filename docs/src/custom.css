@@ -1,0 +1,85 @@
+/* Custom styles for duckdb-behavioral documentation */
+
+/* Typography refinements */
+:root {
+    --content-max-width: 860px;
+}
+
+.content main {
+    max-width: var(--content-max-width);
+}
+
+/* Code block styling */
+pre {
+    border-radius: 4px;
+}
+
+code {
+    font-size: 0.9em;
+}
+
+/* Table styling */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+}
+
+table thead th {
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--table-border-color);
+    padding: 8px 12px;
+}
+
+table tbody td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--table-border-color);
+}
+
+table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Performance numbers emphasis */
+table td code {
+    white-space: nowrap;
+}
+
+/* Sidebar refinements */
+.sidebar .sidebar-scrollbox {
+    padding-top: 16px;
+}
+
+/* Navigation section headers */
+.chapter li.part-title {
+    margin-top: 16px;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.85em;
+    letter-spacing: 0.05em;
+}
+
+/* Heading anchors */
+.content main h1 {
+    margin-top: 0;
+    padding-top: 0;
+}
+
+.content main h2 {
+    margin-top: 2em;
+    padding-top: 0.5em;
+    border-top: 1px solid var(--table-border-color);
+}
+
+.content main h3 {
+    margin-top: 1.5em;
+}
+
+/* Blockquote styling for notes */
+blockquote {
+    border-left: 4px solid var(--sidebar-active);
+    padding: 0.5em 1em;
+    margin: 1em 0;
+    background-color: var(--quote-bg);
+}

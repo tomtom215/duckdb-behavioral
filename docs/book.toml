@@ -1,0 +1,24 @@
+[book]
+title = "duckdb-behavioral"
+description = "Behavioral Analytics Functions for DuckDB"
+authors = ["Thomas Thompson"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/tomtom215/duckdb-behavioral"
+additional-css = ["src/custom.css"]
+no-section-label = false
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20

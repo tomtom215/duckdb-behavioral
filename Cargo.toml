@@ -1,0 +1,93 @@
+[package]
+name = "duckdb-behavioral"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+authors = ["Tom F <tomtom215@users.noreply.github.com>"]
+description = "Behavioral analytics functions for DuckDB: sessionize, retention, funnels, sequence matching"
+license = "MIT"
+repository = "https://github.com/tomtom215/duckdb-behavioral"
+keywords = ["duckdb", "analytics", "funnel", "retention", "behavioral"]
+categories = ["database", "science"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libduckdb-sys = { version = "=1.4.4", features = ["loadable-extension"] }
+
+[dev-dependencies]
+duckdb = { version = "=1.4.4", features = ["bundled"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+rand = "0.8"
+
+[[bench]]
+name = "sessionize_bench"
+harness = false
+
+[[bench]]
+name = "retention_bench"
+harness = false
+
+[[bench]]
+name = "window_funnel_bench"
+harness = false
+
+[[bench]]
+name = "sequence_bench"
+harness = false
+
+[[bench]]
+name = "sort_bench"
+harness = false
+
+[[bench]]
+name = "sequence_next_node_bench"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = true
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+# Lint groups (priority -1 so individual overrides take precedence)
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Mathematical/analytics code allowances
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# FFI code allowances
+ptr_as_ptr = "allow"
+too_many_arguments = "allow"
+wildcard_imports = "allow"
+# DuckDB interval struct requires reading from raw byte pointers at known offsets
+cast_ptr_alignment = "allow"
+# extern "C" FFI callback functions cannot be const despite only using size_of
+missing_const_for_fn = "allow"
+# Dependency version duplicates (transitive through duckdb)
+multiple_crate_versions = "allow"

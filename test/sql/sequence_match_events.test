@@ -1,0 +1,30 @@
+# name: test/sql/sequence_match_events.test
+# group: [behavioral]
+
+require behavioral
+
+statement ok
+CREATE TABLE events (user_id INTEGER, ts TIMESTAMP, c1 BOOLEAN, c2 BOOLEAN, c3 BOOLEAN);
+
+statement ok
+INSERT INTO events VALUES
+    (1, '2024-01-01 00:00:00', true, false, false),
+    (1, '2024-01-01 00:05:00', false, true, false),
+    (1, '2024-01-01 00:10:00', false, false, true),
+    (2, '2024-01-01 00:00:00', true, false, false),
+    (2, '2024-01-01 00:05:00', true, false, false);
+
+# Return matched event timestamps for user 1
+query IT
+SELECT user_id, sequence_match_events(
+    '(?1)(?2)(?3)',
+    ts,
+    c1,
+    c2,
+    c3
+) FROM events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	[2024-01-01 00:00:00, 2024-01-01 00:05:00, 2024-01-01 00:10:00]
+2	[]
