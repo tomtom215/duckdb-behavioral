@@ -31,6 +31,10 @@ jobs:
       - name: Build book
         run: mdbook build docs
 
+      - name: Copy demo to book output
+        run: |
+          cp demo/index.html docs/book/demo.html
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

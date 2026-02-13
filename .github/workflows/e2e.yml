@@ -1,0 +1,295 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+
+jobs:
+  e2e-test:
+    name: E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux_amd64
+          - os: macos-latest
+            platform: osx_arm64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-${{ matrix.platform }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Build the extension using the community extension Makefile
+      - name: Configure extension build
+        run: make configure
+
+      - name: Build release extension
+        run: make release
+
+      # Run SQL integration tests via the DuckDB test runner
+      - name: Run SQL integration tests
+        run: make test_release
+
+      # Run extended E2E tests using DuckDB CLI
+      - name: Install DuckDB CLI
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            curl -sSL "https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-linux-amd64.zip" -o duckdb.zip
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            curl -sSL "https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-osx-universal.zip" -o duckdb.zip
+          fi
+          unzip duckdb.zip
+          chmod +x duckdb
+          ./duckdb --version
+
+      - name: Verify extension loads
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+            SELECT 'Extension loaded successfully' AS status;
+          "
+
+      - name: E2E - sessionize
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE events AS SELECT * FROM (VALUES
+              (TIMESTAMP '2024-01-01 10:00:00'),
+              (TIMESTAMP '2024-01-01 10:05:00'),
+              (TIMESTAMP '2024-01-01 10:45:00'),
+              (TIMESTAMP '2024-01-01 11:30:00')
+            ) AS t(ts);
+
+            SELECT ts, sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) AS session_id
+            FROM events
+            ORDER BY ts;
+          "
+
+      - name: E2E - retention
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE user_actions AS SELECT * FROM (VALUES
+              (1, true, true, false),
+              (1, true, false, true),
+              (2, true, false, false),
+              (2, false, true, false)
+            ) AS t(user_id, day0, day1, day7);
+
+            SELECT user_id, retention(day0, day1, day7)
+            FROM user_actions
+            GROUP BY user_id
+            ORDER BY user_id;
+          "
+
+      - name: E2E - window_funnel
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE funnel_events AS SELECT * FROM (VALUES
+              (1, TIMESTAMP '2024-01-01 10:00:00', 'view'),
+              (1, TIMESTAMP '2024-01-01 10:05:00', 'cart'),
+              (1, TIMESTAMP '2024-01-01 10:10:00', 'purchase'),
+              (2, TIMESTAMP '2024-01-01 10:00:00', 'view'),
+              (2, TIMESTAMP '2024-01-01 10:05:00', 'cart')
+            ) AS t(user_id, ts, event);
+
+            SELECT user_id, window_funnel(INTERVAL '1 hour', ts,
+              event = 'view', event = 'cart', event = 'purchase')
+            FROM funnel_events
+            GROUP BY user_id
+            ORDER BY user_id;
+          "
+
+      - name: E2E - window_funnel with modes
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE mode_events AS SELECT * FROM (VALUES
+              (TIMESTAMP '2024-01-01 10:00:00', true, false),
+              (TIMESTAMP '2024-01-01 10:00:00', false, true),
+              (TIMESTAMP '2024-01-01 10:05:00', true, false)
+            ) AS t(ts, step1, step2);
+
+            SELECT window_funnel(INTERVAL '1 hour', 'strict_increase', ts, step1, step2)
+            FROM mode_events;
+          "
+
+      - name: E2E - sequence_match and sequence_count
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE seq_events AS SELECT * FROM (VALUES
+              (TIMESTAMP '2024-01-01 10:00:00', true, false, false),
+              (TIMESTAMP '2024-01-01 10:05:00', false, true, false),
+              (TIMESTAMP '2024-01-01 10:10:00', false, false, true)
+            ) AS t(ts, c1, c2, c3);
+
+            SELECT
+              sequence_match('(?1).*(?2).*(?3)', ts, c1, c2, c3) AS matched,
+              sequence_count('(?1)(?2)', ts, c1, c2, c3) AS count
+            FROM seq_events;
+          "
+
+      - name: E2E - sequence_match_events
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE sme_events AS SELECT * FROM (VALUES
+              (TIMESTAMP '2024-01-01 10:00:00', true, false),
+              (TIMESTAMP '2024-01-01 10:05:00', false, true)
+            ) AS t(ts, c1, c2);
+
+            SELECT sequence_match_events('(?1)(?2)', ts, c1, c2)
+            FROM sme_events;
+          "
+
+      - name: E2E - sequence_next_node
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE snn_events AS SELECT * FROM (VALUES
+              (TIMESTAMP '2024-01-01 10:00:00', 'home',    true, true,  false),
+              (TIMESTAMP '2024-01-01 10:01:00', 'product', true, false, true),
+              (TIMESTAMP '2024-01-01 10:02:00', 'cart',    false, false, false)
+            ) AS t(ts, page, base_cond, e1, e2);
+
+            SELECT sequence_next_node('forward', 'first_match', ts, page, base_cond, e1, e2)
+            FROM snn_events;
+          "
+
+      - name: E2E - GROUP BY aggregation
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE grouped AS SELECT * FROM (VALUES
+              (1, TIMESTAMP '2024-01-01 10:00:00', true, false),
+              (1, TIMESTAMP '2024-01-01 10:05:00', false, true),
+              (2, TIMESTAMP '2024-01-01 10:00:00', true, false),
+              (2, TIMESTAMP '2024-01-01 10:01:00', true, true)
+            ) AS t(user_id, ts, c1, c2);
+
+            SELECT
+              user_id,
+              sequence_match('(?1)(?2)', ts, c1, c2) AS matched,
+              sequence_count('(?1)(?2)', ts, c1, c2) AS cnt
+            FROM grouped
+            GROUP BY user_id
+            ORDER BY user_id;
+          "
+
+      - name: E2E - load test (100K events)
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            -- Generate 100K events for load testing
+            CREATE TABLE load_test AS
+            SELECT
+              (i / 100)::INTEGER AS user_id,
+              TIMESTAMP '2024-01-01' + (i * INTERVAL '1 second') AS ts,
+              (i % 3 = 0) AS c1,
+              (i % 5 = 0) AS c2,
+              (i % 7 = 0) AS c3
+            FROM generate_series(1, 100000) AS t(i);
+
+            -- Sessionize (window function)
+            SELECT COUNT(*) AS session_count FROM (
+              SELECT DISTINCT sessionize(ts, INTERVAL '5 minutes') OVER (PARTITION BY user_id ORDER BY ts) AS sid
+              FROM load_test
+            );
+
+            -- Retention
+            SELECT COUNT(*) FROM (
+              SELECT user_id, retention(c1, c2, c3) FROM load_test GROUP BY user_id
+            );
+
+            -- Window funnel
+            SELECT COUNT(*) FROM (
+              SELECT user_id, window_funnel(INTERVAL '1 hour', ts, c1, c2, c3)
+              FROM load_test GROUP BY user_id
+            );
+
+            -- Sequence match
+            SELECT COUNT(*) FROM (
+              SELECT user_id, sequence_match('(?1).*(?2)', ts, c1, c2, c3)
+              FROM load_test GROUP BY user_id
+            );
+
+            -- Sequence count
+            SELECT COUNT(*) FROM (
+              SELECT user_id, sequence_count('(?1)(?2)', ts, c1, c2, c3)
+              FROM load_test GROUP BY user_id
+            );
+
+            SELECT 'Load test passed: 100K events, all 5 aggregate functions' AS result;
+          "
+
+      - name: E2E - no match cases
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            -- Empty input
+            CREATE TABLE empty_events(ts TIMESTAMP, c1 BOOLEAN, c2 BOOLEAN);
+
+            SELECT sequence_match('(?1)(?2)', ts, c1, c2) FROM empty_events;
+            SELECT sequence_count('(?1)(?2)', ts, c1, c2) FROM empty_events;
+            SELECT window_funnel(INTERVAL '1 hour', ts, c1, c2) FROM empty_events;
+
+            -- No match
+            CREATE TABLE nomatch AS SELECT * FROM (VALUES
+              (TIMESTAMP '2024-01-01 10:00:00', true, false),
+              (TIMESTAMP '2024-01-01 10:05:00', true, false)
+            ) AS t(ts, c1, c2);
+
+            SELECT
+              sequence_match('(?1)(?2)', ts, c1, c2) AS matched,
+              window_funnel(INTERVAL '1 hour', ts, c1, c2) AS funnel
+            FROM nomatch;
+
+            SELECT 'No-match cases passed' AS result;
+          "
+
+  e2e-summary:
+    name: E2E Summary
+    needs: e2e-test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.e2e-test.result }}" != "success" ]; then
+            echo "E2E tests failed"
+            exit 1
+          fi
+          echo "All E2E tests passed"

@@ -32,8 +32,8 @@ cargo build --release
 
 The loadable extension will be produced at:
 
-- **Linux**: `target/release/libduckdb_behavioral.so`
-- **macOS**: `target/release/libduckdb_behavioral.dylib`
+- **Linux**: `target/release/libbehavioral.so`
+- **macOS**: `target/release/libbehavioral.dylib`
 
 **Preparing the extension for loading:**
 
@@ -45,7 +45,7 @@ repository includes the necessary tooling:
 git submodule update --init --recursive
 
 # Copy the built library
-cp target/release/libduckdb_behavioral.so /tmp/behavioral.duckdb_extension
+cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \

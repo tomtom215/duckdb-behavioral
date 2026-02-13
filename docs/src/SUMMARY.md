@@ -26,3 +26,9 @@
 - [Architecture](./internals/architecture.md)
 - [Performance](./internals/performance.md)
 - [ClickHouse Compatibility](./internals/clickhouse-compatibility.md)
+
+# Operations
+
+- [CI/CD](./operations/ci-cd.md)
+- [Security & Supply Chain](./operations/security.md)
+- [Benchmarking](./operations/benchmarking.md)

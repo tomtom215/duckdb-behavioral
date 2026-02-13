@@ -454,6 +454,28 @@ When DuckDB releases a new version, update `libduckdb-sys` in Cargo.toml,
 | `USE_UNSTABLE_C_API=1` pins to a specific DuckDB version | Documented in Makefile; `ref_next` field available for dev builds |
 | Extension naming is at DuckDB Foundation discretion | "behavioral" is descriptive and does not conflict with core extensions |
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/). See
+the [versioning policy](https://tomtom215.github.io/duckdb-behavioral/operations/security.html#versioning)
+for the full SemVer rules applied to SQL function signatures.
+
+**Release process:**
+
+1. Update version in `Cargo.toml` and `description.yml`
+2. Commit: `git commit -m "chore: bump version to X.Y.Z"`
+3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
+4. The release workflow validates SemVer, builds for 4 platforms, and publishes
+
+## CI/CD
+
+| Workflow | Trigger | Jobs |
+|----------|---------|------|
+| **CI** | Push/PR to main | 13 jobs: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build |
+| **E2E** | Push/PR to main | Builds extension, tests all 7 functions against real DuckDB, load tests 100K events |
+| **Release** | Tag push `v*` | SemVer validation, 4-platform build, SQL tests, provenance attestation, GitHub Release |
+| **Pages** | Push to main | Deploys mdBook documentation to GitHub Pages |
+
 ## Development
 
 ```bash
@@ -469,6 +491,10 @@ cargo fmt
 # Run benchmarks
 cargo bench
 
+# Build extension via community Makefile
+git submodule update --init
+make configure && make release && make test_release
+
 # Build documentation
 cargo doc --no-deps --open
 ```
@@ -477,6 +503,7 @@ cargo doc --no-deps --open
 
 - Rust 1.80+ (MSRV)
 - DuckDB 1.4.4 (pinned dependency)
+- Python 3.x (for extension metadata tooling)
 
 ## License
 

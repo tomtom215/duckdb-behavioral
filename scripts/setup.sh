@@ -44,7 +44,7 @@ readonly SCRIPT_DIR
 readonly PROJECT_ROOT="${SCRIPT_DIR}/.."
 
 # Build output paths
-readonly RELEASE_LIB="${PROJECT_ROOT}/target/release/libduckdb_behavioral.so"
+readonly RELEASE_LIB="${PROJECT_ROOT}/target/release/libbehavioral.so"
 readonly EXT_FILE="/tmp/${EXT_NAME}.duckdb_extension"
 
 # Metadata script

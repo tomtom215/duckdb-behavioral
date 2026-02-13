@@ -1,75 +1,298 @@
 name: Release
 
+# Release workflow following Semantic Versioning (https://semver.org/).
+#
+# Version format: vMAJOR.MINOR.PATCH (e.g., v0.1.0, v1.0.0, v1.2.3)
+#
+# SemVer rules for this project:
+#   MAJOR: Breaking changes to SQL function signatures, return types, or behavior
+#   MINOR: New functions, new modes, new pattern syntax operators
+#   PATCH: Bug fixes, performance improvements, documentation updates
+#
+# Pre-1.0 (0.x.y): MINOR bumps may include breaking changes per SemVer §4.
+#
+# The release process:
+#   1. Update version in Cargo.toml and description.yml
+#   2. Commit: "chore: bump version to X.Y.Z"
+#   3. Tag: git tag vX.Y.Z && git push origin vX.Y.Z
+#   4. This workflow builds, tests, and publishes the release
+
 on:
   push:
     tags:
-      - "v*"
-
-env:
-  CARGO_TERM_COLOR: always
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "SemVer tag to release (e.g., v0.1.0)"
+        required: true
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  EXTENSION_NAME: behavioral
 
 jobs:
+  # Validate that the tag follows SemVer and matches Cargo.toml version
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      semver: ${{ steps.version.outputs.semver }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          # Validate SemVer format: vMAJOR.MINOR.PATCH with optional pre-release
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "ERROR: Tag '$TAG' does not follow SemVer format (vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+
+          SEMVER="${TAG#v}"  # Strip 'v' prefix
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG"
+          echo "SemVer: $SEMVER"
+
+      - name: Verify Cargo.toml version matches tag
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          TAG_VERSION="${{ steps.version.outputs.semver }}"
+
+          # Strip pre-release suffix for comparison (v0.1.0-rc.1 matches Cargo 0.1.0)
+          TAG_BASE=$(echo "$TAG_VERSION" | sed 's/-.*//')
+
+          if [ "$CARGO_VERSION" != "$TAG_BASE" ]; then
+            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match tag version ($TAG_BASE)"
+            echo "Update Cargo.toml version before tagging."
+            exit 1
+          fi
+          echo "Version match confirmed: Cargo.toml=$CARGO_VERSION, tag=$TAG_BASE"
+
+      - name: Verify description.yml version matches
+        run: |
+          DESC_VERSION=$(grep '  version:' description.yml | head -1 | awk '{print $2}')
+          TAG_BASE=$(echo "${{ steps.version.outputs.semver }}" | sed 's/-.*//')
+
+          if [ "$DESC_VERSION" != "$TAG_BASE" ]; then
+            echo "ERROR: description.yml version ($DESC_VERSION) does not match tag ($TAG_BASE)"
+            echo "Update description.yml version before tagging."
+            exit 1
+          fi
+          echo "description.yml version match confirmed: $DESC_VERSION"
+
   build:
-    name: Build ${{ matrix.target }}
+    name: Build (${{ matrix.platform }})
+    needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux_amd64
+            lib_ext: so
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            platform: linux_arm64
+            lib_ext: so
+            cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: osx_amd64
+            lib_ext: dylib
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: osx_arm64
+            lib_ext: dylib
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: release-${{ matrix.target }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        if: matrix.cross
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      # Build via community extension Makefile for metadata correctness
+      - name: Configure extension
+        run: |
+          DUCKDB_PLATFORM=${{ matrix.platform }} \
+          EXTENSION_VERSION=${{ needs.validate.outputs.semver }} \
+          make configure
 
+      - name: Build release extension
+        run: |
+          DUCKDB_PLATFORM=${{ matrix.platform }} make release
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
+
+      # Package artifacts with checksums
       - name: Package extension
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/libduckdb_behavioral.so dist/ 2>/dev/null || \
-          cp target/${{ matrix.target }}/release/libduckdb_behavioral.dylib dist/ 2>/dev/null || true
-          cd dist && tar czf ../duckdb-behavioral-${{ matrix.target }}.tar.gz *
+          cp build/release/${{ env.EXTENSION_NAME }}.duckdb_extension dist/
+          cp build/release/lib${{ env.EXTENSION_NAME }}.${{ matrix.lib_ext }} dist/
+
+          cd dist
+          sha256sum * > SHA256SUMS.txt 2>/dev/null || shasum -a 256 * > SHA256SUMS.txt
+          cd ..
+
+          tar czf ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz -C dist .
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
-          name: duckdb-behavioral-${{ matrix.target }}
-          path: duckdb-behavioral-${{ matrix.target }}.tar.gz
+          name: ${{ env.EXTENSION_NAME }}-${{ matrix.platform }}
+          path: |
+            ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz
+          retention-days: 90
+
+  # Run SQL integration tests on platforms where testing is supported
+  test:
+    name: Test (${{ matrix.platform }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: osx_arm64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure and build
+        run: |
+          DUCKDB_PLATFORM=${{ matrix.platform }} make configure
+          DUCKDB_PLATFORM=${{ matrix.platform }} make release
+
+      - name: Run SQL integration tests
+        run: |
+          DUCKDB_PLATFORM=${{ matrix.platform }} make test_release
 
   release:
     name: Create Release
-    needs: build
+    needs: [validate, build, test]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - uses: softprops/action-gh-release@v2
+      - name: Collect release artifacts
+        run: |
+          mkdir -p release
+          find artifacts -name '*.tar.gz' -exec cp {} release/ \;
+          cd release
+          sha256sum *.tar.gz > SHA256SUMS.txt
+          echo "=== Release artifacts ==="
+          cat SHA256SUMS.txt
+
+      - name: Determine release type
+        id: release_type
+        run: |
+          VERSION="${{ needs.validate.outputs.semver }}"
+          if echo "$VERSION" | grep -qE '-(alpha|beta|rc)'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.tar.gz
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: ${{ env.EXTENSION_NAME }} ${{ needs.validate.outputs.version }}
+          prerelease: ${{ steps.release_type.outputs.prerelease }}
+          files: release/*
           generate_release_notes: true
+          body: |
+            ## DuckDB Behavioral Analytics Extension ${{ needs.validate.outputs.version }}
+
+            Behavioral analytics functions for DuckDB with complete ClickHouse parity.
+
+            ### Installation
+
+            ```sql
+            -- Community extension (when available)
+            INSTALL behavioral FROM community;
+            LOAD behavioral;
+
+            -- Manual installation
+            LOAD '/path/to/behavioral.duckdb_extension';
+            ```
+
+            ### Supported Platforms
+            | Platform | File |
+            |----------|------|
+            | Linux x86_64 | `behavioral-${{ needs.validate.outputs.version }}-linux_amd64.tar.gz` |
+            | Linux ARM64 | `behavioral-${{ needs.validate.outputs.version }}-linux_arm64.tar.gz` |
+            | macOS x86_64 | `behavioral-${{ needs.validate.outputs.version }}-osx_amd64.tar.gz` |
+            | macOS ARM64 | `behavioral-${{ needs.validate.outputs.version }}-osx_arm64.tar.gz` |
+
+            ### Verification
+            ```bash
+            # Verify SHA256 checksums
+            sha256sum -c SHA256SUMS.txt
+
+            # Verify build provenance (requires gh CLI)
+            gh attestation verify behavioral-${{ needs.validate.outputs.version }}-linux_amd64.tar.gz \
+              --repo tomtom215/duckdb-behavioral
+            ```
+
+            ### Functions
+            `sessionize`, `retention`, `window_funnel`, `sequence_match`, `sequence_count`, `sequence_match_events`, `sequence_next_node`
+
+            See [documentation](https://tomtom215.github.io/duckdb-behavioral/) for full usage.

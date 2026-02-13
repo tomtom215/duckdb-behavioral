@@ -116,8 +116,8 @@ cargo build --release
 Then load the extension in DuckDB:
 
 ```sql
-LOAD 'path/to/target/release/libduckdb_behavioral.so';  -- Linux
-LOAD 'path/to/target/release/libduckdb_behavioral.dylib'; -- macOS
+LOAD 'path/to/target/release/libbehavioral.so';  -- Linux
+LOAD 'path/to/target/release/libbehavioral.dylib'; -- macOS
 ```
 
 > **Note:** DuckDB requires the `-unsigned` flag for locally-built extensions:
