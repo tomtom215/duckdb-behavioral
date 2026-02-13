@@ -10,6 +10,44 @@ DuckDB extension written in Rust. **Complete ClickHouse behavioral analytics par
 [![CI](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg)](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+> **Personal Project Disclaimer**: This is a personal project developed on my own
+> time. It is not affiliated with, endorsed by, or related to my employer or
+> professional role in any way.
+
+---
+
+### AI-Assisted Development Disclosure
+
+This project was developed with assistance from Anthropic's Claude (AI-assisted
+programming). In the interest of full transparency and academic rigor, the
+following safeguards ensure that AI assistance does not compromise correctness,
+reproducibility, or trustworthiness:
+
+- **403 unit tests + 1 doc-test** covering all functions, edge cases, combine
+  associativity, property-based testing (proptest), and mutation-testing-guided
+  coverage. All tests run in under 1 second via `cargo test`.
+- **11 end-to-end tests** against a real DuckDB v1.4.4 instance validating the
+  complete chain from extension loading through SQL execution to correct results.
+- **Criterion.rs benchmarks** with 95% confidence intervals, 3+ runs per
+  measurement, and documented methodology in [`PERF.md`](PERF.md). Every
+  performance claim is reproducible on commodity hardware.
+- **88.4% mutation testing kill rate** (130 caught / 17 missed) via
+  `cargo-mutants`, systematically verifying that tests detect real faults.
+- **Zero clippy warnings** under pedantic, nursery, and cargo lint groups.
+- **Deterministic, reproducible builds** — pinned dependencies (`libduckdb-sys
+  = "=1.4.4"`), MSRV 1.80 verified in CI, and release profile with LTO and
+  single codegen unit.
+- **Every optimization session** documents hypothesis, technique, measured
+  before/after data with confidence intervals, and negative results are
+  reported honestly (3 reverted optimizations documented in PERF.md).
+- **All source code is publicly auditable** under the MIT license.
+
+AI tooling was used as an accelerator for implementation. All correctness
+guarantees rest on automated testing, reproducible benchmarks, and transparent
+documentation — not on AI output being assumed correct.
+
+---
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
@@ -26,6 +64,7 @@ DuckDB extension written in Rust. **Complete ClickHouse behavioral analytics par
 - [Building](#building)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Performance](#performance)
+- [Community Extension Submission Roadmap](#community-extension-submission-roadmap)
 - [Development](#development)
 - [Requirements](#requirements)
 - [License](#license)
@@ -317,6 +356,124 @@ Added 21 combine propagation tests, 7 fast-path tests, and git mining SQL exampl
 All measurements: Criterion.rs, 95% confidence intervals, 3+ runs.
 Full methodology, optimization history with CIs, and baseline records:
 [`PERF.md`](PERF.md).
+
+## Community Extension Submission Roadmap
+
+The following is a complete, step-by-step checklist for submitting this extension
+to the [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
+repository. Every item must be verified with zero exceptions.
+
+### Infrastructure Already in Place
+
+- [x] `description.yml` with extension metadata, maintainer, and docs fields
+- [x] `Makefile` with `configure`, `debug`, `release`, `test` targets
+  (includes `extension-ci-tools` base and Rust makefiles)
+- [x] `.gitmodules` referencing `extension-ci-tools` submodule
+- [x] SQLLogicTest integration tests in `test/sql/` (7 test files covering all 7 functions)
+- [x] Custom C entry point (`behavioral_init_c_api`) compatible with `build: cargo`
+- [x] `Cargo.toml` with `crate-type = ["cdylib", "rlib"]` and `libduckdb-sys` loadable-extension feature
+- [x] MIT license
+
+### Remaining Steps
+
+**Step 1: Initialize the `extension-ci-tools` submodule**
+
+```bash
+git submodule update --init --recursive
+```
+
+The submodule is registered in `.gitmodules` but must be initialized and pinned
+to a commit compatible with DuckDB v1.4.4. Without this, the Makefile targets
+cannot function.
+
+**Step 2: Verify the Makefile build chain locally**
+
+```bash
+make configure
+make release
+make test_release
+```
+
+This exercises the exact same build path that the community extension CI will
+use: Cargo compile, metadata appending via `extension-ci-tools/scripts/append_extension_metadata.py`,
+and SQLLogicTest execution against the built `.so`/`.dylib`.
+
+**Step 3: Verify all unit tests pass**
+
+```bash
+cargo test          # 403 unit tests + 1 doc-test
+cargo clippy --all-targets  # Zero warnings
+cargo fmt -- --check        # Formatting
+```
+
+**Step 4: Push the finalized repository to GitHub**
+
+The repository at `github.com/tomtom215/duckdb-behavioral` must be **public** and
+contain the Makefile, initialized submodule, Cargo.lock, source, tests, and license
+at the root level.
+
+**Step 5: Pin `description.yml` to a specific commit hash**
+
+```bash
+git rev-parse HEAD  # Capture the 40-character SHA
+```
+
+Update `description.yml` field `repo.ref` from `main` to the exact commit hash.
+The community CI checks out this specific commit for reproducible builds. Branch
+names are not accepted.
+
+**Step 6: Fork `duckdb/community-extensions` and create the submission PR**
+
+The PR adds exactly one file:
+
+```
+extensions/behavioral/description.yml
+```
+
+This is the **only** artifact submitted. The extension source code stays in our
+repository. The community CI clones our repo at the pinned `ref`, builds for all
+non-excluded platforms, runs the SQLLogicTest tests, and signs the binaries.
+
+**Step 7: Pass CI on all platforms**
+
+The community CI builds for every platform not in `excluded_platforms`. Our
+exclusions: `wasm_mvp`, `wasm_eh`, `wasm_threads`, `windows_amd64_rtools`,
+`windows_amd64_mingw`, `linux_amd64_musl`. If CI fails on any platform, the
+error logs are visible in the PR checks.
+
+**Step 8: Address maintainer review**
+
+DuckDB maintainers verify metadata correctness and build success. There is no
+code review of extension source — only build + test pass/fail. Potential review
+items: naming conflicts with core extensions, `description.yml` formatting,
+platform compatibility issues.
+
+**Step 9: Merge and publication**
+
+After merge, the extension becomes installable by any DuckDB user:
+
+```sql
+INSTALL behavioral FROM community;
+LOAD behavioral;
+```
+
+An auto-generated documentation page appears at
+`https://duckdb.org/community_extensions/extensions/behavioral`.
+
+### Post-Publication Maintenance
+
+To release updates: push changes to our repo, then open a new PR to
+`duckdb/community-extensions` updating the `ref` field to the new commit hash.
+When DuckDB releases a new version, update `libduckdb-sys` in Cargo.toml,
+`TARGET_DUCKDB_VERSION` in Makefile, and the `extension-ci-tools` submodule.
+
+### Known Risks
+
+| Risk | Mitigation |
+|---|---|
+| `build: cargo` is experimental (only `rusty_quack` uses it) | Our Makefile matches the official `extension-template-rs` exactly |
+| `USE_UNSTABLE_C_API=1` pins to a specific DuckDB version | Documented in Makefile; `ref_next` field available for dev builds |
+| Extension naming is at DuckDB Foundation discretion | "behavioral" is descriptive and does not conflict with core extensions |
 
 ## Development
 
