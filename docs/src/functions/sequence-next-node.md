@@ -116,3 +116,9 @@ Note: Unlike other event-collecting functions where the `Event` struct is `Copy`
 that stores an `Rc<str>` value per event. The `Rc<str>` enables O(1) clone via
 reference counting, which significantly reduces combine overhead compared to
 per-event `String` cloning.
+
+## See Also
+
+- [`sequence_match`](./sequence-match.md) -- check whether a pattern matches (boolean)
+- [`sequence_count`](./sequence-count.md) -- count non-overlapping matches of a pattern
+- [`sequence_match_events`](./sequence-match-events.md) -- return the timestamps of each matched step

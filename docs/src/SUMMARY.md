@@ -7,6 +7,9 @@
 # User Guide
 
 - [Getting Started](./getting-started.md)
+- [Use Cases](./use-cases.md)
+- [FAQ](./faq.md)
+- [Contributing](./contributing.md)
 
 # Function Reference
 

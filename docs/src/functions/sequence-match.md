@@ -92,3 +92,9 @@ ClickHouse semantics.
 
 At benchmark scale, `sequence_match` processes **100 million events in 1.05 s**
 (95 Melem/s).
+
+## See Also
+
+- [`sequence_count`](./sequence-count.md) -- count non-overlapping matches of the same pattern
+- [`sequence_match_events`](./sequence-match-events.md) -- return the timestamps of each matched step
+- [`sequence_next_node`](./sequence-next-node.md) -- find the next event value after a pattern match

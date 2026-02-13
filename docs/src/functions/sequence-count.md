@@ -77,3 +77,9 @@ to that page for the full syntax reference.
 
 At benchmark scale, `sequence_count` processes **100 million events in 1.45 s**
 (69 Melem/s).
+
+## See Also
+
+- [`sequence_match`](./sequence-match.md) -- check whether the pattern matches (boolean)
+- [`sequence_match_events`](./sequence-match-events.md) -- return the timestamps of each matched step
+- [`sequence_next_node`](./sequence-next-node.md) -- find the next event value after a pattern match

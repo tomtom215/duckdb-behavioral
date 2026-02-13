@@ -22,6 +22,10 @@ Thumbs.db
 *.duckdb
 *.wal
 
+# Community extension build artifacts
+/build/
+/configure/
+
 # Profiling
 perf.data
 perf.data.old

@@ -16,23 +16,8 @@ INSERT INTO page_events VALUES
     (2, '2024-01-01 00:01:00', 'search', false, false, false),
     (2, '2024-01-01 00:02:00', 'product', false, true, false);
 
-# Forward, first_match: what comes after home -> product?
-query IT
-SELECT user_id, sequence_next_node(
-    'forward',
-    'first_match',
-    ts,
-    page,
-    is_home,
-    is_product
-) FROM page_events
-GROUP BY user_id
-ORDER BY user_id;
-----
-1	cart
-2	NULL
-
 # Forward, first_match with single step: what comes after home?
+# base_condition=is_home, event1=is_home → match at first home, return next event
 query IT
 SELECT user_id, sequence_next_node(
     'forward',
@@ -47,6 +32,24 @@ ORDER BY user_id;
 ----
 1	product
 2	search
+
+# Forward, first_match: what comes after home -> product?
+# base_condition=is_home, event1=is_home, event2=is_product
+query IT
+SELECT user_id, sequence_next_node(
+    'forward',
+    'first_match',
+    ts,
+    page,
+    is_home,
+    is_home,
+    is_product
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	cart
+2	NULL
 
 # Backward, first_match: what comes before product?
 query IT

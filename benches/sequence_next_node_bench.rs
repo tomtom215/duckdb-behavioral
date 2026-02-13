@@ -4,10 +4,8 @@
 //! Tests forward matching with `first_match` base (the common case).
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
+use behavioral::sequence_next_node::{Base, Direction, NextNodeEvent, SequenceNextNodeState};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use duckdb_behavioral::sequence_next_node::{
-    Base, Direction, NextNodeEvent, SequenceNextNodeState,
-};
 use std::rc::Rc;
 
 fn make_next_node_events(num_events: usize, num_steps: usize) -> Vec<NextNodeEvent> {

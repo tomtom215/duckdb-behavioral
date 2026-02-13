@@ -76,7 +76,7 @@ documentation — not on AI output being assumed correct.
 cargo build --release
 
 # Load in DuckDB
-duckdb -cmd "LOAD 'target/release/libduckdb_behavioral.so';"
+duckdb -unsigned -cmd "LOAD 'target/release/libbehavioral.so';"
 ```
 
 ```sql
@@ -292,8 +292,8 @@ window_funnel(INTERVAL '1 hour', 'strict_increase, strict_once', ts, c1, c2, c3)
 cargo build --release
 
 # The loadable extension will be at:
-# target/release/libduckdb_behavioral.so   (Linux)
-# target/release/libduckdb_behavioral.dylib (macOS)
+# target/release/libbehavioral.so   (Linux)
+# target/release/libbehavioral.dylib (macOS)
 ```
 
 ## Performance
@@ -374,37 +374,16 @@ repository. Every item must be verified with zero exceptions.
 - [x] `Cargo.toml` with `crate-type = ["cdylib", "rlib"]` and `libduckdb-sys` loadable-extension feature
 - [x] MIT license
 
+### Completed Steps
+
+- [x] **Step 1: Initialize the `extension-ci-tools` submodule** — Initialized and
+  pinned to a commit compatible with DuckDB v1.4.4.
+- [x] **Step 2: Verify the Makefile build chain locally** — `make configure &&
+  make release && make test_release` passes all 7 SQL test files.
+- [x] **Step 3: Verify all unit tests pass** — `cargo test` (403 + 1 doc-test),
+  `cargo clippy --all-targets` (zero warnings), `cargo fmt -- --check` (clean).
+
 ### Remaining Steps
-
-**Step 1: Initialize the `extension-ci-tools` submodule**
-
-```bash
-git submodule update --init --recursive
-```
-
-The submodule is registered in `.gitmodules` but must be initialized and pinned
-to a commit compatible with DuckDB v1.4.4. Without this, the Makefile targets
-cannot function.
-
-**Step 2: Verify the Makefile build chain locally**
-
-```bash
-make configure
-make release
-make test_release
-```
-
-This exercises the exact same build path that the community extension CI will
-use: Cargo compile, metadata appending via `extension-ci-tools/scripts/append_extension_metadata.py`,
-and SQLLogicTest execution against the built `.so`/`.dylib`.
-
-**Step 3: Verify all unit tests pass**
-
-```bash
-cargo test          # 403 unit tests + 1 doc-test
-cargo clippy --all-targets  # Zero warnings
-cargo fmt -- --check        # Formatting
-```
 
 **Step 4: Push the finalized repository to GitHub**
 

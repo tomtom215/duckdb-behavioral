@@ -5,8 +5,8 @@
 //! and `window_funnel` benchmarks, enables Amdahl's Law analysis.
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
+use behavioral::common::event::{sort_events, Event};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use duckdb_behavioral::common::event::{sort_events, Event};
 
 fn make_random_events(num_events: usize) -> Vec<Event> {
     // Create events with reverse-order timestamps and varying conditions

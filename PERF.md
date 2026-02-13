@@ -82,6 +82,8 @@ cargo bench -- sequence_match
 | `sort_events_presorted` | (isolated) | sort only | 100 to 100M events | pdqsort adaptive path |
 | `sequence_next_node` | `sequence_next_node` | update + finalize | 100 to 10M events | Sequential matching + Rc\<str\> clone |
 | `sequence_next_node_combine` | `sequence_next_node` | combine_in_place + finalize | 100 to 100K states | In-place append + sequential matching |
+| `sequence_match_events` | `sequence_match_events` | update + finalize_events | 100 to 100M events | NFA pattern matching + timestamp collection |
+| `sequence_match_events_combine` | `sequence_match_events` | combine_in_place + finalize_events | 100 to 1M states | In-place append + NFA + timestamp cost |
 | `sequence_next_node_realistic` | `sequence_next_node` | update + finalize (100 distinct values) | 100 to 1M events | Realistic cardinality Rc\<str\> sharing |
 
 ## Algorithmic Complexity
@@ -93,6 +95,7 @@ cargo bench -- sequence_match
 | `window_funnel` | O(1) amortized | O(m) append | O(n*k) greedy scan | O(n) — collected events |
 | `sequence_match` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
 | `sequence_count` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
+| `sequence_match_events` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
 | `sequence_next_node` | O(1) amortized | O(m) append | O(n*s) sequential scan | O(n) — collected events + Strings |
 
 Where n = events, m = events in other state, k = conditions (up to 32), s = pattern steps.
@@ -956,6 +959,7 @@ numbers for all others:
 | `window_funnel_finalize` | 100M | 761 ms | 7.61 | 131 Melem/s | Sort + O(n*k) greedy scan |
 | `sequence_match` | 100M | 999 ms | 9.99 | 100 Melem/s | Sort + O(n) fast-path scan |
 | `sequence_count` | 100M | 1.17 s | 11.7 | 85.3 Melem/s | Sort + O(n) fast-path counting |
+| `sequence_match_events` | — | — | — | — | Baseline pending (added Session 12) |
 | `sequence_next_node` | 10M | 547 ms | 54.7 | 18.3 Melem/s | Sort + sequential scan + Rc\<str\> alloc |
 | `sort_events` (random) | 100M | 2.046 s | 20.46 | 48.9 Melem/s | O(n log n) pdqsort, DRAM-bound |
 | `sort_events` (presorted) | 100M | 1.829 s | 18.29 | 54.7 Melem/s | O(n) adaptive, DRAM-bound |
@@ -972,6 +976,7 @@ Criterion-validated, reproducible headline numbers for portfolio presentation
 | `window_funnel_finalize` | 100 million | 761 ms | 131 Melem/s | 7.61 |
 | `sequence_match` | 100 million | 999 ms | 100 Melem/s | 9.99 |
 | `sequence_count` | 100 million | 1.17 s | 85.3 Melem/s | 11.7 |
+| `sequence_match_events` | — | — | — | Baseline pending (Session 12) |
 | `sequence_next_node` | 10 million | 547 ms | 18.3 Melem/s | 54.7 |
 | `sort_events` (random) | 100 million | 2.05 s | 48.8 Melem/s | 20.50 |
 

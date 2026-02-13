@@ -3,8 +3,8 @@
 //! Uses Criterion with 100+ samples and 95% confidence intervals.
 #![allow(missing_docs)]
 
+use behavioral::sessionize::SessionizeBoundaryState;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use duckdb_behavioral::sessionize::SessionizeBoundaryState;
 
 fn bench_sessionize_update(c: &mut Criterion) {
     let mut group = c.benchmark_group("sessionize_update");

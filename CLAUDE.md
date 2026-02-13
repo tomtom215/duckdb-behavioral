@@ -23,6 +23,7 @@ This file provides context for AI assistants working on this codebase.
   - [Session 9: Rc\<str\> Optimization + Community Extension](#session-9-rcstr-optimization--community-extension)
   - [Session 10: E2E Validation + Custom C Entry Point](#session-10-e2e-validation--custom-c-entry-point)
   - [Session 11: NFA Fast Paths + Git Mining Demo](#session-11-nfa-fast-paths--git-mining-demo)
+  - [Session 12: Community Extension Readiness + Benchmark Completion](#session-12-community-extension-readiness--benchmark-completion)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Testing](#testing)
 - [CI/CD](#cicd)
@@ -166,9 +167,9 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 - **1 doc-test** for the pattern parser
 - **11 E2E tests** against real DuckDB v1.4.4 CLI covering all 7 functions
   with multiple scenarios (basic, timeout, modes, GROUP BY, no-match)
-- **6 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
-  sequence_next_node) with combine benchmarks, realistic cardinality benchmarks, and
-  throughput reporting up to 1B elements
+- **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
+  sequence_next_node, sequence_match_events) with combine benchmarks, realistic
+  cardinality benchmarks, and throughput reporting up to 1B elements
 - **Mutation testing**: 88.4% kill rate via cargo-mutants (130 caught / 17 missed)
 - **MSRV 1.80** verified in CI
 - All public items have documentation
@@ -494,6 +495,51 @@ developer experience (demo, SQL examples, combine test coverage).
    all 7 functions with SQL examples and pre-computed results.
 
 Test count increased from 375 to 403 (+28 tests).
+
+### Session 12: Community Extension Readiness + Benchmark Completion
+
+Session focused on community extension submission readiness, benchmark completion,
+comprehensive documentation, and E2E test fixes.
+
+**Changes:**
+
+1. **`sequence_match_events` benchmark** (`benches/sequence_match_events_bench.rs`):
+   New Criterion benchmark covering update + finalize throughput (100 to 100M events)
+   and combine operations (100 to 1M states). All 7 functions now have dedicated
+   benchmarks.
+
+2. **Library name fix for community extension**: Added `name = "behavioral"` to
+   `[lib]` in `Cargo.toml` so `cargo build --release` produces `libbehavioral.so`
+   (required by the community extension Makefile) instead of
+   `libduckdb_behavioral.so`. Updated all benchmark imports from
+   `duckdb_behavioral::` to `behavioral::` and fixed the doc-test import.
+
+3. **`sequence_next_node` NULL handling fix** (`src/ffi/sequence_next_node.rs`):
+   Added `duckdb_vector_ensure_validity_writable` call before setting validity bits.
+   Without this, setting a row as invalid wrote to an uninitialized validity bitmap,
+   producing `\0\0\0\0` instead of NULL in the output.
+
+4. **SQL test corrections** (`test/sql/`): Fixed expected values across multiple
+   test files — session IDs changed from 0-indexed to 1-indexed (matching actual
+   `sessionize` output), timestamp lists changed to single-quoted format (matching
+   DuckDB's actual LIST output), and `sequence_next_node` test restructured to
+   match the base_condition + event matching semantics.
+
+5. **GitHub Pages documentation expansion**:
+   - Enhanced `index.md` with value proposition, use case sections, quick install
+   - Enhanced `getting-started.md` with troubleshooting, worked examples
+   - Created `faq.md` with loading, functions, pattern syntax, modes, performance,
+     ClickHouse differences, data preparation, scaling, integration sections
+   - Created `contributing.md` with dev setup, code style, testing, benchmark protocol
+   - Created `use-cases.md` with 5 complete real-world examples (e-commerce funnels,
+     SaaS retention, web sessions, user journeys, A/B testing)
+   - Completed `performance.md` with Sessions 8-11 detail and updated baseline tables
+   - Added cross-references between related function pages
+   - Updated `SUMMARY.md` with all new pages
+
+6. **Community extension infrastructure**: Initialized `extension-ci-tools` submodule,
+   verified `make configure && make release && make test_release` passes all 7 SQL
+   test files.
 
 ## ClickHouse Parity Status
 
@@ -983,3 +1029,33 @@ Accumulated from past sessions. Consult before beginning any work.
     i+1 through i+j could be valid starting positions. The NFA handles this
     correctly by always advancing by 1 on failure. The fast path must do
     the same. This bug was caught by adding a targeted regression test.
+
+62. **Library `[lib] name` must match the extension name for community builds**:
+    The community extension Makefile expects `lib{extension_name}.so`. If the
+    crate name is `duckdb-behavioral` (producing `libduckdb_behavioral.so`) but
+    `description.yml` says `name: behavioral`, the build fails with
+    `FileNotFoundError: libbehavioral.so`. Fix: add `name = "behavioral"` to
+    `[lib]` in `Cargo.toml`. This cascades: all benchmark `use` imports and
+    doc-test imports must also change from `duckdb_behavioral::` to `behavioral::`.
+
+63. **`duckdb_vector_ensure_validity_writable` required for NULL output**: When
+    writing NULL values in FFI finalize callbacks, calling
+    `duckdb_vector_get_validity` on an uninitialized vector returns an
+    uninitialized pointer. Writing to it produces garbage instead of NULL.
+    Always call `duckdb_vector_ensure_validity_writable(result)` before
+    `duckdb_vector_get_validity(result)` to ensure a valid bitmap exists.
+
+64. **SQL test expected values must be validated against actual DuckDB output**:
+    Session 12 found 4 categories of expected-value errors in SQL tests:
+    (a) session IDs 0-indexed vs actual 1-indexed, (b) LIST(TIMESTAMP) format
+    without single quotes vs actual `['ts', ...]` format, (c) window_funnel
+    step counts wrong due to cross-PR event aggregation, (d) sequence_next_node
+    test semantics wrong. Always run `make test_release` to validate test
+    expectations against real DuckDB before committing SQL tests.
+
+65. **`sequence_next_node` requires base_condition AND event1 at start**: The
+    function requires the starting event to satisfy BOTH the base_condition AND
+    the first event condition simultaneously. A pattern with `base=is_home,
+    event1=is_product` will NOT match a "home" event because `is_product` is
+    false at that position. The start position must satisfy: `base_condition(i)
+    && conditions[0](i)`. Design SQL tests with awareness of this conjunction.

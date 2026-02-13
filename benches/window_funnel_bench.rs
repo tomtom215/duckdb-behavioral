@@ -4,9 +4,9 @@
 //! input sizes to validate O(n*k) complexity where n = events, k = conditions.
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
+use behavioral::common::event::Event;
+use behavioral::window_funnel::WindowFunnelState;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use duckdb_behavioral::common::event::Event;
-use duckdb_behavioral::window_funnel::WindowFunnelState;
 
 fn make_funnel_events(num_events: usize, num_conditions: usize) -> Vec<Event> {
     (0..num_events)
