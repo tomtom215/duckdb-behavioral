@@ -8,7 +8,7 @@ business logic and DuckDB's C API.
 
 ```
 src/
-  lib.rs                       Extension entry point
+  lib.rs                       Custom C entry point (behavioral_init_c_api)
   common/
     mod.rs
     event.rs                   Event type (u32 bitmask, Copy, 16 bytes)
@@ -16,18 +16,20 @@ src/
   pattern/
     mod.rs
     parser.rs                  Recursive descent parser for pattern strings
-    executor.rs                NFA-based pattern matcher
+    executor.rs                NFA-based pattern matcher with fast paths
   sessionize.rs                Session boundary tracking (O(1) combine)
   retention.rs                 Bitmask-based cohort retention (O(1) combine)
   window_funnel.rs             Greedy forward scan with combinable mode bitflags
   sequence.rs                  Sequence match/count/events state management
+  sequence_next_node.rs        Next event value after pattern match (Rc<str>)
   ffi/
-    mod.rs                     register_all() + raw connection extraction
+    mod.rs                     register_all_raw() dispatcher
     sessionize.rs              FFI callbacks for sessionize
     retention.rs               FFI callbacks for retention
     window_funnel.rs           FFI callbacks for window_funnel
     sequence.rs                FFI callbacks for sequence_match + sequence_count
     sequence_match_events.rs   FFI callbacks for sequence_match_events
+    sequence_next_node.rs      FFI callbacks for sequence_next_node
 ```
 
 ## Design Principles
@@ -35,8 +37,9 @@ src/
 ### Pure Rust Core with FFI Bridge
 
 All business logic lives in the top-level modules (`sessionize.rs`, `retention.rs`,
-`window_funnel.rs`, `sequence.rs`, `pattern/`) with zero FFI dependencies. These
-modules are fully testable in isolation using standard Rust unit tests.
+`window_funnel.rs`, `sequence.rs`, `sequence_next_node.rs`, `pattern/`) with zero
+FFI dependencies. These modules are fully testable in isolation using standard
+Rust unit tests.
 
 The `ffi/` submodules handle DuckDB C API registration exclusively. This
 separation ensures that:
@@ -68,21 +71,20 @@ variable numbers of boolean condition parameters (2 to 32), each function is
 registered as a **function set** containing 31 overloads, one for each arity.
 
 This is necessary for `retention`, `window_funnel`, `sequence_match`,
-`sequence_count`, and `sequence_match_events`. The `sessionize` function has a
-fixed two-parameter signature and does not require a function set.
+`sequence_count`, `sequence_match_events`, and `sequence_next_node`. The
+`sessionize` function has a fixed two-parameter signature and does not require a
+function set.
 
-### Raw Connection Extraction
+### Custom C Entry Point
 
-The extension entry point receives a `duckdb::Connection` (Rust wrapper), but
-aggregate function registration requires a raw `duckdb_connection` C handle.
-The extraction traverses the internal struct layout:
+The extension uses a hand-written `behavioral_init_c_api` entry point that
+obtains `duckdb_connection` directly via `duckdb_connect` from the
+`duckdb_extension_access` struct. This bypasses `duckdb::Connection` entirely,
+eliminating fragile struct layout assumptions that caused SEGFAULTs in earlier
+versions.
 
-```
-Connection -> Rc<RefCell<InnerConnection>> -> duckdb_connection
-```
-
-This depends on the exact internal layout of `duckdb = "=1.4.4"` and must be
-re-verified when updating the DuckDB dependency.
+Only `libduckdb-sys` (with the `loadable-extension` feature) is needed at
+runtime. The `duckdb` crate is used only in `#[cfg(test)]` for unit tests.
 
 ## Event Representation
 
@@ -128,13 +130,18 @@ The recursive descent parser (`parser.rs`) converts pattern strings like
 
 ### NFA Executor
 
-The executor (`executor.rs`) implements a backtracking NFA with three execution
-modes:
+The executor (`executor.rs`) classifies patterns at execution time and dispatches
+to specialized code paths:
+
+- **Adjacent conditions** (`(?1)(?2)(?3)`): O(n) sliding window scan
+- **Wildcard-separated** (`(?1).*(?2).*(?3)`): O(n) single-pass linear scan
+- **Complex patterns**: Full NFA with backtracking
+
+Three execution modes are supported:
 
 | Mode | Function | Returns |
 |---|---|---|
-| `execute_pattern` | `sequence_match` | `bool` (match/no-match) |
-| `count_pattern` | `sequence_count` | `i64` (non-overlapping match count) |
+| `execute_pattern` | `sequence_match` / `sequence_count` | `MatchResult` (match + count) |
 | `execute_pattern_events` | `sequence_match_events` | `Vec<i64>` (matched timestamps) |
 
 The NFA uses **lazy matching** for `.*`: it prefers advancing the pattern over
@@ -153,6 +160,7 @@ implementation is the dominant cost for event-collecting functions.
 | `retention` | Bitwise OR of bitmasks | O(1) |
 | `window_funnel` | In-place event append | O(m) |
 | `sequence_*` | In-place event append | O(m) |
+| `sequence_next_node` | In-place event append | O(m) |
 
 The in-place combine (`combine_in_place`) extends `self.events` directly instead
 of allocating a new `Vec`. This reduces a left-fold chain from O(N^2) total

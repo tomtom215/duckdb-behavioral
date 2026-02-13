@@ -38,9 +38,9 @@ Or from the DuckDB CLI:
 duckdb -cmd "LOAD 'target/release/libduckdb_behavioral.so';"
 ```
 
-Once loaded, all six functions are available in the current session:
+Once loaded, all seven functions are available in the current session:
 `sessionize`, `retention`, `window_funnel`, `sequence_match`,
-`sequence_count`, and `sequence_match_events`.
+`sequence_count`, `sequence_match_events`, and `sequence_next_node`.
 
 ## Verifying the Installation
 
@@ -60,7 +60,7 @@ SELECT window_funnel(INTERVAL '1 hour', TIMESTAMP '2024-01-01', true, false);
 
 ## Running Tests
 
-The extension includes 324 unit tests and 1 doc-test:
+The extension includes 403 unit tests and 1 doc-test:
 
 ```bash
 cargo test
@@ -94,24 +94,26 @@ previous runs by Criterion.
 
 ```
 src/
-  lib.rs                  # Extension entry point
+  lib.rs                  # Custom C entry point (behavioral_init_c_api)
   common/
     event.rs              # Shared Event type (16-byte bitmask)
     timestamp.rs          # Interval-to-microseconds conversion
   pattern/
     parser.rs             # Recursive descent pattern parser
-    executor.rs           # NFA-based pattern matcher
+    executor.rs           # NFA-based pattern matcher with fast paths
   sessionize.rs           # Session boundary tracking
   retention.rs            # Bitmask-based cohort retention
   window_funnel.rs        # Greedy forward scan with mode flags
   sequence.rs             # Pattern matching state management
+  sequence_next_node.rs   # Next event value after pattern match
   ffi/
-    mod.rs                # Function registration coordinator
+    mod.rs                # register_all_raw() dispatcher
     sessionize.rs         # Sessionize FFI callbacks
     retention.rs          # Retention FFI callbacks
     window_funnel.rs      # Window funnel FFI callbacks
     sequence.rs           # Sequence match/count FFI callbacks
     sequence_match_events.rs  # Sequence match events FFI callbacks
+    sequence_next_node.rs     # Sequence next node FFI callbacks
 ```
 
 For a detailed discussion of the architecture, see

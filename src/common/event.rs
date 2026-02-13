@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_event_size() {
-        // Event should be 16 bytes: i64 (8) + u8 (1) + 7 padding
+        // Event should be 16 bytes: i64 (8) + u32 (4) + 4 padding
         assert_eq!(std::mem::size_of::<Event>(), 16);
     }
 

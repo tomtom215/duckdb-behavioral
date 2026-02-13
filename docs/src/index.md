@@ -4,7 +4,7 @@ Behavioral analytics functions for [DuckDB](https://duckdb.org/), inspired by
 [ClickHouse](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions).
 
 `duckdb-behavioral` is a loadable DuckDB extension written in Rust that provides
-six functions for session analysis, cohort retention, conversion funnels, and
+seven functions for session analysis, cohort retention, conversion funnels, and
 event sequence pattern matching.
 
 ## Functions
@@ -17,6 +17,7 @@ event sequence pattern matching.
 | [`sequence_match`](./functions/sequence-match.md) | Aggregate | `BOOLEAN` | Pattern matching over event sequences |
 | [`sequence_count`](./functions/sequence-count.md) | Aggregate | `BIGINT` | Count non-overlapping pattern matches |
 | [`sequence_match_events`](./functions/sequence-match-events.md) | Aggregate | `LIST(TIMESTAMP)` | Return matched condition timestamps |
+| [`sequence_next_node`](./functions/sequence-next-node.md) | Aggregate | `VARCHAR` | Next event value after pattern match |
 
 ## Quick Example
 

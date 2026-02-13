@@ -19,6 +19,7 @@ improvements and algorithmic scaling are hardware-independent.
 | `window_funnel` | 100 million | 761 ms | 131 Melem/s |
 | `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
 | `sequence_count` | 100 million | 1.45 s | 69 Melem/s |
+| `sequence_next_node` | 10 million | 1.23 s | 8.1 Melem/s |
 
 ### Per-Element Cost
 
@@ -39,13 +40,14 @@ improvements and algorithmic scaling are hardware-independent.
 | `window_funnel` | O(1) | O(m) | O(n*k) | O(n) |
 | `sequence_match` | O(1) | O(m) | O(n*s) | O(n) |
 | `sequence_count` | O(1) | O(m) | O(n*s) | O(n) |
+| `sequence_next_node` | O(1) | O(m) | O(n*k) | O(n) |
 
 Where n = events, m = events in other state, k = conditions (up to 32),
 s = pattern steps.
 
 ## Optimization History
 
-Seven engineering sessions have produced the current performance profile. Each
+Eleven engineering sessions have produced the current performance profile. Each
 optimization below was measured independently with before/after Criterion data
 and non-overlapping confidence intervals (except where noted as negative results).
 
@@ -114,6 +116,45 @@ These are documented to prevent redundant investigation in future sessions:
   bottleneck is `Vec<bool>` allocation in the test harness, not the bitmask
   update loop. No optimization possible without changing the benchmark structure.
 
+### Session 8: sequenceNextNode
+
+Implemented `sequence_next_node` with full direction/base support. No performance
+optimization targets — this session focused on feature completeness. Added
+dedicated benchmarks for the new function.
+
+### Session 9: Rc\<str\> Optimization
+
+Replaced `Option<String>` with `Option<Rc<str>>` in `NextNodeEvent`, reducing
+struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
+
+| Function | Scale | Before | After | Speedup |
+|---|---|---|---|---|
+| `sequence_next_node` | 10K events | 2.1x-5.8x across scales | | |
+| `sequence_next_node` combine | all scales | 2.8x-6.4x | | |
+
+A string pool attempt (`PooledEvent` with `Copy` semantics) was measured
+10-55% slower at most scales and was reverted.
+
+### Session 10: E2E Validation + Custom C Entry Point
+
+Discovered and fixed 3 critical bugs: SEGFAULT on extension load, 6 of 7
+functions silently failing to register, and `window_funnel` returning wrong
+results due to combine not propagating configuration fields. No performance
+optimization targets.
+
+### Session 11: NFA Fast Paths
+
+Pattern classification dispatches common shapes to specialized O(n) scans,
+eliminating NFA overhead for the most common patterns.
+
+| Function | Scale | Improvement |
+|---|---|---|
+| `sequence_count` | 100-1M events | 33-47% (NFA reusable stack) |
+| `sequence_count` | 100-1M events | 39-40% additional (fast-path linear scan) |
+| `sequence_count` | 100-1M events | 56-61% combined improvement |
+
+A first-condition pre-check was tested and produced negative results (reverted).
+
 ## Benchmark Inventory
 
 | Benchmark | Function | Input Sizes |
@@ -129,6 +170,9 @@ These are documented to prevent redundant investigation in future sessions:
 | `sequence_combine` | `sequence_*` | 100 to 1 million |
 | `sort_events` | (isolated) | 100 to 100 million |
 | `sort_events_presorted` | (isolated) | 100 to 100 million |
+| `sequence_next_node` | `sequence_next_node` | 100 to 10 million |
+| `sequence_next_node_combine` | `sequence_next_node` | 100 to 1 million |
+| `sequence_next_node_realistic` | `sequence_next_node` | 1,000 to 1 million |
 
 ## Reproduction
 
