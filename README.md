@@ -259,7 +259,7 @@ cargo build --release
 
 ## Performance
 
-Eight sessions of measured, Criterion-validated optimizations and feature work:
+Eleven sessions of measured, Criterion-validated optimizations and feature work:
 
 **Session 1 — Event Bitmask**: Bitmask replaces `Vec<bool>` per event,
 eliminating heap allocation and enabling `Copy` semantics (5-13x speedup).
@@ -288,10 +288,22 @@ well-optimized. Added 15 tests.
 
 **Session 8 — sequenceNextNode + Complete Parity**: Implemented `sequence_next_node`
 with full direction/base support, achieving COMPLETE ClickHouse behavioral analytics
-feature parity. Added 42 tests and new benchmarks. Researched community extension
-submission path.
+feature parity. Added 42 tests and new benchmarks.
 
-**Headline numbers (Criterion-validated, 95% CI, Sessions 7-8):**
+**Session 9 — Rc\<str\> Optimization**: Replaced `String` with `Rc<str>` in
+`sequence_next_node` for O(1) clone via reference counting (2.1-5.8x improvement).
+Added realistic cardinality benchmarks and community extension infrastructure.
+
+**Session 10 — E2E Validation + Custom C Entry Point**: Discovered and fixed 3
+critical bugs that 375 passing unit tests missed: SEGFAULT on load, silent function
+registration failures, and incorrect combine propagation. Replaced fragile connection
+extraction with a custom C entry point. 11 E2E tests against real DuckDB.
+
+**Session 11 — NFA Fast Paths + Git Mining Demo**: Pattern classification dispatches
+common shapes to specialized O(n) scans (39-61% improvement for `sequence_count`).
+Added 21 combine propagation tests, 7 fast-path tests, and git mining SQL examples.
+
+**Headline numbers (Criterion-validated, 95% CI, Sessions 7-11):**
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
@@ -309,7 +321,7 @@ Full methodology, optimization history with CIs, and baseline records:
 ## Development
 
 ```bash
-# Run tests (366 unit tests + 1 doc-test)
+# Run tests (403 unit tests + 1 doc-test)
 cargo test
 
 # Run clippy (zero warnings required)
