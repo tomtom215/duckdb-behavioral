@@ -21,6 +21,8 @@ reproducible via `cargo bench`.
   - [Session 3: NFA Lazy Matching (O(n²) → O(n))](#session-3-nfa-lazy-matching-on²--on)
   - [Session 3: Compiled Pattern Preservation (Negative Result)](#session-3-compiled-pattern-preservation-negative-result)
 - [Session 4: 100M/1B Benchmark Expansion](#session-4-100m1b-benchmark-expansion)
+- [Session 6: Presorted Detection + 32-Condition Support](#session-6-presorted-detection--32-condition-support)
+- [Session 7: Negative Results + Baseline Validation](#session-7-negative-results--baseline-validation)
 - [Session 8: sequenceNextNode Baseline](#session-8-sequencenextnode-baseline)
 - [Session 9: Rc\<str\> Optimization + String Pool Negative Result](#session-9-rcstr-optimization--string-pool-negative-result)
 - [Session 11: NFA Reusable Stack + Fast-Path Linear Scan](#session-11-nfa-reusable-stack--fast-path-linear-scan)
