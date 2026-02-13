@@ -1,8 +1,8 @@
 //! Benchmarks for the `retention` function.
 #![allow(missing_docs)]
 
+use behavioral::retention::RetentionState;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use duckdb_behavioral::retention::RetentionState;
 
 fn bench_retention_update(c: &mut Criterion) {
     let mut group = c.benchmark_group("retention_update");

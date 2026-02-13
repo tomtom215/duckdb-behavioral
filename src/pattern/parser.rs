@@ -88,7 +88,7 @@ impl std::error::Error for PatternError {}
 /// # Examples
 ///
 /// ```
-/// use duckdb_behavioral::pattern::parser::parse_pattern;
+/// use behavioral::pattern::parser::parse_pattern;
 ///
 /// let pattern = parse_pattern("(?1).*(?2)").unwrap();
 /// assert_eq!(pattern.steps.len(), 3);

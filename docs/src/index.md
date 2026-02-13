@@ -1,13 +1,136 @@
 # duckdb-behavioral
 
-Behavioral analytics functions for [DuckDB](https://duckdb.org/), inspired by
-[ClickHouse](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions).
+**Behavioral analytics for DuckDB -- session analysis, conversion funnels,
+retention cohorts, and event sequence pattern matching, all inside your SQL
+queries.**
 
-`duckdb-behavioral` is a loadable DuckDB extension written in Rust that provides
-seven functions for session analysis, cohort retention, conversion funnels, and
-event sequence pattern matching.
+`duckdb-behavioral` is a loadable DuckDB extension written in Rust that brings
+[ClickHouse-style behavioral analytics functions](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions)
+to DuckDB. It ships seven battle-tested functions that cover the core patterns
+of user behavior analysis, with complete ClickHouse feature parity and
+benchmark-validated performance at billion-row scale.
+
+No external services, no data pipelines, no additional infrastructure. Load the
+extension, write SQL, get answers.
+
+---
+
+## What Can You Do With This?
+
+### Session Analysis
+
+Break a continuous stream of events into logical sessions based on inactivity
+gaps. Identify how many sessions a user has per day, how long each session lasts,
+and where sessions begin and end.
+
+```sql
+SELECT user_id, event_time,
+  sessionize(event_time, INTERVAL '30 minutes') OVER (
+    PARTITION BY user_id ORDER BY event_time
+  ) as session_id
+FROM events;
+```
+
+### Conversion Funnels
+
+Track how far users progress through a multi-step conversion funnel (page view,
+add to cart, checkout, purchase) within a time window. Identify exactly where
+users drop off.
+
+```sql
+SELECT user_id,
+  window_funnel(INTERVAL '1 hour', event_time,
+    event_type = 'page_view',
+    event_type = 'add_to_cart',
+    event_type = 'checkout',
+    event_type = 'purchase'
+  ) as furthest_step
+FROM events
+GROUP BY user_id;
+```
+
+### Retention Cohorts
+
+Measure whether users who appeared in a cohort (e.g., signed up in January)
+returned in subsequent periods. Build the classic retention triangle directly in
+SQL.
+
+```sql
+SELECT cohort_month,
+  retention(
+    activity_date = cohort_month,
+    activity_date = cohort_month + INTERVAL '1 month',
+    activity_date = cohort_month + INTERVAL '2 months',
+    activity_date = cohort_month + INTERVAL '3 months'
+  ) as retained
+FROM user_activity
+GROUP BY user_id, cohort_month;
+```
+
+### Event Sequence Pattern Matching
+
+Detect complex behavioral patterns using a mini-regex over event conditions.
+Find users who viewed a product, then purchased within one hour -- with any
+number of intervening events.
+
+```sql
+SELECT user_id,
+  sequence_match('(?1).*(?t<=3600)(?2)', event_time,
+    event_type = 'view',
+    event_type = 'purchase'
+  ) as converted_within_hour
+FROM events
+GROUP BY user_id;
+```
+
+### User Journey / Flow Analysis
+
+Discover what users do *after* a specific behavioral sequence. What page do
+users visit after navigating from Home to Product?
+
+```sql
+SELECT
+  sequence_next_node('forward', 'first_match', event_time, page,
+    page = 'Home',
+    page = 'Home',
+    page = 'Product'
+  ) as next_page,
+  COUNT(*) as user_count
+FROM events
+GROUP BY ALL
+ORDER BY user_count DESC;
+```
+
+---
+
+## Quick Installation
+
+### From Source
+
+```bash
+git clone https://github.com/tomtom215/duckdb-behavioral.git
+cd duckdb-behavioral
+cargo build --release
+```
+
+Then load the extension in DuckDB:
+
+```sql
+LOAD 'path/to/target/release/libduckdb_behavioral.so';  -- Linux
+LOAD 'path/to/target/release/libduckdb_behavioral.dylib'; -- macOS
+```
+
+> **Note:** DuckDB requires the `-unsigned` flag for locally-built extensions:
+> `duckdb -unsigned`
+
+For detailed installation instructions, troubleshooting, and a complete
+worked example, see the [Getting Started](./getting-started.md) guide.
+
+---
 
 ## Functions
+
+Seven functions covering the full spectrum of behavioral analytics:
 
 | Function | Type | Returns | Description |
 |---|---|---|---|
@@ -19,51 +142,63 @@ event sequence pattern matching.
 | [`sequence_match_events`](./functions/sequence-match-events.md) | Aggregate | `LIST(TIMESTAMP)` | Return matched condition timestamps |
 | [`sequence_next_node`](./functions/sequence-next-node.md) | Aggregate | `VARCHAR` | Next event value after pattern match |
 
-## Quick Example
+All functions support **2 to 32 boolean conditions**, matching ClickHouse's
+limit. See the [ClickHouse Compatibility](./internals/clickhouse-compatibility.md)
+page for the full parity matrix.
 
-```sql
--- Load the extension
-LOAD 'libduckdb_behavioral.so';
-
--- Assign session IDs with a 30-minute inactivity gap
-SELECT user_id, event_time,
-  sessionize(event_time, INTERVAL '30 minutes') OVER (
-    PARTITION BY user_id ORDER BY event_time
-  ) as session_id
-FROM events;
-
--- Track conversion funnel steps within a 1-hour window
-SELECT user_id,
-  window_funnel(INTERVAL '1 hour', event_time,
-    event_type = 'page_view',
-    event_type = 'add_to_cart',
-    event_type = 'purchase'
-  ) as furthest_step
-FROM events
-GROUP BY user_id;
-```
+---
 
 ## Performance
 
-All functions are engineered for large-scale analytical workloads. Performance
-claims are backed by [Criterion.rs](https://bheisler.github.io/criterion.rs/book/)
-benchmarks with 95% confidence intervals, validated across multiple runs.
+All functions are engineered for large-scale analytical workloads. Every
+performance claim below is backed by
+[Criterion.rs](https://bheisler.github.io/criterion.rs/book/) benchmarks with
+95% confidence intervals, validated across multiple runs.
 
-| Function | Scale | Throughput |
-|---|---|---|
-| `sessionize` | 1 billion rows | 862 Melem/s |
-| `retention` | 1 billion rows | 338 Melem/s |
-| `window_funnel` | 100 million rows | 131 Melem/s |
-| `sequence_match` | 100 million rows | 95 Melem/s |
-| `sequence_count` | 100 million rows | 69 Melem/s |
+| Function | Scale | Wall Clock | Throughput |
+|---|---|---|---|
+| **`sessionize`** | **1 billion rows** | **1.16 s** | **862 Melem/s** |
+| **`retention`** | **1 billion rows** | **2.96 s** | **338 Melem/s** |
+| `window_funnel` | 100 million rows | 761 ms | 131 Melem/s |
+| `sequence_match` | 100 million rows | 1.05 s | 95 Melem/s |
+| `sequence_count` | 100 million rows | 1.45 s | 69 Melem/s |
 
-Full methodology and optimization history are documented in the
-[Performance](./internals/performance.md) section.
+Key design choices that enable this performance:
+
+- **16-byte `Copy` events** with `u32` bitmask conditions -- four events per
+  cache line, zero heap allocation per event
+- **O(1) combine** for `sessionize` and `retention` via boundary tracking and
+  bitmask OR
+- **In-place combine** for event-collecting functions -- O(N) amortized instead
+  of O(N^2) from repeated allocation
+- **NFA fast paths** -- common pattern shapes dispatch to specialized O(n) linear
+  scans instead of full NFA backtracking
+- **Presorted detection** -- O(n) check skips O(n log n) sort when events arrive
+  in timestamp order (common for `ORDER BY` queries)
+
+Full methodology, per-element cost analysis, and optimization history are
+documented in the [Performance](./internals/performance.md) section.
+
+---
+
+## Documentation
+
+| Section | Contents |
+|---|---|
+| [Getting Started](./getting-started.md) | Installation, loading, troubleshooting, your first analysis |
+| [Function Reference](./functions/sessionize.md) | Detailed docs for all 7 functions with examples |
+| [FAQ](./faq.md) | Common questions about loading, patterns, modes, NULLs |
+| [Architecture](./internals/architecture.md) | Module structure, design decisions, FFI bridge |
+| [Performance](./internals/performance.md) | Benchmarks, algorithmic complexity, optimization history |
+| [ClickHouse Compatibility](./internals/clickhouse-compatibility.md) | Syntax mapping, semantic parity, remaining gaps (none) |
+| [Contributing](./contributing.md) | Development setup, testing expectations, PR process |
+
+---
 
 ## Requirements
 
+- **DuckDB 1.4.4** (C API version v1.2.0)
 - **Rust 1.80+** (MSRV) for building from source
-- **DuckDB 1.4.4** (pinned dependency)
 - A C compiler for DuckDB system bindings
 
 ## Source Code

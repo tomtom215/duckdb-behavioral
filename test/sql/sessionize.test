@@ -20,11 +20,11 @@ SELECT ts, sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) AS session_i
 FROM session_events
 ORDER BY ts;
 ----
-2024-01-01 00:00:00	0
-2024-01-01 00:05:00	0
-2024-01-01 00:10:00	0
-2024-01-01 02:00:00	1
-2024-01-01 02:05:00	1
+2024-01-01 00:00:00	1
+2024-01-01 00:05:00	1
+2024-01-01 00:10:00	1
+2024-01-01 02:00:00	2
+2024-01-01 02:05:00	2
 
 # Sessionize with partition
 query III
@@ -32,15 +32,15 @@ SELECT user_id, ts, sessionize(ts, INTERVAL '30 minutes') OVER (PARTITION BY use
 FROM session_events
 ORDER BY user_id, ts;
 ----
-1	2024-01-01 00:00:00	0
-1	2024-01-01 00:05:00	0
-1	2024-01-01 00:10:00	0
-1	2024-01-01 02:00:00	1
-1	2024-01-01 02:05:00	1
+1	2024-01-01 00:00:00	1
+1	2024-01-01 00:05:00	1
+1	2024-01-01 00:10:00	1
+1	2024-01-01 02:00:00	2
+1	2024-01-01 02:05:00	2
 
-# Single event should be session 0
+# Single event should be session 1
 query II
 SELECT ts, sessionize(ts, INTERVAL '1 hour') OVER (ORDER BY ts) AS session_id
 FROM (SELECT TIMESTAMP '2024-01-01 00:00:00' AS ts);
 ----
-2024-01-01 00:00:00	0
+2024-01-01 00:00:00	1

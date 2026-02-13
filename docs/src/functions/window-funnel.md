@@ -127,3 +127,8 @@ finalize. A greedy forward scan from each entry point finds the longest chain.
 
 At benchmark scale, `window_funnel` processes **100 million events in 761 ms**
 (131 Melem/s).
+
+## See Also
+
+- [ClickHouse Compatibility](../internals/clickhouse-compatibility.md) -- full compatibility matrix including all mode mappings
+- [`sequence_match`](./sequence-match.md) -- pattern matching with NFA for more flexible event sequences

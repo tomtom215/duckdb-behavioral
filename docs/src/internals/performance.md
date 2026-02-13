@@ -19,7 +19,13 @@ improvements and algorithmic scaling are hardware-independent.
 | `window_funnel` | 100 million | 761 ms | 131 Melem/s |
 | `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
 | `sequence_count` | 100 million | 1.45 s | 69 Melem/s |
+| `sequence_match_events` | 100 million | — | — |
 | `sequence_next_node` | 10 million | 1.23 s | 8.1 Melem/s |
+
+Note: `sequence_match_events` uses the same event collection as `sequence_match`
+and `sequence_count` but calls the timestamp-collecting NFA variant
+(`execute_pattern_events`). Benchmark baseline is pending initial measurement
+via `cargo bench -- sequence_match_events`.
 
 ### Per-Element Cost
 
@@ -40,6 +46,7 @@ improvements and algorithmic scaling are hardware-independent.
 | `window_funnel` | O(1) | O(m) | O(n*k) | O(n) |
 | `sequence_match` | O(1) | O(m) | O(n*s) | O(n) |
 | `sequence_count` | O(1) | O(m) | O(n*s) | O(n) |
+| `sequence_match_events` | O(1) | O(m) | O(n*s) | O(n) |
 | `sequence_next_node` | O(1) | O(m) | O(n*k) | O(n) |
 
 Where n = events, m = events in other state, k = conditions (up to 32),
@@ -92,11 +99,30 @@ Expanded benchmarks to 100M for event-collecting functions and 1B for O(1)-state
 functions. Validated that all functions scale as documented with no hidden
 bottlenecks at extreme scale.
 
+| Function | Scale | Wall Clock | Throughput |
+|---|---|---|---|
+| `sessionize_update` | 1 billion | 1.21 s | 824 Melem/s |
+| `retention_combine` | 1 billion | 3.06 s | 327 Melem/s |
+| `window_funnel` | 100 million | 898 ms | 111 Melem/s |
+| `sequence_match` | 100 million | 1.08 s | 92.7 Melem/s |
+| `sequence_count` | 100 million | 1.57 s | 63.5 Melem/s |
+
+### Session 5: ClickHouse Feature Parity
+
+Architectural refactoring session. Implemented combinable `FunnelMode` bitflags,
+three new `window_funnel` modes (`strict_increase`, `strict_once`,
+`allow_reentry`), multi-step advancement per event, and the
+`sequence_match_events` function. No performance optimization targets.
+
 ### Session 6: Presorted Detection
 
 Added an O(n) `is_sorted` check before sorting. When events arrive in timestamp
 order (the common case for `ORDER BY` queries), the O(n log n) sort is skipped
 entirely. The O(n) overhead for unsorted input is negligible.
+
+Also expanded condition support from `u8` (8 conditions) to `u32` (32
+conditions). This was a zero-cost change: the `Event` struct remains 16 bytes
+due to alignment padding from the `i64` field.
 
 ### Session 7: Negative Results
 
@@ -118,34 +144,69 @@ These are documented to prevent redundant investigation in future sessions:
 
 ### Session 8: sequenceNextNode
 
-Implemented `sequence_next_node` with full direction/base support. No performance
-optimization targets — this session focused on feature completeness. Added
-dedicated benchmarks for the new function.
+Implemented `sequence_next_node` with full direction (forward/backward) and
+base (head/tail/first_match/last_match) support. Uses a dedicated
+`NextNodeEvent` struct with per-event `String` storage (separate from the
+`Copy` `Event` struct). Simple sequential matching algorithm.
+
+Added a dedicated benchmark (`benches/sequence_next_node_bench.rs`) measuring
+update + finalize throughput and combine operations at multiple scales. No
+performance optimization targets — this session focused on feature
+completeness, achieving complete ClickHouse behavioral analytics parity.
 
 ### Session 9: Rc\<str\> Optimization
 
 Replaced `Option<String>` with `Option<Rc<str>>` in `NextNodeEvent`, reducing
 struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
 
-| Function | Scale | Before | After | Speedup |
-|---|---|---|---|---|
-| `sequence_next_node` | 10K events | 2.1x-5.8x across scales | | |
-| `sequence_next_node` combine | all scales | 2.8x-6.4x | | |
+| Function | Scale | Improvement |
+|---|---|---|
+| `sequence_next_node` update+finalize | all scales | 2.1x-5.8x |
+| `sequence_next_node` combine | all scales | 2.8x-6.4x |
 
-A string pool attempt (`PooledEvent` with `Copy` semantics) was measured
-10-55% slower at most scales and was reverted.
+A string pool attempt (`PooledEvent` with `Copy` semantics, 24 bytes) was
+measured 10-55% slower at most scales due to dual-vector overhead. The key
+insight: below one cache line (64 bytes), clone cost matters more than absolute
+struct size. `Rc::clone` (~1ns atomic increment) consistently beats
+`String::clone` (copies len bytes).
+
+Also added a realistic cardinality benchmark using a pool of 100 distinct
+`Rc<str>` values, showing 35% improvement over unique strings at 1M events.
 
 ### Session 10: E2E Validation + Custom C Entry Point
 
-Discovered and fixed 3 critical bugs: SEGFAULT on extension load, 6 of 7
-functions silently failing to register, and `window_funnel` returning wrong
-results due to combine not propagating configuration fields. No performance
-optimization targets.
+Discovered and fixed 3 critical bugs that 375 passing unit tests missed:
+
+1. **SEGFAULT on extension load**: `extract_raw_connection` used incorrect
+   pointer arithmetic. Replaced with a custom C entry point
+   (`behavioral_init_c_api`) that obtains `duckdb_connection` via
+   `duckdb_connect` directly from `duckdb_extension_access`.
+
+2. **Silent function registration failure**: `duckdb_aggregate_function_set_name`
+   must be called on each function in a set. Without this, 6 of 7 functions
+   silently failed to register.
+
+3. **Incorrect combine propagation**: `combine_in_place` did not propagate
+   `window_size_us` or `mode`. DuckDB's segment tree creates fresh
+   zero-initialized target states, so these fields remained zero at finalize
+   time.
+
+No performance optimization targets. 11 E2E tests added against real DuckDB
+v1.4.4 CLI.
 
 ### Session 11: NFA Fast Paths
 
-Pattern classification dispatches common shapes to specialized O(n) scans,
-eliminating NFA overhead for the most common patterns.
+Two Criterion-validated optimizations for the NFA pattern executor:
+
+1. **NFA reusable stack**: Pre-allocate the NFA state Vec once and reuse
+   across all starting positions via `clear()`. Eliminates O(N) alloc/free
+   pairs in `sequence_count`.
+
+2. **Fast-path linear scan**: Pattern classification dispatches common shapes
+   to specialized O(n) scans:
+   - Adjacent conditions (`(?1)(?2)`): sliding window scan
+   - Wildcard-separated (`(?1).*(?2)`): single-pass step counter
+   - Complex patterns: fall back to NFA
 
 | Function | Scale | Improvement |
 |---|---|---|
@@ -153,7 +214,9 @@ eliminating NFA overhead for the most common patterns.
 | `sequence_count` | 100-1M events | 39-40% additional (fast-path linear scan) |
 | `sequence_count` | 100-1M events | 56-61% combined improvement |
 
-A first-condition pre-check was tested and produced negative results (reverted).
+A first-condition pre-check was tested and produced negative results (0-8%
+regression). The NFA already handles non-matching starts efficiently (~5ns per
+check), so the extra branch in the hot loop costs more than it saves. Reverted.
 
 ## Benchmark Inventory
 
@@ -168,6 +231,8 @@ A first-condition pre-check was tested and produced negative results (reverted).
 | `sequence_match` | `sequence_match` | 100 to 100 million |
 | `sequence_count` | `sequence_count` | 100 to 100 million |
 | `sequence_combine` | `sequence_*` | 100 to 1 million |
+| `sequence_match_events` | `sequence_match_events` | 100 to 100 million |
+| `sequence_match_events_combine` | `sequence_match_events` | 100 to 1 million |
 | `sort_events` | (isolated) | 100 to 100 million |
 | `sort_events_presorted` | (isolated) | 100 to 100 million |
 | `sequence_next_node` | `sequence_next_node` | 100 to 10 million |
@@ -183,6 +248,7 @@ cargo bench
 # Run a specific group
 cargo bench -- sessionize
 cargo bench -- window_funnel
+cargo bench -- sequence_match_events
 
 # Results stored in target/criterion/ for comparison
 ```

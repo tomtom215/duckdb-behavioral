@@ -82,3 +82,9 @@ timestamp collection path separate from the performance-critical
 | Combine | O(m) where m = events in other state |
 | Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
 | Space | O(n) -- all collected events |
+
+## See Also
+
+- [`sequence_match`](./sequence-match.md) -- check whether the pattern matches (boolean)
+- [`sequence_count`](./sequence-count.md) -- count non-overlapping matches of the same pattern
+- [`sequence_next_node`](./sequence-next-node.md) -- find the next event value after a pattern match
