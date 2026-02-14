@@ -112,8 +112,9 @@ unsafe extern "C" fn state_update(
             let ffi_state = &mut *(state_ptr as *mut FfiState);
             let state = &mut *ffi_state.inner;
 
-            // Skip NULL timestamps
+            // NULL timestamps: mark state so finalize emits NULL for this row
             if !ts_validity.is_null() && !duckdb_validity_row_is_valid(ts_validity, i as idx_t) {
+                state.mark_null_row();
                 continue;
             }
 
@@ -187,7 +188,10 @@ unsafe extern "C" fn state_finalize(
             let ffi_state = &*(state_ptr as *const FfiState);
             let idx = offset as usize + i;
 
-            if ffi_state.inner.is_null() || (*ffi_state.inner).first_ts.is_none() {
+            if ffi_state.inner.is_null()
+                || (*ffi_state.inner).first_ts.is_none()
+                || (*ffi_state.inner).current_row_null
+            {
                 duckdb_validity_set_row_invalid(validity, idx as idx_t);
             } else {
                 *data.add(idx) = (*ffi_state.inner).finalize();
