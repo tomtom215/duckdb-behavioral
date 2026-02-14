@@ -2,6 +2,12 @@
 //!
 //! Measures update + finalize throughput at multiple input sizes.
 //! Tests forward matching with `first_match` base (the common case).
+//!
+//! Event-collecting function with String storage: `NextNodeEvent` is 32 bytes
+//! with `Rc<str>`. Memory-limited to ~50M unique-string events or ~100M
+//! realistic-cardinality events on a 21GB system.
+//!
+//! Uses Criterion with 100+ samples and 95% confidence intervals.
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
 use behavioral::sequence_next_node::{Base, Direction, NextNodeEvent, SequenceNextNodeState};
@@ -28,8 +34,10 @@ fn bench_sequence_next_node(c: &mut Criterion) {
 
     for &n in &[100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000] {
         group.throughput(Throughput::Elements(n as u64));
-        if n >= 10_000_000 {
+        if n >= 1_000_000 {
             group.sample_size(10);
+        }
+        if n >= 10_000_000 {
             group.measurement_time(std::time::Duration::from_secs(60));
         }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
@@ -53,8 +61,12 @@ fn bench_sequence_next_node(c: &mut Criterion) {
 fn bench_sequence_next_node_combine(c: &mut Criterion) {
     let mut group = c.benchmark_group("sequence_next_node_combine");
 
-    for &n in &[100_usize, 1_000, 10_000, 100_000] {
+    for &n in &[100_usize, 1_000, 10_000, 100_000, 1_000_000] {
         group.throughput(Throughput::Elements(n as u64));
+        if n >= 1_000_000 {
+            group.sample_size(10);
+            group.measurement_time(std::time::Duration::from_secs(30));
+        }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             let states: Vec<SequenceNextNodeState> = (0..n)
                 .map(|i| {
@@ -100,11 +112,13 @@ fn bench_sequence_next_node_realistic(c: &mut Criterion) {
         .map(|i| Rc::from(format!("page_{i}").as_str()))
         .collect();
 
-    for &n in &[100, 1_000, 10_000, 100_000, 1_000_000] {
+    for &n in &[100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000] {
         group.throughput(Throughput::Elements(n as u64));
         if n >= 1_000_000 {
             group.sample_size(10);
-            group.measurement_time(std::time::Duration::from_secs(30));
+        }
+        if n >= 10_000_000 {
+            group.measurement_time(std::time::Duration::from_secs(60));
         }
         let pool_clone = pool.clone();
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {

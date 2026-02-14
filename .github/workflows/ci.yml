@@ -128,3 +128,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-targets
+
+  # Build the extension using the community extension Makefile to catch
+  # packaging issues early (e.g., library name mismatches, metadata errors)
+  extension-build:
+    name: Extension build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: extension-build
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build extension
+        run: |
+          make configure
+          make release
+      - name: Verify extension artifact
+        run: |
+          test -f build/release/behavioral.duckdb_extension
+          ls -lh build/release/behavioral.duckdb_extension

@@ -116,8 +116,8 @@ cargo build --release
 Then load the extension in DuckDB:
 
 ```sql
-LOAD 'path/to/target/release/libduckdb_behavioral.so';  -- Linux
-LOAD 'path/to/target/release/libduckdb_behavioral.dylib'; -- macOS
+LOAD 'path/to/target/release/libbehavioral.so';  -- Linux
+LOAD 'path/to/target/release/libbehavioral.dylib'; -- macOS
 ```
 
 > **Note:** DuckDB requires the `-unsigned` flag for locally-built extensions:
@@ -157,11 +157,13 @@ performance claim below is backed by
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| **`sessionize`** | **1 billion rows** | **1.16 s** | **862 Melem/s** |
-| **`retention`** | **1 billion rows** | **2.96 s** | **338 Melem/s** |
-| `window_funnel` | 100 million rows | 761 ms | 131 Melem/s |
-| `sequence_match` | 100 million rows | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million rows | 1.45 s | 69 Melem/s |
+| **`sessionize`** | **1 billion rows** | **1.18 s** | **848 Melem/s** |
+| **`retention`** | **1 billion rows** | **2.94 s** | **340 Melem/s** |
+| `window_funnel` | 100 million rows | 715 ms | 140 Melem/s |
+| `sequence_match` | 100 million rows | 902 ms | 111 Melem/s |
+| `sequence_count` | 100 million rows | 1.05 s | 95 Melem/s |
+| `sequence_match_events` | 100 million rows | 921 ms | 109 Melem/s |
+| `sequence_next_node` | 10 million rows | 438 ms | 23 Melem/s |
 
 Key design choices that enable this performance:
 
@@ -181,16 +183,38 @@ documented in the [Performance](./internals/performance.md) section.
 
 ---
 
+## Engineering Highlights
+
+This project demonstrates depth across systems programming, database internals,
+algorithm design, performance engineering, and software quality practices.
+For a comprehensive technical overview, see the
+[Engineering Overview](./engineering.md).
+
+| Area | Highlights |
+|---|---|
+| **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
+| **Testing Rigor** | 403 unit tests, 11 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
+| **Performance** | Twelve sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Three negative results documented honestly. |
+| **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
+| **Database Internals** | Raw DuckDB C API integration via custom entry point. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
+| **CI/CD** | 13 CI jobs, 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
+| **Feature Completeness** | Complete ClickHouse behavioral analytics parity: 7 functions, 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
+
+---
+
 ## Documentation
 
 | Section | Contents |
 |---|---|
+| [Engineering Overview](./engineering.md) | Technical depth, architecture, quality standards, domain significance |
 | [Getting Started](./getting-started.md) | Installation, loading, troubleshooting, your first analysis |
 | [Function Reference](./functions/sessionize.md) | Detailed docs for all 7 functions with examples |
+| [Use Cases](./use-cases.md) | Five complete real-world examples with sample data and queries |
 | [FAQ](./faq.md) | Common questions about loading, patterns, modes, NULLs |
 | [Architecture](./internals/architecture.md) | Module structure, design decisions, FFI bridge |
 | [Performance](./internals/performance.md) | Benchmarks, algorithmic complexity, optimization history |
-| [ClickHouse Compatibility](./internals/clickhouse-compatibility.md) | Syntax mapping, semantic parity, remaining gaps (none) |
+| [ClickHouse Compatibility](./internals/clickhouse-compatibility.md) | Syntax mapping, semantic parity matrix |
+| [Operations](./operations/ci-cd.md) | CI/CD, security and supply chain, benchmarking methodology |
 | [Contributing](./contributing.md) | Development setup, testing expectations, PR process |
 
 ---

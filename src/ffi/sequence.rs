@@ -44,6 +44,10 @@ unsafe fn register_sequence_function_set(
     ),
     state_destroy_fn: unsafe extern "C" fn(*mut duckdb_aggregate_state, idx_t),
 ) {
+    // SAFETY: The connection handle is valid (provided by register_all_raw from
+    // behavioral_init_c_api). All function pointers are valid extern "C" callbacks
+    // defined in this module. DuckDB C API functions are called in the correct order:
+    // create set, create function, set parameters, set callbacks, add to set, register.
     unsafe {
         let name = CString::new(func_name).unwrap();
         let set = duckdb_create_aggregate_function_set(name.as_ptr());

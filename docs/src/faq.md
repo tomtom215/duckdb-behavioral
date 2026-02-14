@@ -15,17 +15,17 @@ cargo build --release
 
 ```sql
 -- Linux
-LOAD 'target/release/libduckdb_behavioral.so';
+LOAD 'target/release/libbehavioral.so';
 
 -- macOS
-LOAD 'target/release/libduckdb_behavioral.dylib';
+LOAD 'target/release/libbehavioral.dylib';
 ```
 
 You must pass the `-unsigned` flag when using the DuckDB CLI since this extension
 is not signed by the DuckDB Foundation:
 
 ```bash
-duckdb -unsigned -c "LOAD 'target/release/libduckdb_behavioral.so'; SELECT ..."
+duckdb -unsigned -c "LOAD 'target/release/libbehavioral.so'; SELECT ..."
 ```
 
 ### The extension fails to load. What should I check?
@@ -486,7 +486,7 @@ import duckdb
 
 conn = duckdb.connect()
 conn.execute("SET allow_unsigned_extensions = true")
-conn.execute("LOAD 'target/release/libduckdb_behavioral.so'")
+conn.execute("LOAD 'target/release/libbehavioral.so'")
 
 # Run behavioral queries and get results as a DataFrame
 df = conn.execute("""
@@ -534,7 +534,7 @@ const db = new duckdb.Database(':memory:', {
     allow_unsigned_extensions: 'true'
 });
 
-db.run("LOAD 'target/release/libduckdb_behavioral.so'", (err) => {
+db.run("LOAD 'target/release/libbehavioral.so'", (err) => {
     if (err) throw err;
 
     db.all(`
@@ -563,7 +563,7 @@ my_project:
       type: duckdb
       path: ':memory:'
       extensions:
-        - path: /absolute/path/to/libduckdb_behavioral.so
+        - path: /absolute/path/to/libbehavioral.so
           unsigned: true
 ```
 

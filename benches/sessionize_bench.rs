@@ -1,5 +1,9 @@
 //! Benchmarks for the `sessionize` function.
 //!
+//! Measures update + finalize throughput and combine overhead at multiple
+//! input sizes. Sessionize is O(1) state, enabling benchmarks up to 1 billion
+//! elements without memory constraints.
+//!
 //! Uses Criterion with 100+ samples and 95% confidence intervals.
 #![allow(missing_docs)]
 
@@ -20,7 +24,6 @@ fn bench_sessionize_update(c: &mut Criterion) {
         1_000_000_000,
     ] {
         group.throughput(Throughput::Elements(n as u64));
-        // Use fewer samples for large inputs to keep benchmark time reasonable
         if n >= 100_000_000 {
             group.sample_size(10);
             group.measurement_time(std::time::Duration::from_secs(30));
@@ -49,10 +52,25 @@ fn bench_sessionize_update(c: &mut Criterion) {
 fn bench_sessionize_combine(c: &mut Criterion) {
     let mut group = c.benchmark_group("sessionize_combine");
 
-    for &n in &[100, 1_000, 10_000, 100_000, 1_000_000] {
+    // SessionizeBoundaryState is O(1) per state (~32 bytes), but combine
+    // benchmarks pre-allocate all states in a Vec. At 1B states this requires
+    // ~32GB which exceeds available RAM. Capped at 100M (3.2GB).
+    for &n in &[
+        100,
+        1_000,
+        10_000,
+        100_000,
+        1_000_000,
+        10_000_000,
+        100_000_000,
+    ] {
         group.throughput(Throughput::Elements(n as u64));
+        if n >= 100_000_000 {
+            group.sample_size(10);
+            group.measurement_time(std::time::Duration::from_secs(30));
+        }
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            // Pre-build states
+            // Pre-build states: each state is ~32 bytes (O(1) per state)
             let states: Vec<SessionizeBoundaryState> = (0..n)
                 .map(|i| {
                     let mut s = SessionizeBoundaryState::new();

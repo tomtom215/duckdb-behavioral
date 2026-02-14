@@ -342,18 +342,19 @@ extraction with a custom C entry point. 11 E2E tests against real DuckDB.
 common shapes to specialized O(n) scans (39-61% improvement for `sequence_count`).
 Added 21 combine propagation tests, 7 fast-path tests, and git mining SQL examples.
 
-**Headline numbers (Criterion-validated, 95% CI, Sessions 7-11):**
+**Headline numbers (Criterion-validated, 95% CI, Session 13):**
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | **1 billion** | **1.16 s** | **862 Melem/s** |
-| `retention` (combine) | **1 billion** | **2.96 s** | **338 Melem/s** |
-| `window_funnel` | 100 million | 761 ms | 131 Melem/s |
-| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million | 1.45 s | 69 Melem/s |
-| `sequence_next_node` | 10 million | 1.23 s | 8.1 Melem/s |
+| `sessionize` | **1 billion** | **1.18 s** | **848 Melem/s** |
+| `retention` (combine) | **1 billion** | **2.94 s** | **340 Melem/s** |
+| `window_funnel` | 100 million | 715 ms | 140 Melem/s |
+| `sequence_match` | 100 million | 902 ms | 111 Melem/s |
+| `sequence_count` | 100 million | 1.05 s | 95 Melem/s |
+| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
+| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
 
-All measurements: Criterion.rs, 95% confidence intervals, 3+ runs.
+All measurements: Criterion.rs, 95% confidence intervals.
 Full methodology, optimization history with CIs, and baseline records:
 [`PERF.md`](PERF.md).
 
@@ -454,6 +455,28 @@ When DuckDB releases a new version, update `libduckdb-sys` in Cargo.toml,
 | `USE_UNSTABLE_C_API=1` pins to a specific DuckDB version | Documented in Makefile; `ref_next` field available for dev builds |
 | Extension naming is at DuckDB Foundation discretion | "behavioral" is descriptive and does not conflict with core extensions |
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/). See
+the [versioning policy](https://tomtom215.github.io/duckdb-behavioral/operations/security.html#versioning)
+for the full SemVer rules applied to SQL function signatures.
+
+**Release process:**
+
+1. Update version in `Cargo.toml` and `description.yml`
+2. Commit: `git commit -m "chore: bump version to X.Y.Z"`
+3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
+4. The release workflow validates SemVer, builds for 4 platforms, and publishes
+
+## CI/CD
+
+| Workflow | Trigger | Jobs |
+|----------|---------|------|
+| **CI** | Push/PR to main | 13 jobs: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build |
+| **E2E** | Push/PR to main | Builds extension, tests all 7 functions against real DuckDB, load tests 100K events |
+| **Release** | Tag push `v*` | SemVer validation, 4-platform build, SQL tests, provenance attestation, GitHub Release |
+| **Pages** | Push to main | Deploys mdBook documentation to GitHub Pages |
+
 ## Development
 
 ```bash
@@ -469,6 +492,10 @@ cargo fmt
 # Run benchmarks
 cargo bench
 
+# Build extension via community Makefile
+git submodule update --init
+make configure && make release && make test_release
+
 # Build documentation
 cargo doc --no-deps --open
 ```
@@ -477,6 +504,7 @@ cargo doc --no-deps --open
 
 - Rust 1.80+ (MSRV)
 - DuckDB 1.4.4 (pinned dependency)
+- Python 3.x (for extension metadata tooling)
 
 ## License
 

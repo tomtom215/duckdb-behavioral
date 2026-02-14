@@ -88,7 +88,7 @@ extension loading mechanism. Both levels are mandatory.
 cargo build --release
 
 # Copy and append metadata
-cp target/release/libduckdb_behavioral.so /tmp/behavioral.duckdb_extension
+cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
   -p linux_amd64 -dv v1.2.0 -ev v0.1.0 --abi-type C_STRUCT \

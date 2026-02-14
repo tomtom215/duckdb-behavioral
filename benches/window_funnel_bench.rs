@@ -2,6 +2,11 @@
 //!
 //! Measures update + finalize throughput and combine overhead at multiple
 //! input sizes to validate O(n*k) complexity where n = events, k = conditions.
+//!
+//! Event-collecting function: limited to 100M elements by memory (16 bytes/event,
+//! 1.6GB at 100M, requires ~3.2GB with Criterion clone per iteration).
+//!
+//! Uses Criterion with 100+ samples and 95% confidence intervals.
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
 use behavioral::common::event::Event;
@@ -36,8 +41,10 @@ fn bench_window_funnel_finalize(c: &mut Criterion) {
         (100_000_000, 8),
     ] {
         group.throughput(Throughput::Elements(events as u64));
-        if events >= 100_000_000 {
+        if events >= 10_000_000 {
             group.sample_size(10);
+        }
+        if events >= 100_000_000 {
             group.measurement_time(std::time::Duration::from_secs(60));
         }
         group.bench_with_input(
