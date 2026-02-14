@@ -191,15 +191,17 @@ jobs:
       - name: Validation summary
         if: always()
         run: |
-          echo "### Phase 1: Validation" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| description.yml schema | ${{ steps.schema.outcome == 'success' && 'Pass' || 'FAIL' }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Version consistency | ${{ steps.versions.outcome == 'success' && 'Pass' || 'FAIL' }} (${{ steps.versions.outputs.version }}) |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Current HEAD | \`${{ steps.sha.outputs.current_sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Pinned ref | \`${{ steps.sha.outputs.pinned_ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Ref is current | ${{ steps.sha.outputs.ref_is_current }} |" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Phase 1: Validation"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| description.yml schema | ${{ steps.schema.outcome == 'success' && 'Pass' || 'FAIL' }} |"
+            echo "| Version consistency | ${{ steps.versions.outcome == 'success' && 'Pass' || 'FAIL' }} (${{ steps.versions.outputs.version }}) |"
+            echo "| Current HEAD | \`${{ steps.sha.outputs.current_sha }}\` |"
+            echo "| Pinned ref | \`${{ steps.sha.outputs.pinned_ref }}\` |"
+            echo "| Ref is current | ${{ steps.sha.outputs.ref_is_current }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Phase 2: Quality gate ──────────────────────────────────────────────
   quality-gate:
@@ -231,9 +233,11 @@ jobs:
       - name: Quality gate summary
         if: always()
         run: |
-          echo "### Phase 2: Quality Gate" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "All code quality checks passed." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Phase 2: Quality Gate"
+            echo ""
+            echo "All code quality checks passed."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Phase 3: Build and test via community Makefile ─────────────────────
   build-test:
@@ -278,9 +282,11 @@ jobs:
       - name: Build & test summary
         if: always()
         run: |
-          echo "### Phase 3: Build & Test" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Extension built and tested via community Makefile toolchain." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Phase 3: Build & Test"
+            echo ""
+            echo "Extension built and tested via community Makefile toolchain."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Phase 4: Pin ref in description.yml ────────────────────────────────
   pin-ref:
@@ -373,8 +379,8 @@ jobs:
 
       - name: Prepare submission artifact
         run: |
-          mkdir -p submission/extensions/${{ env.EXTENSION_NAME }}
-          cp description.yml submission/extensions/${{ env.EXTENSION_NAME }}/description.yml
+          mkdir -p "submission/extensions/${{ env.EXTENSION_NAME }}"
+          cp description.yml "submission/extensions/${{ env.EXTENSION_NAME }}/description.yml"
 
       - name: Upload submission artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -385,9 +391,6 @@ jobs:
 
       - name: Generate submission instructions
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          PINNED="${{ needs.pin-ref.outputs.pinned_sha || needs.validate.outputs.current_sha }}"
-
           cat >> "$GITHUB_STEP_SUMMARY" << 'SUMMARY_EOF'
           ### Phase 5: Submission Package
 
@@ -422,7 +425,7 @@ jobs:
 
           # 5. Commit and push
           git add extensions/behavioral/description.yml
-          git commit -m "Add behavioral extension v${VERSION}"
+          git commit -m "Add behavioral extension v${{ needs.validate.outputs.version }}"
           git push -u origin add-behavioral-extension
 
           # 6. Create the pull request
@@ -438,7 +441,7 @@ jobs:
           sequence_count, sequence_match_events, sequence_next_node
 
           **Repository:** https://github.com/tomtom215/duckdb-behavioral
-          **Version:** ${VERSION}
+          **Version:** ${{ needs.validate.outputs.version }}
           **Language:** Rust
           **Build:** cargo
           **License:** MIT
@@ -494,27 +497,29 @@ jobs:
     steps:
       - name: Generate dry run report
         run: |
-          echo "### Community Extension Submission — Dry Run Report" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Phase | Result |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Validation | ${{ needs.validate.result }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Quality Gate | ${{ needs.quality-gate.result }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Build & Test | ${{ needs.build-test.result }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Detail | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Extension | ${{ env.EXTENSION_NAME }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Version | ${{ needs.validate.outputs.version }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Current HEAD | \`${{ needs.validate.outputs.current_sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Pinned ref | \`${{ needs.validate.outputs.pinned_ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Ref matches HEAD | ${{ needs.validate.outputs.ref_is_current }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Community Extension Submission — Dry Run Report"
+            echo ""
+            echo "| Phase | Result |"
+            echo "|---|---|"
+            echo "| Validation | ${{ needs.validate.result }} |"
+            echo "| Quality Gate | ${{ needs.quality-gate.result }} |"
+            echo "| Build & Test | ${{ needs.build-test.result }} |"
+            echo ""
+            echo "| Detail | Value |"
+            echo "|---|---|"
+            echo "| Extension | ${{ env.EXTENSION_NAME }} |"
+            echo "| Version | ${{ needs.validate.outputs.version }} |"
+            echo "| Current HEAD | \`${{ needs.validate.outputs.current_sha }}\` |"
+            echo "| Pinned ref | \`${{ needs.validate.outputs.pinned_ref }}\` |"
+            echo "| Ref matches HEAD | ${{ needs.validate.outputs.ref_is_current }} |"
+            echo ""
 
-          if [ "${{ needs.validate.result }}" = "success" ] && \
-             [ "${{ needs.quality-gate.result }}" = "success" ] && \
-             [ "${{ needs.build-test.result }}" = "success" ]; then
-            echo "**All checks passed.** Ready to run with \`dry_run=false\` to pin ref and generate submission package." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "**Some checks failed.** Review the logs above before proceeding." >> "$GITHUB_STEP_SUMMARY"
-          fi
+            if [ "${{ needs.validate.result }}" = "success" ] && \
+               [ "${{ needs.quality-gate.result }}" = "success" ] && \
+               [ "${{ needs.build-test.result }}" = "success" ]; then
+              echo "**All checks passed.** Ready to run with \`dry_run=false\` to pin ref and generate submission package."
+            else
+              echo "**Some checks failed.** Review the logs above before proceeding."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

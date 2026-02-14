@@ -78,7 +78,7 @@ jobs:
           TAG_VERSION="${{ steps.version.outputs.semver }}"
 
           # Strip pre-release suffix for comparison (v0.1.0-rc.1 matches Cargo 0.1.0)
-          TAG_BASE=$(echo "$TAG_VERSION" | sed 's/-.*//')
+          TAG_BASE="${TAG_VERSION%%-*}"
 
           if [ "$CARGO_VERSION" != "$TAG_BASE" ]; then
             echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match tag version ($TAG_BASE)"
@@ -90,7 +90,8 @@ jobs:
       - name: Verify description.yml version matches
         run: |
           DESC_VERSION=$(grep '  version:' description.yml | head -1 | awk '{print $2}')
-          TAG_BASE=$(echo "${{ steps.version.outputs.semver }}" | sed 's/-.*//')
+          TAG_SEMVER="${{ steps.version.outputs.semver }}"
+          TAG_BASE="${TAG_SEMVER%%-*}"
 
           if [ "$DESC_VERSION" != "$TAG_BASE" ]; then
             echo "ERROR: description.yml version ($DESC_VERSION) does not match tag ($TAG_BASE)"
@@ -167,14 +168,15 @@ jobs:
       - name: Package extension
         run: |
           mkdir -p dist
-          cp build/release/${{ env.EXTENSION_NAME }}.duckdb_extension dist/
-          cp build/release/lib${{ env.EXTENSION_NAME }}.${{ matrix.lib_ext }} dist/
+          cp "build/release/${{ env.EXTENSION_NAME }}.duckdb_extension" dist/
+          cp "build/release/lib${{ env.EXTENSION_NAME }}.${{ matrix.lib_ext }}" dist/
 
-          cd dist
-          sha256sum * > SHA256SUMS.txt 2>/dev/null || shasum -a 256 * > SHA256SUMS.txt
-          cd ..
+          (
+            cd dist || exit 1
+            sha256sum ./* > SHA256SUMS.txt 2>/dev/null || shasum -a 256 ./* > SHA256SUMS.txt
+          )
 
-          tar czf ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz -C dist .
+          tar czf "${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz" -C dist .
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
@@ -250,8 +252,8 @@ jobs:
             exit 1
           fi
 
-          cd release
-          sha256sum *.tar.gz > SHA256SUMS.txt
+          cd release || exit 1
+          sha256sum ./*.tar.gz > SHA256SUMS.txt
           echo "=== Release artifacts ($ARTIFACT_COUNT files) ==="
           cat SHA256SUMS.txt
 

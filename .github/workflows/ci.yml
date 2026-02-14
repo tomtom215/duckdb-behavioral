@@ -443,7 +443,8 @@ jobs:
             echo "### Extension Build"
             echo ""
             if [ -f build/release/behavioral.duckdb_extension ]; then
-              SIZE=$(ls -lh build/release/behavioral.duckdb_extension | awk '{print $5}')
+              SIZE=$(wc -c < build/release/behavioral.duckdb_extension | xargs)
+              SIZE="${SIZE} bytes"
               echo "✅ Extension built successfully."
               echo ""
               echo "| Artifact | Size |"
