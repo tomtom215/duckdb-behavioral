@@ -342,18 +342,19 @@ extraction with a custom C entry point. 11 E2E tests against real DuckDB.
 common shapes to specialized O(n) scans (39-61% improvement for `sequence_count`).
 Added 21 combine propagation tests, 7 fast-path tests, and git mining SQL examples.
 
-**Headline numbers (Criterion-validated, 95% CI, Sessions 7-11):**
+**Headline numbers (Criterion-validated, 95% CI, Session 13):**
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | **1 billion** | **1.16 s** | **862 Melem/s** |
-| `retention` (combine) | **1 billion** | **2.96 s** | **338 Melem/s** |
-| `window_funnel` | 100 million | 761 ms | 131 Melem/s |
-| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million | 1.45 s | 69 Melem/s |
-| `sequence_next_node` | 10 million | 1.23 s | 8.1 Melem/s |
+| `sessionize` | **1 billion** | **1.18 s** | **848 Melem/s** |
+| `retention` (combine) | **1 billion** | **2.94 s** | **340 Melem/s** |
+| `window_funnel` | 100 million | 715 ms | 140 Melem/s |
+| `sequence_match` | 100 million | 902 ms | 111 Melem/s |
+| `sequence_count` | 100 million | 1.05 s | 95 Melem/s |
+| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
+| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
 
-All measurements: Criterion.rs, 95% confidence intervals, 3+ runs.
+All measurements: Criterion.rs, 95% confidence intervals.
 Full methodology, optimization history with CIs, and baseline records:
 [`PERF.md`](PERF.md).
 

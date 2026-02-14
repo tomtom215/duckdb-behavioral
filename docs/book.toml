@@ -8,6 +8,12 @@ src = "src"
 [build]
 build-dir = "book"
 
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html.playground]
+editable = false
+
 [output.html]
 default-theme = "light"
 preferred-dark-theme = "navy"

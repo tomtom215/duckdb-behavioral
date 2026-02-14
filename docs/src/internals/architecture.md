@@ -117,6 +117,24 @@ pub struct Event {
 The pattern engine (`src/pattern/`) compiles pattern strings into a structured
 AST and executes them via an NFA.
 
+```mermaid
+flowchart LR
+    SQL["SQL Pattern String<br/>'(?1).*(?t<=3600)(?2)'"]
+    PARSE["Recursive Descent<br/>Parser"]
+    CP["CompiledPattern<br/>Vec of PatternStep"]
+    CLASS["Pattern<br/>Classifier"]
+
+    SQL --> PARSE --> CP --> CLASS
+
+    CLASS -->|Adjacent| ADJ["O(n) Sliding Window"]
+    CLASS -->|Wildcard-separated| WC["O(n) Linear Scan"]
+    CLASS -->|Complex| NFA["NFA Backtracking"]
+
+    ADJ --> RES["MatchResult"]
+    WC --> RES
+    NFA --> RES
+```
+
 ### Parser
 
 The recursive descent parser (`parser.rs`) converts pattern strings like
@@ -153,6 +171,31 @@ backtracking to try advancing the pattern.
 
 DuckDB's segment tree windowing calls `combine` O(n log n) times. The combine
 implementation is the dominant cost for event-collecting functions.
+
+```mermaid
+flowchart TB
+    subgraph "DuckDB Segment Tree"
+        R["Root State"]
+        L1["State A"]
+        L2["State B"]
+        L3["State C"]
+        L4["State D"]
+        R --- L1 & L2
+        L1 --- L3 & L4
+    end
+
+    subgraph "Combine Operation"
+        T["Target<br/>(zero-initialized)"]
+        S["Source State"]
+        T -->|"extend events<br/>propagate config"| M["Merged State"]
+        S -->|"append events"| M
+    end
+
+    subgraph "Finalize"
+        M -->|"sort events"| SORT["Sorted Events"]
+        SORT -->|"scan / match"| OUT["Result"]
+    end
+```
 
 | Function | Combine Strategy | Complexity |
 |---|---|---|
