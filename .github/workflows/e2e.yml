@@ -10,23 +10,35 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Cancel redundant runs on the same branch/PR
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
+  DUCKDB_VERSION: "v1.4.4"
 
 jobs:
   e2e-test:
     name: E2E (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             platform: linux_amd64
+            duckdb_asset: duckdb_cli-linux-amd64.zip
           - os: macos-latest
             platform: osx_arm64
+            duckdb_asset: duckdb_cli-osx-universal.zip
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -57,14 +69,10 @@ jobs:
       # Run extended E2E tests using DuckDB CLI
       - name: Install DuckDB CLI
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            curl -sSL "https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-linux-amd64.zip" -o duckdb.zip
-          elif [ "${{ runner.os }}" = "macOS" ]; then
-            curl -sSL "https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-osx-universal.zip" -o duckdb.zip
-          fi
+          curl -sSL "https://github.com/duckdb/duckdb/releases/download/${{ env.DUCKDB_VERSION }}/${{ matrix.duckdb_asset }}" -o duckdb.zip
           unzip duckdb.zip
           chmod +x duckdb
-          ./duckdb --version
+          echo "DuckDB version: $(./duckdb --version)"
 
       - name: Verify extension loads
         run: |
@@ -288,11 +296,28 @@ jobs:
     needs: e2e-test
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Check results
+      - name: Evaluate results
         run: |
-          if [ "${{ needs.e2e-test.result }}" != "success" ]; then
-            echo "E2E tests failed"
-            exit 1
-          fi
-          echo "All E2E tests passed"
+          {
+            echo "### E2E Test Summary"
+            echo ""
+            echo "| Platform | Result |"
+            echo "|----------|--------|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          RESULT="${{ needs.e2e-test.result }}"
+          case "$RESULT" in
+            success)
+              echo "| All platforms | ✅ passed |" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "✅ **All E2E tests passed.** Extension loads, all 7 functions execute correctly, 100K load test succeeded." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "| One or more platforms | ❌ $RESULT |" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "❌ **E2E tests failed.** Check individual platform logs above." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+              ;;
+          esac

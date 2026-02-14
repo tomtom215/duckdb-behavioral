@@ -37,6 +37,7 @@ use crate::pattern::parser::{parse_pattern, CompiledPattern, PatternError};
 /// Collects timestamped events during `update`, then matches them against
 /// the compiled pattern during `finalize`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SequenceState {
     /// Collected events (timestamp + conditions). Sorted in finalize.
     pub events: Vec<Event>,
