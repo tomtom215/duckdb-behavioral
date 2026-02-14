@@ -949,35 +949,34 @@ theoretical minimum overhead of storing per-event values.
 
 ### Per-Element Cost at Scale
 
-Cost per element at scale. Session 11 numbers for sequence functions; Session 9
-numbers for all others:
+Cost per element at scale. Session 13 refresh numbers:
 
 | Function | Scale | Time | ns/element | Throughput | Bottleneck |
 |---|---|---|---|---|---|
-| `sessionize_update` | 100M | 116 ms | 1.16 | 862 Melem/s | O(1) per-event, compute-bound |
-| `retention_combine` | 100M | 270 ms | 2.70 | 370 Melem/s | O(1) per-state, DRAM-bound |
-| `window_funnel_finalize` | 100M | 761 ms | 7.61 | 131 Melem/s | Sort + O(n*k) greedy scan |
-| `sequence_match` | 100M | 999 ms | 9.99 | 100 Melem/s | Sort + O(n) fast-path scan |
-| `sequence_count` | 100M | 1.17 s | 11.7 | 85.3 Melem/s | Sort + O(n) fast-path counting |
-| `sequence_match_events` | — | — | — | — | Baseline pending (added Session 12) |
-| `sequence_next_node` | 10M | 547 ms | 54.7 | 18.3 Melem/s | Sort + sequential scan + Rc\<str\> alloc |
+| `sessionize_update` | 1B | 1.18 s | 1.18 | 848 Melem/s | O(1) per-event, compute-bound |
+| `retention_combine` | 1B | 2.94 s | 2.94 | 340 Melem/s | O(1) per-state, DRAM-bound |
+| `window_funnel_finalize` | 100M | 715 ms | 7.15 | 140 Melem/s | Sort + O(n*k) greedy scan |
+| `sequence_match` | 100M | 902 ms | 9.02 | 111 Melem/s | Sort + O(n) fast-path scan |
+| `sequence_count` | 100M | 1.05 s | 10.5 | 95 Melem/s | Sort + O(n) fast-path counting |
+| `sequence_match_events` | 100M | 921 ms | 9.21 | 109 Melem/s | Sort + NFA + timestamp collection |
+| `sequence_next_node` | 10M | 438 ms | 43.8 | 23 Melem/s | Sort + sequential scan + Rc\<str\> alloc |
 | `sort_events` (random) | 100M | 2.046 s | 20.46 | 48.9 Melem/s | O(n log n) pdqsort, DRAM-bound |
 | `sort_events` (presorted) | 100M | 1.829 s | 18.29 | 54.7 Melem/s | O(n) adaptive, DRAM-bound |
 
 ### Billion-Row Headline Numbers
 
 Criterion-validated, reproducible headline numbers for portfolio presentation
-(Sessions 7-11):
+(Session 13 refresh):
 
 | Function | Scale | Wall Clock | Throughput | ns/element |
 |---|---|---|---|---|
-| **`sessionize_update`** | **1 billion** | **1.16 s** | **862 Melem/s** | **1.16** |
-| **`retention_combine`** | **1 billion** | **2.96 s** | **338 Melem/s** | **2.96** |
-| `window_funnel_finalize` | 100 million | 761 ms | 131 Melem/s | 7.61 |
-| `sequence_match` | 100 million | 999 ms | 100 Melem/s | 9.99 |
-| `sequence_count` | 100 million | 1.17 s | 85.3 Melem/s | 11.7 |
-| `sequence_match_events` | — | — | — | Baseline pending (Session 12) |
-| `sequence_next_node` | 10 million | 547 ms | 18.3 Melem/s | 54.7 |
+| **`sessionize_update`** | **1 billion** | **1.18 s** | **848 Melem/s** | **1.18** |
+| **`retention_combine`** | **1 billion** | **2.94 s** | **340 Melem/s** | **2.94** |
+| `window_funnel_finalize` | 100 million | 715 ms | 140 Melem/s | 7.15 |
+| `sequence_match` | 100 million | 902 ms | 111 Melem/s | 9.02 |
+| `sequence_count` | 100 million | 1.05 s | 95 Melem/s | 10.5 |
+| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s | 9.21 |
+| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s | 43.8 |
 | `sort_events` (random) | 100 million | 2.05 s | 48.8 Melem/s | 20.50 |
 
 Memory constraint: Event-collecting functions store 16 bytes per event. At 100M events

@@ -318,12 +318,13 @@ The extension has been benchmarked at scale with Criterion.rs:
 
 | Function | Tested Scale | Throughput | Memory Model |
 |---|---|---|---|
-| `sessionize` | 1 billion rows | 862 Melem/s | O(1) per partition segment |
-| `retention` | 1 billion rows | 338 Melem/s | O(1) -- single `u32` bitmask |
-| `window_funnel` | 100 million rows | 131 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_match` | 100 million rows | 95 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_count` | 100 million rows | 69 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_next_node` | 10 million rows | 8 Melem/s | O(n) -- 32 bytes per event |
+| `sessionize` | 1 billion rows | 848 Melem/s | O(1) per partition segment |
+| `retention` | 1 billion rows | 340 Melem/s | O(1) -- single `u32` bitmask |
+| `window_funnel` | 100 million rows | 140 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_match` | 100 million rows | 111 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_count` | 100 million rows | 95 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_match_events` | 100 million rows | 109 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_next_node` | 10 million rows | 23 Melem/s | O(n) -- 32 bytes per event |
 
 In practice, real-world datasets with billions of rows are easily handled because
 the functions operate on partitioned groups (e.g., per-user), not the entire table
@@ -616,11 +617,13 @@ Headline benchmarks (Criterion.rs, 95% CI):
 
 | Function | Scale | Throughput |
 |---|---|---|
-| `sessionize` | 1 billion | 862 Melem/s |
-| `retention` | 1 billion | 338 Melem/s |
-| `window_funnel` | 100 million | 131 Melem/s |
-| `sequence_match` | 100 million | 95 Melem/s |
-| `sequence_count` | 100 million | 69 Melem/s |
+| `sessionize` | 1 billion | 848 Melem/s |
+| `retention` | 1 billion | 340 Melem/s |
+| `window_funnel` | 100 million | 140 Melem/s |
+| `sequence_match` | 100 million | 111 Melem/s |
+| `sequence_count` | 100 million | 95 Melem/s |
+| `sequence_match_events` | 100 million | 109 Melem/s |
+| `sequence_next_node` | 10 million | 23 Melem/s |
 
 See the [Performance](./internals/performance.md) page for full methodology and
 optimization history.

@@ -313,6 +313,7 @@ unsafe extern "C" fn state_finalize(
 ) {
     unsafe {
         let data = duckdb_vector_get_data(result) as *mut i32;
+        duckdb_vector_ensure_validity_writable(result);
         let validity = duckdb_vector_get_validity(result);
 
         for i in 0..count as usize {

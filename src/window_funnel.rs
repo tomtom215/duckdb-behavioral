@@ -240,11 +240,23 @@ impl WindowFunnelState {
         let mut events = Vec::with_capacity(self.events.len() + other.events.len());
         events.extend_from_slice(&self.events);
         events.extend_from_slice(&other.events);
+        // Propagate window_size and mode from whichever state has them set,
+        // matching combine_in_place behavior for DuckDB's zero-initialized targets.
+        let window_size_us = if self.window_size_us != 0 {
+            self.window_size_us
+        } else {
+            other.window_size_us
+        };
+        let mode = if self.mode.is_default() {
+            other.mode
+        } else {
+            self.mode
+        };
         Self {
             events,
-            window_size_us: self.window_size_us,
+            window_size_us,
             num_conditions: self.num_conditions.max(other.num_conditions),
-            mode: self.mode,
+            mode,
         }
     }
 

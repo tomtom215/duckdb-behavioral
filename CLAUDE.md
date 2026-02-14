@@ -24,6 +24,7 @@ This file provides context for AI assistants working on this codebase.
   - [Session 10: E2E Validation + Custom C Entry Point](#session-10-e2e-validation--custom-c-entry-point)
   - [Session 11: NFA Fast Paths + Git Mining Demo](#session-11-nfa-fast-paths--git-mining-demo)
   - [Session 12: Community Extension Readiness + Benchmark Completion](#session-12-community-extension-readiness--benchmark-completion)
+  - [Session 13: CI/CD Hardening + Benchmark Refresh](#session-13-cicd-hardening--benchmark-refresh)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Testing](#testing)
 - [CI/CD](#cicd)
@@ -541,6 +542,37 @@ comprehensive documentation, and E2E test fixes.
    verified `make configure && make release && make test_release` passes all 7 SQL
    test files.
 
+### Session 13: CI/CD Hardening + Benchmark Refresh
+
+Session focused on CI/CD hardening, E2E workflow addition, SemVer release
+validation, documentation expansion, and full benchmark baseline refresh.
+
+**Changes:**
+
+1. **CI/CD hardening**: Added E2E workflow testing all 7 functions against real
+   DuckDB, SemVer release validation, expanded CI to 13 jobs.
+
+2. **Benchmark refresh**: Re-ran full `cargo bench` suite to establish Session 13
+   baseline. All 7 functions benchmarked including `sequence_match_events`
+   (previously pending).
+
+3. **Documentation expansion**: Enhanced GitHub Pages site, CLAUDE.md
+   modularization, added Mermaid architecture diagrams.
+
+4. **Test count fix**: Corrected stale test count references (375 → 403).
+
+**Session 13 baseline (Criterion-validated, 95% CI):**
+
+| Function | Scale | Wall Clock | Throughput |
+|---|---|---|---|
+| `sessionize_update` | **1 billion** | **1.18 s** | **848 Melem/s** |
+| `retention_combine` | **1 billion** | **2.94 s** | **340 Melem/s** |
+| `window_funnel` | 100 million | 715 ms | 140 Melem/s |
+| `sequence_match` | 100 million | 902 ms | 111 Melem/s |
+| `sequence_count` | 100 million | 1.05 s | 95 Melem/s |
+| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
+| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
+
 ## ClickHouse Parity Status
 
 **COMPLETE** — All ClickHouse behavioral analytics functions are implemented
@@ -590,8 +622,10 @@ GitHub Actions workflows in `.github/workflows/`:
 
 - **ci.yml**: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, coverage,
   cross-platform (Linux + macOS)
+- **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
-  creates GitHub release on tag push
+  creates GitHub release on tag push with SemVer validation
+- **pages.yml**: Deploys mdBook documentation to GitHub Pages
 
 ## Common Tasks
 

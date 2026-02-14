@@ -20,6 +20,7 @@ remaining gaps.
 | `windowFunnel(window, 'allow_reentry')(...)` | `window_funnel(window, 'allow_reentry', ...)` | Complete |
 | `sequenceMatch(pattern)(timestamp, cond1, ...)` | `sequence_match(pattern, timestamp, cond1, ...)` | Complete |
 | `sequenceCount(pattern)(timestamp, cond1, ...)` | `sequence_count(pattern, timestamp, cond1, ...)` | Complete |
+| N/A (duckdb-behavioral extension) | `sequence_match_events(pattern, timestamp, cond1, ...)` | Complete |
 | `sequenceNextNode(dir, base)(ts, val, base_cond, ev1, ...)` | `sequence_next_node(dir, base, ts, val, base_cond, ev1, ...)` | Complete |
 
 ## Syntax Differences
