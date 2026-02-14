@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 #
 # run-benchmarks.sh — Run the full duckdb-behavioral benchmark suite
 #

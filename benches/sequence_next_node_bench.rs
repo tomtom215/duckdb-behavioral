@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Benchmarks for `sequence_next_node`.
 //!
 //! Measures update + finalize throughput at multiple input sizes.
@@ -19,12 +22,12 @@ fn make_next_node_events(num_events: usize, num_steps: usize) -> Vec<NextNodeEve
         .map(|i| {
             let step = i % (num_steps * 2);
             let bitmask = if step < num_steps { 1u32 << step } else { 0u32 };
-            NextNodeEvent {
-                timestamp_us: (i as i64) * 1_000_000,
-                value: Some(Arc::from(format!("page_{i}").as_str())),
-                base_condition: step == 0,
-                conditions: bitmask,
-            }
+            NextNodeEvent::new(
+                (i as i64) * 1_000_000,
+                Some(Arc::from(format!("page_{i}").as_str())),
+                step == 0,
+                bitmask,
+            )
         })
         .collect()
 }
@@ -75,12 +78,12 @@ fn bench_sequence_next_node_combine(c: &mut Criterion) {
                     s.base = Some(Base::FirstMatch);
                     s.num_steps = 2;
                     let bitmask = 1u32 << (i % 2);
-                    s.update(NextNodeEvent {
-                        timestamp_us: (i as i64) * 1_000_000,
-                        value: Some(Arc::from(format!("page_{i}").as_str())),
-                        base_condition: i % 2 == 0,
-                        conditions: bitmask,
-                    });
+                    s.update(NextNodeEvent::new(
+                        (i as i64) * 1_000_000,
+                        Some(Arc::from(format!("page_{i}").as_str())),
+                        i % 2 == 0,
+                        bitmask,
+                    ));
                     s
                 })
                 .collect();
@@ -126,12 +129,12 @@ fn bench_sequence_next_node_realistic(c: &mut Criterion) {
                 .map(|i| {
                     let step = i % 6; // 3 steps * 2
                     let bitmask = if step < 3 { 1u32 << step } else { 0u32 };
-                    NextNodeEvent {
-                        timestamp_us: (i as i64) * 1_000_000,
-                        value: Some(Arc::clone(&pool_clone[i % 100])),
-                        base_condition: step == 0,
-                        conditions: bitmask,
-                    }
+                    NextNodeEvent::new(
+                        (i as i64) * 1_000_000,
+                        Some(Arc::clone(&pool_clone[i % 100])),
+                        step == 0,
+                        bitmask,
+                    )
                 })
                 .collect();
             b.iter(|| {

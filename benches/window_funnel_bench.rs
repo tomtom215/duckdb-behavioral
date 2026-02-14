@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Benchmarks for the `window_funnel` function.
 //!
 //! Measures update + finalize throughput and combine overhead at multiple

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! `window_funnel` — Aggregate function for conversion funnel analysis.
 //!
 //! Searches for the longest chain of events `cond1 -> cond2 -> ... -> condN`
@@ -193,6 +196,7 @@ impl std::fmt::Display for FunnelMode {
 /// Collects timestamped events during `update`, then processes them in `finalize`
 /// using a greedy forward scan algorithm.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct WindowFunnelState {
     /// Collected events (timestamp + conditions bitmask). Sorted in finalize.
     pub events: Vec<Event>,

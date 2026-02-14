@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI bindings for registering behavioral analytics functions with `DuckDB`.
 //!
 //! This module bridges the pure Rust implementations with `DuckDB`'s C Extension API.

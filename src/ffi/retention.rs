@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `retention` aggregate function.
 
 use crate::retention::RetentionState;
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Minimum number of boolean condition parameters for retention.
 const MIN_CONDITIONS: usize = 2;
@@ -19,7 +21,7 @@ const MAX_CONDITIONS: usize = 32;
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_retention(con: duckdb_connection) {
     unsafe {
-        let name = CString::new("retention").unwrap();
+        let name = c"retention";
         let set = duckdb_create_aggregate_function_set(name.as_ptr());
 
         for n in MIN_CONDITIONS..=MAX_CONDITIONS {

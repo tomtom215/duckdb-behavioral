@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! `sessionize` — Window function that assigns monotonically increasing session IDs.
 //!
 //! A new session starts when the gap between consecutive rows (ordered by timestamp)
@@ -33,6 +36,7 @@
 /// Each state represents a contiguous range of ordered timestamps and
 /// tracks the number of session boundaries within that range.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SessionizeState {
     /// Earliest timestamp in this segment (microseconds since epoch).
     pub first_ts: Option<i64>,
@@ -253,6 +257,7 @@ mod tests {
 /// leaf in the frame is the current row. When this flag is set, `finalize` signals
 /// that the output should be `NULL` (handled in the FFI layer).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SessionizeBoundaryState {
     /// Earliest timestamp in this segment (microseconds since epoch).
     pub first_ts: Option<i64>,

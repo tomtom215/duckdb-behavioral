@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Pattern parsing and matching for `sequence_match` and `sequence_count`.
 //!
 //! Implements a mini-regex language over event conditions, compatible with
