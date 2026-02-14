@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `window_funnel` aggregate function.
 
 use crate::common::event::Event;
 use crate::common::timestamp::interval_to_micros;
 use crate::window_funnel::{FunnelMode, WindowFunnelState};
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Minimum number of boolean condition parameters for `window_funnel`.
 const MIN_CONDITIONS: usize = 2;
@@ -25,7 +27,7 @@ const MAX_CONDITIONS: usize = 32;
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_window_funnel(con: duckdb_connection) {
     unsafe {
-        let name = CString::new("window_funnel").unwrap();
+        let name = c"window_funnel";
         let set = duckdb_create_aggregate_function_set(name.as_ptr());
 
         // Register overloads WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)

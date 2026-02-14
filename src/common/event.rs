@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Event types shared across behavioral analytics functions.
 //!
 //! Several functions (`window_funnel`, `sequence_match`, `sequence_count`)

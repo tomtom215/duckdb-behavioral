@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! `window_funnel` — Aggregate function for conversion funnel analysis.
 //!
 //! Searches for the longest chain of events `cond1 -> cond2 -> ... -> condN`

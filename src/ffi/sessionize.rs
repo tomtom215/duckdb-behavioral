@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `sessionize` aggregate/window function.
 
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Registers the `sessionize` function with `DuckDB`.
 ///
@@ -23,7 +25,7 @@ pub unsafe fn register_sessionize(con: duckdb_connection) {
     unsafe {
         let func = duckdb_create_aggregate_function();
 
-        let name = CString::new("sessionize").unwrap();
+        let name = c"sessionize";
         duckdb_aggregate_function_set_name(func, name.as_ptr());
 
         // Parameter 0: TIMESTAMP (event timestamp)

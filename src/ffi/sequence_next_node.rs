@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `sequence_next_node` aggregate function.
 
 use crate::sequence_next_node::{NextNodeEvent, SequenceNextNodeState};
@@ -33,7 +36,7 @@ const FIXED_PARAMS: usize = 5;
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_sequence_next_node(con: duckdb_connection) {
     unsafe {
-        let name = CString::new("sequence_next_node").unwrap();
+        let name = c"sequence_next_node";
         let set = duckdb_create_aggregate_function_set(name.as_ptr());
 
         for n in MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! NFA-based pattern executor for sequence matching.
 //!
 //! Executes compiled patterns against sorted event streams using a

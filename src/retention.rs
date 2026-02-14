@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! `retention` — Aggregate function for cohort retention analysis.
 //!
 //! Takes N boolean conditions and returns a `BOOLEAN[]` array of length N.

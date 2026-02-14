@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 name: Release
 
 # Release workflow following Semantic Versioning (https://semver.org/).
@@ -13,9 +16,11 @@ name: Release
 #
 # The release process:
 #   1. Update version in Cargo.toml and description.yml
-#   2. Commit: "chore: bump version to X.Y.Z"
-#   3. Tag: git tag vX.Y.Z && git push origin vX.Y.Z
-#   4. This workflow builds, tests, and publishes the release
+#   2. Update description.yml ref to the commit SHA that will be tagged:
+#        sed -i "s/  ref: .*/  ref: $(git rev-parse HEAD)/" description.yml
+#   3. Commit: "chore: bump version to X.Y.Z"
+#   4. Tag: git tag vX.Y.Z && git push origin vX.Y.Z
+#   5. This workflow validates versions + ref, builds, tests, and publishes
 
 on:
   push:
@@ -94,6 +99,21 @@ jobs:
             exit 1
           fi
           echo "description.yml version match confirmed: $DESC_VERSION"
+
+      - name: Verify description.yml ref matches tagged commit
+        run: |
+          DESC_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
+          TAG_SHA="${{ github.sha }}"
+
+          if [ "$DESC_REF" != "$TAG_SHA" ]; then
+            echo "ERROR: description.yml ref ($DESC_REF) does not match tagged commit ($TAG_SHA)"
+            echo ""
+            echo "Before tagging a release, update description.yml:"
+            echo "  sed -i \"s/  ref: .*/  ref: \$(git rev-parse HEAD)/\" description.yml"
+            echo "  git add description.yml && git commit -m 'chore: update description.yml ref'"
+            exit 1
+          fi
+          echo "description.yml ref match confirmed: $DESC_REF"
 
   build:
     name: Build (${{ matrix.platform }})

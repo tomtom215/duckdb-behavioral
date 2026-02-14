@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Recursive descent parser for sequence match pattern strings.
 //!
 //! Parses patterns like `(?1).*(?2)(?t>=3600)(?3)` into a structured AST

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 name: Deploy Documentation
 
 on:
@@ -23,11 +26,21 @@ jobs:
 
       - name: Install mdBook and preprocessors
         run: |
+          set -euo pipefail
           mkdir -p "$HOME/.local/bin"
-          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz \
-            | tar -xz -C "$HOME/.local/bin"
-          curl -sSL https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-x86_64-unknown-linux-gnu.tar.gz \
-            | tar -xz -C "$HOME/.local/bin"
+
+          MDBOOK_URL="https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz"
+          MDBOOK_SHA256="9ef07fd288ba58ff3b99d1c94e6d414d431c9a61fdb20348e5beb74b823d546b"
+          curl -sSL "$MDBOOK_URL" -o /tmp/mdbook.tar.gz
+          echo "$MDBOOK_SHA256  /tmp/mdbook.tar.gz" | sha256sum -c -
+          tar -xz -C "$HOME/.local/bin" -f /tmp/mdbook.tar.gz
+
+          MERMAID_URL="https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-x86_64-unknown-linux-gnu.tar.gz"
+          MERMAID_SHA256="37364965fb190cf9929d93c930c6b6c69b2fed05f7658ea2d312882ed59c645e"
+          curl -sSL "$MERMAID_URL" -o /tmp/mdbook-mermaid.tar.gz
+          echo "$MERMAID_SHA256  /tmp/mdbook-mermaid.tar.gz" | sha256sum -c -
+          tar -xz -C "$HOME/.local/bin" -f /tmp/mdbook-mermaid.tar.gz
+
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install Mermaid assets

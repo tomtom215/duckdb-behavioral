@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for `sequence_match` and `sequence_count` aggregate functions.
 
 use crate::common::event::Event;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
@@ -20,7 +22,7 @@ const MAX_CONDITIONS: usize = 32;
 /// Requires a valid `duckdb_connection` handle.
 unsafe fn register_sequence_function_set(
     con: duckdb_connection,
-    func_name: &str,
+    func_name: &std::ffi::CStr,
     ret_type_id: DUCKDB_TYPE,
     state_size_fn: unsafe extern "C" fn(duckdb_function_info) -> idx_t,
     state_init_fn: unsafe extern "C" fn(duckdb_function_info, duckdb_aggregate_state),
@@ -49,12 +51,11 @@ unsafe fn register_sequence_function_set(
     // defined in this module. DuckDB C API functions are called in the correct order:
     // create set, create function, set parameters, set callbacks, add to set, register.
     unsafe {
-        let name = CString::new(func_name).unwrap();
-        let set = duckdb_create_aggregate_function_set(name.as_ptr());
+        let set = duckdb_create_aggregate_function_set(func_name.as_ptr());
 
         for n in MIN_CONDITIONS..=MAX_CONDITIONS {
             let func = duckdb_create_aggregate_function();
-            duckdb_aggregate_function_set_name(func, name.as_ptr());
+            duckdb_aggregate_function_set_name(func, func_name.as_ptr());
 
             // Parameter 0: VARCHAR (pattern)
             let varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
@@ -95,7 +96,10 @@ unsafe fn register_sequence_function_set(
 
         let result = duckdb_register_aggregate_function_set(con, set);
         if result != DuckDBSuccess {
-            eprintln!("behavioral: failed to register {func_name} function set");
+            eprintln!(
+                "behavioral: failed to register {} function set",
+                func_name.to_str().unwrap_or("<invalid>")
+            );
         }
 
         duckdb_destroy_aggregate_function_set(&mut { set });
@@ -113,7 +117,7 @@ pub unsafe fn register_sequence_match(con: duckdb_connection) {
     unsafe {
         register_sequence_function_set(
             con,
-            "sequence_match",
+            c"sequence_match",
             DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
             match_state_size,
             match_state_init,
@@ -136,7 +140,7 @@ pub unsafe fn register_sequence_count(con: duckdb_connection) {
     unsafe {
         register_sequence_function_set(
             con,
-            "sequence_count",
+            c"sequence_count",
             DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
             count_state_size,
             count_state_init,

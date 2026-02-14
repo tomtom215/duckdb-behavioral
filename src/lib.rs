@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! # `behavioral` — Behavioral Analytics Extension for `DuckDB`
 //!
 //! Provides seven functions for behavioral analytics, inspired by `ClickHouse`'s
