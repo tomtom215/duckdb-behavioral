@@ -75,8 +75,8 @@ to that page for the full syntax reference.
 | Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `sequence_count` processes **100 million events in 1.10 s**
-(91 Melem/s).
+At benchmark scale, `sequence_count` processes **100 million events in 1.18 s**
+(85 Melem/s).
 
 ## See Also
 

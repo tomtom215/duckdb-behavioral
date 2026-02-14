@@ -14,23 +14,23 @@ improvements and algorithmic scaling are hardware-independent.
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | 1 billion | 1.21 s | 826 Melem/s |
-| `retention` (combine) | 100 million | 259 ms | 386 Melem/s |
-| `window_funnel` | 100 million | 755 ms | 132 Melem/s |
-| `sequence_match` | 100 million | 951 ms | 105 Melem/s |
-| `sequence_count` | 100 million | 1.10 s | 91 Melem/s |
-| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s |
-| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s |
+| `sessionize` | 1 billion | 1.20 s | 830 Melem/s |
+| `retention` (combine) | 100 million | 274 ms | 365 Melem/s |
+| `window_funnel` | 100 million | 791 ms | 126 Melem/s |
+| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
+| `sequence_count` | 100 million | 1.18 s | 85 Melem/s |
+| `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
+| `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
 
 ### Per-Element Cost
 
 | Function | Cost per Element | Bound |
 |---|---|---|
 | `sessionize` | 1.2 ns | CPU-bound (register-only loop) |
-| `retention` | 2.6 ns | CPU-bound (bitmask OR) |
-| `window_funnel` | 7.6 ns | Memory-bound at 100M (1.6 GB working set) |
-| `sequence_match` | 9.5 ns | Memory-bound (NFA + event traversal) |
-| `sequence_count` | 11.0 ns | Memory-bound (NFA restart overhead) |
+| `retention` | 2.7 ns | CPU-bound (bitmask OR) |
+| `window_funnel` | 7.9 ns | Memory-bound at 100M (1.6 GB working set) |
+| `sequence_match` | 10.5 ns | Memory-bound (NFA + event traversal) |
+| `sequence_count` | 11.8 ns | Memory-bound (NFA restart overhead) |
 
 ## Algorithmic Complexity
 
@@ -254,7 +254,7 @@ the data.
 
 ## Methodology
 
-- **Framework**: Criterion.rs 0.5, 100 samples per benchmark, 95% CI
+- **Framework**: Criterion.rs 0.8, 100 samples per benchmark, 95% CI
 - **Large-scale benchmarks**: 10 samples with 60-second measurement time for
   100M and 1B element counts
 - **Validation**: Every claim requires three consecutive runs with non-overlapping
