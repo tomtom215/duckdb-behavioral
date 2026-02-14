@@ -963,21 +963,25 @@ Cost per element at scale. Session 13 refresh numbers:
 | `sort_events` (random) | 100M | 2.046 s | 20.46 | 48.9 Melem/s | O(n log n) pdqsort, DRAM-bound |
 | `sort_events` (presorted) | 100M | 1.829 s | 18.29 | 54.7 Melem/s | O(n) adaptive, DRAM-bound |
 
-### Billion-Row Headline Numbers
+### Headline Numbers
 
 Criterion-validated, reproducible headline numbers for portfolio presentation
-(Session 13 refresh):
+(Session 14 refresh):
 
 | Function | Scale | Wall Clock | Throughput | ns/element |
 |---|---|---|---|---|
-| **`sessionize_update`** | **1 billion** | **1.18 s** | **848 Melem/s** | **1.18** |
-| **`retention_combine`** | **1 billion** | **2.94 s** | **340 Melem/s** | **2.94** |
-| `window_funnel_finalize` | 100 million | 715 ms | 140 Melem/s | 7.15 |
-| `sequence_match` | 100 million | 902 ms | 111 Melem/s | 9.02 |
-| `sequence_count` | 100 million | 1.05 s | 95 Melem/s | 10.5 |
-| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s | 9.21 |
-| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s | 43.8 |
-| `sort_events` (random) | 100 million | 2.05 s | 48.8 Melem/s | 20.50 |
+| **`sessionize_update`** | **1 billion** | **1.21 s** | **826 Melem/s** | **1.21** |
+| **`retention_combine`** | 100 million | 259 ms | 386 Melem/s | 2.59 |
+| `window_funnel_finalize` | 100 million | 755 ms | 132 Melem/s | 7.55 |
+| `sequence_match` | 100 million | 951 ms | 105 Melem/s | 9.51 |
+| `sequence_count` | 100 million | 1.10 s | 91 Melem/s | 11.0 |
+| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s | 9.88 |
+| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s | 55.9 |
+| `sort_events` (random) | 100 million | 2.10 s | 47.6 Melem/s | 21.0 |
+
+Note: `sequence_next_node` throughput decreased from Session 13 (23 Melem/s)
+due to `Rc<str>` to `Arc<str>` migration for `Send+Sync` safety. The atomic
+reference counting overhead (~2ns/clone) is an acceptable trade-off.
 
 Memory constraint: Event-collecting functions store 16 bytes per event. At 100M events
 = 1.6GB working set. 1B events would require 16GB + clone overhead, exceeding

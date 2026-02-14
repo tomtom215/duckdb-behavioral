@@ -125,8 +125,8 @@ finalize. A greedy forward scan from each entry point finds the longest chain.
 | Finalize | O(n * k) where n = events, k = conditions |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `window_funnel` processes **100 million events in 715 ms**
-(140 Melem/s).
+At benchmark scale, `window_funnel` processes **100 million events in 755 ms**
+(132 Melem/s).
 
 ## See Also
 

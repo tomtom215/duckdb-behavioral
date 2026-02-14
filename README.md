@@ -26,8 +26,10 @@ reproducibility, or trustworthiness:
 - **403 unit tests + 1 doc-test** covering all functions, edge cases, combine
   associativity, property-based testing (proptest), and mutation-testing-guided
   coverage. All tests run in under 1 second via `cargo test`.
-- **11 end-to-end tests** against a real DuckDB v1.4.4 instance validating the
-  complete chain from extension loading through SQL execution to correct results.
+- **27 end-to-end SQL tests** against a real DuckDB v1.4.4 instance validating
+  the complete chain from extension loading through SQL execution to correct
+  results, including NULL inputs, empty tables, all 6 funnel modes, 5+
+  conditions, and all 8 direction/base combinations.
 - **Criterion.rs benchmarks** with 95% confidence intervals, 3+ runs per
   measurement, and documented methodology in [`PERF.md`](PERF.md). Every
   performance claim is reproducible on commodity hardware.
@@ -298,7 +300,7 @@ cargo build --release
 
 ## Performance
 
-Thirteen sessions of measured, Criterion-validated optimizations and feature work:
+Fourteen sessions of measured, Criterion-validated optimizations and feature work:
 
 **Session 1 — Event Bitmask**: Bitmask replaces `Vec<bool>` per event,
 eliminating heap allocation and enabling `Copy` semantics (5-13x speedup).
@@ -349,21 +351,26 @@ NULL handling, corrected SQL tests, and expanded GitHub Pages documentation.
 **Session 13 — CI/CD Hardening + Benchmark Refresh**: Added E2E workflow, SemVer
 release validation, expanded documentation, refreshed all benchmark baselines.
 
-**Headline numbers (Criterion-validated, 95% CI, Session 13):**
+**Session 14 — Production Readiness Hardening**: `Arc<str>` for `Send+Sync`
+safety, defensive FFI (no-panic entry point, `*const u8` boolean reading, null
+byte handling), 16 new E2E tests, pinned GitHub Actions to commit SHAs.
+
+**Headline numbers (Criterion-validated, 95% CI, Session 14):**
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | **1 billion** | **1.18 s** | **848 Melem/s** |
-| `retention` (combine) | **1 billion** | **2.94 s** | **340 Melem/s** |
-| `window_funnel` | 100 million | 715 ms | 140 Melem/s |
-| `sequence_match` | 100 million | 902 ms | 111 Melem/s |
-| `sequence_count` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
-| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
+| `sessionize` | **1 billion** | **1.21 s** | **826 Melem/s** |
+| `retention` (combine) | 100 million | 259 ms | 386 Melem/s |
+| `window_funnel` | 100 million | 755 ms | 132 Melem/s |
+| `sequence_match` | 100 million | 951 ms | 105 Melem/s |
+| `sequence_count` | 100 million | 1.10 s | 91 Melem/s |
+| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s |
+| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s |
 
-All measurements: Criterion.rs, 95% confidence intervals.
-Full methodology, optimization history with CIs, and baseline records:
-[`PERF.md`](PERF.md).
+All measurements: Criterion.rs, 95% confidence intervals. `sequence_next_node`
+throughput reflects `Arc<str>` migration for `Send+Sync` safety (atomic ref
+counting vs non-atomic). Full methodology, optimization history, and baseline
+records: [`PERF.md`](PERF.md).
 
 ## Community Extension Submission Roadmap
 

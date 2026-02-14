@@ -25,6 +25,7 @@ This file provides context for AI assistants working on this codebase.
   - [Session 11: NFA Fast Paths + Git Mining Demo](#session-11-nfa-fast-paths--git-mining-demo)
   - [Session 12: Community Extension Readiness + Benchmark Completion](#session-12-community-extension-readiness--benchmark-completion)
   - [Session 13: CI/CD Hardening + Benchmark Refresh](#session-13-cicd-hardening--benchmark-refresh)
+  - [Session 14: Production Readiness Hardening](#session-14-production-readiness-hardening)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Testing](#testing)
 - [CI/CD](#cicd)
@@ -166,8 +167,10 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   property-based testing (proptest), mutation-testing-guided coverage, and
   ClickHouse mode combinations
 - **1 doc-test** for the pattern parser
-- **11 E2E tests** against real DuckDB v1.4.4 CLI covering all 7 functions
-  with multiple scenarios (basic, timeout, modes, GROUP BY, no-match)
+- **27 E2E tests** against real DuckDB v1.4.4 CLI covering all 7 functions
+  with multiple scenarios (basic, timeout, modes, GROUP BY, no-match, NULL
+  inputs, empty tables, all 6 funnel modes, 5+ conditions, all 8
+  direction/base combinations)
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
   cardinality benchmarks, and throughput reporting up to 1B elements
@@ -573,6 +576,89 @@ validation, documentation expansion, and full benchmark baseline refresh.
 | `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
 | `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
 
+### Session 14: Production Readiness Hardening
+
+Session focused on closing every gap identified in a 4-audit production readiness
+review. All changes are correctness, safety, or documentation improvements — no
+new features or performance optimizations.
+
+**Source code safety improvements:**
+
+1. **`Arc<str>` migration** (`src/sequence_next_node.rs`, `src/ffi/sequence_next_node.rs`,
+   `benches/sequence_next_node_bench.rs`): Replaced `Rc<str>` with `Arc<str>` for
+   `Send + Sync` safety. Eliminates theoretical unsoundness if DuckDB ever
+   parallelizes combine operations. Adds ~1-2ns/clone overhead (atomic vs
+   non-atomic reference counting) — negligible at measured throughput.
+
+2. **Defensive boolean reading** (all 5 FFI modules): Changed `*const bool` to
+   `*const u8` with `!= 0` comparison. Avoids depending on Rust's strict `bool`
+   invariant (must be 0 or 1) for data read from DuckDB's C API. Output booleans
+   use `u8::from(matched)`.
+
+3. **No-panic FFI entry point** (`src/lib.rs`): Replaced `.unwrap()` on
+   `set_error` and `get_database` function pointers with `if let Some()` and
+   `.ok_or()` respectively. Prevents panicking across FFI boundaries in debug
+   builds.
+
+4. **Hoisted validity bitmap** (`src/ffi/retention.rs`): Moved
+   `duckdb_vector_ensure_validity_writable` and `duckdb_vector_get_validity`
+   calls outside the finalize loop. Previously called per-null-state inside the
+   loop — correct but wasteful.
+
+5. **Interior null byte handling** (`src/ffi/sequence_next_node.rs`): Replaced
+   `CString::new(value).unwrap_or_default()` with explicit null-byte stripping
+   via `value.replace('\0', "")`. Prevents silently producing empty strings on
+   values containing null bytes.
+
+**Documentation fixes:**
+
+6. **Stale benchmark numbers**: Updated 4 function doc pages (retention,
+   window-funnel, sequence-match, sequence-count) to Session 13 baseline.
+7. **Cross-references**: Added See Also sections to sessionize.md and retention.md.
+8. **Negative results count**: Fixed engineering.md from "3" to "5" (added
+   compiled pattern preservation and first-condition pre-check).
+9. **`Arc<str>` references**: Updated all `Rc<str>` references across 10
+   documentation files to `Arc<str>`.
+
+**E2E test expansion (16 new test cases):**
+
+10. **NULL/empty input tests**: sessionize NULL timestamp, retention empty table,
+    window_funnel empty table.
+11. **All 6 window_funnel modes**: strict, strict_order, strict_deduplication,
+    strict_once, allow_reentry (plus existing strict_increase).
+12. **5-condition test**: sequence_match with 5 boolean conditions.
+13. **All direction×base combinations**: 6 new sequence_next_node tests covering
+    forward/backward × head/tail/last_match (existing covered first_match).
+
+**CI/CD hardening:**
+
+14. **Pinned GitHub Actions to commit SHAs**: All third-party Actions across 4
+    workflow files pinned to specific SHAs with version comments.
+15. **Visible CI failures**: Removed `|| true` from cargo-semver-checks and
+    cargo-tarpaulin. Added `continue-on-error: true` at job level instead.
+
+**Repository structure improvements:**
+
+16. **Root-level files**: Added `CHANGELOG.md` (Keep a Changelog format),
+    `SECURITY.md` (vulnerability reporting, security model), `CONTRIBUTING.md`
+    (quick-start guide linking to full docs).
+
+**Session 14 baseline (Criterion-validated, 95% CI):**
+
+| Function | Scale | Wall Clock | Throughput |
+|---|---|---|---|
+| `sessionize_update` | **1 billion** | **1.21 s** | **826 Melem/s** |
+| `retention_combine` | 100 million | 259 ms | 386 Melem/s |
+| `window_funnel` | 100 million | 755 ms | 132 Melem/s |
+| `sequence_match` | 100 million | 951 ms | 105 Melem/s |
+| `sequence_count` | 100 million | 1.10 s | 91 Melem/s |
+| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s |
+| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s |
+
+Performance is consistent with Session 13 baseline. `sequence_next_node`
+throughput decreased from 23 to 18 Melem/s due to `Arc<str>` atomic reference
+counting overhead — an expected and acceptable cost for `Send+Sync` safety.
+
 ## ClickHouse Parity Status
 
 **COMPLETE** — All ClickHouse behavioral analytics functions are implemented
@@ -611,8 +697,9 @@ categories:
 Run with `cargo test`. All 403 tests + 1 doc-test run in <1 second.
 
 **E2E tests** (manual, against real DuckDB CLI):
-- 11 test cases covering all 7 functions
-- Tests: basic usage, timeouts, modes, GROUP BY, no-match, per-user aggregation
+- 27 test cases covering all 7 functions
+- Tests: basic usage, timeouts, all 6 modes, GROUP BY, no-match, per-user aggregation,
+  NULL inputs, empty tables, 5+ conditions, all direction×base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`
 - Validates the complete chain: extension load → function registration → SQL execution → correct results
 
@@ -620,8 +707,8 @@ Run with `cargo test`. All 403 tests + 1 doc-test run in <1 second.
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- **ci.yml**: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, coverage,
-  cross-platform (Linux + macOS)
+- **ci.yml**: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver,
+  coverage, cross-platform (Linux + macOS), extension-build
 - **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
   creates GitHub release on tag push with SemVer validation

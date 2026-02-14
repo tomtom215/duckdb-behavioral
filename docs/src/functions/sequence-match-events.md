@@ -83,8 +83,8 @@ timestamp collection path separate from the performance-critical
 | Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `sequence_match_events` processes **100 million events in 921 ms**
-(109 Melem/s).
+At benchmark scale, `sequence_match_events` processes **100 million events in 988 ms**
+(101 Melem/s).
 
 ## See Also
 
