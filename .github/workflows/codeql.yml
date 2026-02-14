@@ -30,6 +30,24 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      # Detect if Default Setup is still enabled. Advanced setup (this workflow)
+      # cannot coexist with Default Setup — the SARIF upload will be rejected.
+      # Fail fast with a clear message instead of wasting ~11 min on analysis.
+      - name: Check for Default Setup conflict
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh api "repos/${{ github.repository }}/code-scanning/default-setup" \
+            --jq '.state' 2>/dev/null || echo "unknown")
+          if [ "$state" = "configured" ]; then
+            echo "::error::CodeQL Default Setup is enabled, which conflicts with this advanced setup workflow."
+            echo "::error::The SARIF upload will be rejected by GitHub if both are active."
+            echo "::error::To fix: Settings → Code security → Code scanning → CodeQL analysis → ⋯ → Disable CodeQL"
+            echo "::error::Or via CLI: gh api --method PATCH repos/${{ github.repository }}/code-scanning/default-setup -f state=not-configured"
+            exit 1
+          fi
+          echo "Default Setup state: ${state} (no conflict)"
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
         with:
