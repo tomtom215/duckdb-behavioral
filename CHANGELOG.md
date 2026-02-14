@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-14
+
 ### Added
 
 - **`sequence_next_node` function** with full direction (forward/backward) and
@@ -24,13 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **26 property-based tests** (proptest) verifying algebraic properties
 - GitHub Pages documentation site (mdBook) with function reference, use cases,
   FAQ, architecture, and performance documentation
-- CI/CD pipeline: 13 CI jobs, E2E workflow, SemVer release validation,
-  4-platform release builds with provenance attestation
+- CI/CD pipeline with structured test output (`cargo-nextest`), job summaries,
+  E2E workflow, SemVer release validation, 4-platform release builds with
+  provenance attestation
 - Community extension infrastructure (`description.yml`, `Makefile`,
   `extension-ci-tools` submodule)
 
 ### Changed
 
+- **BREAKING**: All public state structs marked `#[non_exhaustive]` to allow
+  future field additions without semver-breaking changes. Affected structs:
+  `SessionizeState`, `SessionizeBoundaryState`, `RetentionState`,
+  `WindowFunnelState`, `SequenceState`, `SequenceNextNodeState`,
+  `NextNodeEvent`, `Event`, `CompiledPattern`, `PatternError`, `MatchResult`.
+  Use the provided `new()` constructors instead of struct literal syntax.
 - **Custom C entry point** (`behavioral_init_c_api`) replaces fragile
   `duckdb::Connection` extraction, using `duckdb_connect` directly from
   `duckdb_extension_access`
@@ -75,5 +84,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tomtom215/duckdb-behavioral/releases/tag/v0.1.0

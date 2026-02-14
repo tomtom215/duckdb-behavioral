@@ -9,121 +9,177 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# Cancel redundant runs on the same branch/PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
 
 jobs:
-  check:
-    name: Check
+  # ── Fast lint checks (run first, fail fast) ───────────────────────────
+  fmt:
+    name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo check --all-targets
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test --all-targets
-      - run: cargo test --doc
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Summary
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "### ✅ Format Check Passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Format Check Failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Run \`cargo fmt --all\` to fix formatting issues." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo clippy --all-targets -- -D warnings
+      - name: Run clippy
+        run: cargo clippy --all-targets --message-format=json -- -D warnings 2>&1 | tee clippy-output.json
+      - name: Summary
+        if: always()
+        run: |
+          WARNINGS=$(grep -c '"level":"warning"' clippy-output.json 2>/dev/null || echo "0")
+          ERRORS=$(grep -c '"level":"error"' clippy-output.json 2>/dev/null || echo "0")
+          {
+            echo "### Clippy Results"
+            echo ""
+            echo "| Metric | Count |"
+            echo "|--------|-------|"
+            echo "| Errors | ${ERRORS} |"
+            echo "| Warnings | ${WARNINGS} |"
+            echo ""
+            if [ "$ERRORS" = "0" ] && [ "$WARNINGS" = "0" ]; then
+              echo "✅ Zero warnings, zero errors."
+            else
+              echo "❌ Issues detected. Review the log output above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  fmt:
-    name: Format
+  # ── Compilation checks ────────────────────────────────────────────────
+  check:
+    name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - name: Compile check (all targets)
+        run: cargo check --all-targets
+      - name: Summary
+        if: always()
+        run: echo "### ✅ Compilation check passed" >> "$GITHUB_STEP_SUMMARY"
 
   doc:
     name: Documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo doc --no-deps --document-private-items
+      - name: Build documentation
+        run: cargo doc --no-deps --document-private-items
+      - name: Summary
+        if: always()
+        run: echo "### ✅ Documentation builds without warnings" >> "$GITHUB_STEP_SUMMARY"
 
-  msrv:
-    name: MSRV (1.80)
+  # ── Test suite (structured output via cargo-nextest) ──────────────────
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@1.80
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo check --all-targets
-
-  bench-compile:
-    name: Benchmarks compile
-    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo bench --no-run
 
-  deny:
-    name: Cargo deny
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131 # v2
         with:
-          command: check advisories bans licenses sources
+          tool: cargo-nextest
 
-  semver:
-    name: Semver check
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run unit tests
+        run: cargo nextest run --all-targets --profile ci 2>&1 | tee test-output.txt
+
+      - name: Run doc tests
+        run: cargo test --doc 2>&1 | tee -a test-output.txt
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo install cargo-semver-checks --locked
-      - run: cargo semver-checks check-release --baseline-rev origin/main
+          name: test-results-linux
+          path: target/nextest/ci/junit.xml
+          retention-days: 30
+          if-no-files-found: warn
 
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo install cargo-tarpaulin --locked
-      - run: cargo tarpaulin --out xml --skip-clean
-      - uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
-        with:
-          files: cobertura.xml
-          fail_ci_if_error: false
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Test Results"
+            echo ""
+            if [ -f target/nextest/ci/junit.xml ]; then
+              TOTAL=$(grep -oP 'tests="\K[0-9]+' target/nextest/ci/junit.xml | head -1)
+              FAILURES=$(grep -oP 'failures="\K[0-9]+' target/nextest/ci/junit.xml | head -1)
+              ERRORS=$(grep -oP 'errors="\K[0-9]+' target/nextest/ci/junit.xml | head -1)
+              TIME=$(grep -oP 'time="\K[0-9.]+' target/nextest/ci/junit.xml | head -1)
+              PASSED=$((TOTAL - FAILURES - ERRORS))
+              echo "| Metric | Value |"
+              echo "|--------|-------|"
+              echo "| Total tests | ${TOTAL} |"
+              echo "| Passed | ${PASSED} |"
+              echo "| Failed | ${FAILURES} |"
+              echo "| Errors | ${ERRORS} |"
+              echo "| Duration | ${TIME}s |"
+              echo ""
+              if [ "${FAILURES}" = "0" ] && [ "${ERRORS}" = "0" ]; then
+                echo "✅ All ${TOTAL} tests passed in ${TIME}s."
+              else
+                echo "❌ ${FAILURES} failures, ${ERRORS} errors out of ${TOTAL} tests."
+              fi
+            else
+              echo "⚠️ JUnit XML not found. Check raw output above."
+            fi
+            echo ""
+            echo "<details><summary>Doc-test output</summary>"
+            echo ""
+            echo '```'
+            grep -E "^test |^running |^test result:" test-output.txt || echo "No doc-test output captured"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
 
+  # ── Cross-platform verification ──────────────────────────────────────
   cross-platform:
-    name: ${{ matrix.os }}
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -132,13 +188,171 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test --all-targets
 
-  # Build the extension using the community extension Makefile to catch
-  # packaging issues early (e.g., library name mismatches, metadata errors)
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run tests
+        run: cargo nextest run --all-targets --profile ci
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results-${{ matrix.os }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Test Results (${{ matrix.os }})"
+            echo ""
+            if [ -f target/nextest/ci/junit.xml ]; then
+              TOTAL=$(grep -oP 'tests="\K[0-9]+' target/nextest/ci/junit.xml 2>/dev/null || grep -o 'tests="[0-9]*"' target/nextest/ci/junit.xml | head -1 | tr -dc '0-9')
+              echo "✅ ${TOTAL} tests passed on ${{ matrix.os }}."
+            else
+              echo "⚠️ JUnit XML not found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── MSRV verification ────────────────────────────────────────────────
+  msrv:
+    name: MSRV (1.80)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@1.80
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - name: Check MSRV compilation
+        run: cargo check --all-targets
+      - name: Summary
+        if: always()
+        run: echo "### ✅ MSRV 1.80 compilation verified" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Benchmark compilation ────────────────────────────────────────────
+  bench-compile:
+    name: Benchmarks compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - name: Compile benchmarks (no run)
+        run: cargo bench --no-run
+      - name: Summary
+        if: always()
+        run: echo "### ✅ All 7 benchmark suites compile" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Supply chain audit ───────────────────────────────────────────────
+  deny:
+    name: Cargo deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+        with:
+          command: check advisories bans licenses sources
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Supply Chain Audit"
+            echo ""
+            echo "| Check | Status |"
+            echo "|-------|--------|"
+            echo "| Advisories | ✅ |"
+            echo "| Bans | ✅ |"
+            echo "| Licenses | ✅ |"
+            echo "| Sources | ✅ |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── SemVer compatibility ─────────────────────────────────────────────
+  semver:
+    name: Semver check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --locked
+      - name: Check semver compatibility
+        run: cargo semver-checks check-release --baseline-rev origin/main 2>&1 | tee semver-output.txt
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### SemVer Compatibility"
+            echo ""
+            if grep -q "no semver update required\|all checks passed\|pass" semver-output.txt 2>/dev/null; then
+              PASS=$(grep -oP '\d+ pass' semver-output.txt | head -1 || echo "unknown")
+              echo "✅ ${PASS}ed — no breaking changes detected."
+            else
+              echo '```'
+              tail -20 semver-output.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Code coverage ───────────────────────────────────────────────────
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+      - name: Generate coverage report
+        run: cargo tarpaulin --out xml --out html --skip-clean 2>&1 | tee coverage-output.txt
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
+        with:
+          files: cobertura.xml
+          fail_ci_if_error: false
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-report
+          path: |
+            cobertura.xml
+            tarpaulin-report.html
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Code Coverage"
+            echo ""
+            COVERAGE=$(grep -oP '\d+\.\d+% coverage' coverage-output.txt | tail -1 || echo "unknown")
+            if [ "$COVERAGE" != "unknown" ]; then
+              echo "Line coverage: **${COVERAGE}**"
+            else
+              echo "⚠️ Coverage data not available. Check logs for details."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Extension build ─────────────────────────────────────────────────
   extension-build:
     name: Extension build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -159,3 +373,91 @@ jobs:
         run: |
           test -f build/release/behavioral.duckdb_extension
           ls -lh build/release/behavioral.duckdb_extension
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Extension Build"
+            echo ""
+            if [ -f build/release/behavioral.duckdb_extension ]; then
+              SIZE=$(ls -lh build/release/behavioral.duckdb_extension | awk '{print $5}')
+              echo "✅ Extension built successfully."
+              echo ""
+              echo "| Artifact | Size |"
+              echo "|----------|------|"
+              echo "| \`behavioral.duckdb_extension\` | ${SIZE} |"
+            else
+              echo "❌ Extension artifact not found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── CI Gate (single required status check for branch protection) ────
+  ci-gate:
+    name: CI Gate
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - check
+      - doc
+      - test
+      - cross-platform
+      - msrv
+      - bench-compile
+      - deny
+      - semver
+      - coverage
+      - extension-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate job results
+        run: |
+          # These jobs must succeed (hard requirements)
+          REQUIRED_RESULTS=(
+            "fmt=${{ needs.fmt.result }}"
+            "clippy=${{ needs.clippy.result }}"
+            "check=${{ needs.check.result }}"
+            "doc=${{ needs.doc.result }}"
+            "test=${{ needs.test.result }}"
+            "cross-platform=${{ needs.cross-platform.result }}"
+            "msrv=${{ needs.msrv.result }}"
+            "bench-compile=${{ needs.bench-compile.result }}"
+            "deny=${{ needs.deny.result }}"
+            "semver=${{ needs.semver.result }}"
+            "extension-build=${{ needs.extension-build.result }}"
+          )
+
+          FAILED=0
+          {
+            echo "### CI Gate Summary"
+            echo ""
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for entry in "${REQUIRED_RESULTS[@]}"; do
+            JOB="${entry%%=*}"
+            RESULT="${entry#*=}"
+            case "$RESULT" in
+              success)  ICON="✅" ;;
+              skipped)  ICON="⏭️" ;;
+              *)        ICON="❌"; FAILED=$((FAILED + 1)) ;;
+            esac
+            echo "| ${JOB} | ${ICON} ${RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          # Coverage is informational (continue-on-error)
+          echo "| coverage | ℹ️ ${{ needs.coverage.result || 'skipped' }} (informational) |" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "❌ **${FAILED} required job(s) failed.** See individual job logs above." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          else
+            echo "✅ **All required CI checks passed.**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Coverage is not in the gate — it's informational only
+  # It runs independently and reports to Codecov

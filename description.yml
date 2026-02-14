@@ -4,7 +4,7 @@
 extension:
   name: behavioral
   description: Behavioral analytics functions inspired by ClickHouse (sessionize, retention, window_funnel, sequence_match, sequence_count, sequence_match_events, sequence_next_node)
-  version: 0.1.0
+  version: 0.2.0
   language: Rust
   build: cargo
   license: MIT

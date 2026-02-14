@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# cargo-nextest configuration
+# https://nexte.st/docs/configuration/
+
+[profile.default]
+# Show pass/fail status for every test
+status-level = "pass"
+final-status-level = "slow"
+# Fail fast on first failure in local dev
+fail-fast = true
+
+[profile.ci]
+# CI: show all test results, generate JUnit XML
+status-level = "pass"
+final-status-level = "slow"
+fail-fast = false
+# JUnit XML output for CI integration
+junit.path = "target/nextest/ci/junit.xml"
+junit.report-name = "duckdb-behavioral"
