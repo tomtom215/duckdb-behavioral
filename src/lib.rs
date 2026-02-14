@@ -51,12 +51,18 @@ pub unsafe extern "C" fn behavioral_init_c_api(
     match behavioral_init_internal(info, access) {
         Ok(result) => result,
         Err(e) => {
-            let error_c_string = std::ffi::CString::new(e.to_string());
-            if let Ok(err) = error_c_string {
-                (*access).set_error.unwrap()(info, err.as_ptr());
-            } else {
-                let fallback = c"Extension init failed and could not allocate error string";
-                (*access).set_error.unwrap()(info, fallback.as_ptr());
+            // Report the error back to DuckDB if set_error is available.
+            // If set_error is None (should never happen per the DuckDB C API
+            // contract, but we avoid panicking across FFI boundaries), we
+            // silently return false.
+            if let Some(set_error) = (*access).set_error {
+                let error_c_string = std::ffi::CString::new(e.to_string());
+                if let Ok(err) = error_c_string {
+                    set_error(info, err.as_ptr());
+                } else {
+                    let fallback = c"Extension init failed and could not allocate error string";
+                    set_error(info, fallback.as_ptr());
+                }
             }
             false
         }
@@ -78,7 +84,10 @@ unsafe fn behavioral_init_internal(
     }
 
     // Get the database handle directly from the extension access struct.
-    let db: libduckdb_sys::duckdb_database = *(*access).get_database.unwrap()(info);
+    let get_database = (*access)
+        .get_database
+        .ok_or("get_database function pointer is null in extension access struct")?;
+    let db: libduckdb_sys::duckdb_database = *get_database(info);
 
     // Open a raw connection for function registration.
     let mut raw_con: libduckdb_sys::duckdb_connection = std::ptr::null_mut();

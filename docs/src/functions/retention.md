@@ -73,5 +73,10 @@ Conditions are tracked as a `u32` bitmask, where bit `i` is set when condition
 | Finalize | O(k) |
 | Space | O(1) -- a single `u32` bitmask |
 
-At benchmark scale, `retention` combines **1 billion states in 2.96 seconds**
-(338 Melem/s).
+At benchmark scale, `retention` combines **1 billion states in 2.94 seconds**
+(340 Melem/s).
+
+## See Also
+
+- [`sessionize`](./sessionize.md) -- session assignment based on timestamp gaps
+- [`window_funnel`](./window-funnel.md) -- conversion funnel step tracking within time windows

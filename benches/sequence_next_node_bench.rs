@@ -4,7 +4,7 @@
 //! Tests forward matching with `first_match` base (the common case).
 //!
 //! Event-collecting function with String storage: `NextNodeEvent` is 32 bytes
-//! with `Rc<str>`. Memory-limited to ~50M unique-string events or ~100M
+//! with `Arc<str>`. Memory-limited to ~50M unique-string events or ~100M
 //! realistic-cardinality events on a 21GB system.
 //!
 //! Uses Criterion with 100+ samples and 95% confidence intervals.
@@ -12,7 +12,7 @@
 
 use behavioral::sequence_next_node::{Base, Direction, NextNodeEvent, SequenceNextNodeState};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn make_next_node_events(num_events: usize, num_steps: usize) -> Vec<NextNodeEvent> {
     (0..num_events)
@@ -21,7 +21,7 @@ fn make_next_node_events(num_events: usize, num_steps: usize) -> Vec<NextNodeEve
             let bitmask = if step < num_steps { 1u32 << step } else { 0u32 };
             NextNodeEvent {
                 timestamp_us: (i as i64) * 1_000_000,
-                value: Some(Rc::from(format!("page_{i}").as_str())),
+                value: Some(Arc::from(format!("page_{i}").as_str())),
                 base_condition: step == 0,
                 conditions: bitmask,
             }
@@ -77,7 +77,7 @@ fn bench_sequence_next_node_combine(c: &mut Criterion) {
                     let bitmask = 1u32 << (i % 2);
                     s.update(NextNodeEvent {
                         timestamp_us: (i as i64) * 1_000_000,
-                        value: Some(Rc::from(format!("page_{i}").as_str())),
+                        value: Some(Arc::from(format!("page_{i}").as_str())),
                         base_condition: i % 2 == 0,
                         conditions: bitmask,
                     });
@@ -107,9 +107,9 @@ fn bench_sequence_next_node_combine(c: &mut Criterion) {
 fn bench_sequence_next_node_realistic(c: &mut Criterion) {
     let mut group = c.benchmark_group("sequence_next_node_realistic");
 
-    // Pre-generate a pool of 100 distinct Rc<str> values
-    let pool: Vec<Rc<str>> = (0..100)
-        .map(|i| Rc::from(format!("page_{i}").as_str()))
+    // Pre-generate a pool of 100 distinct Arc<str> values
+    let pool: Vec<Arc<str>> = (0..100)
+        .map(|i| Arc::from(format!("page_{i}").as_str()))
         .collect();
 
     for &n in &[100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000] {
@@ -128,7 +128,7 @@ fn bench_sequence_next_node_realistic(c: &mut Criterion) {
                     let bitmask = if step < 3 { 1u32 << step } else { 0u32 };
                     NextNodeEvent {
                         timestamp_us: (i as i64) * 1_000_000,
-                        value: Some(Rc::clone(&pool_clone[i % 100])),
+                        value: Some(Arc::clone(&pool_clone[i % 100])),
                         base_condition: step == 0,
                         conditions: bitmask,
                     }

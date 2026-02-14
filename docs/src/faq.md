@@ -346,7 +346,7 @@ Memory usage depends on the function category:
   Store every event as a 16-byte `Event` struct. For a group with 10,000 events,
   this requires approximately 160 KB.
 - `sequence_next_node`: Stores every event as a 32-byte `NextNodeEvent` struct
-  (includes an `Rc<str>` reference to the value column). For a group with 10,000
+  (includes an `Arc<str>` reference to the value column). For a group with 10,000
   events, this requires approximately 320 KB plus string storage.
 
 **Rule of thumb**: For event-collecting functions, estimate memory as

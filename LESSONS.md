@@ -237,7 +237,7 @@ Accumulated from past development sessions. Consult before beginning any work.
     event values have much lower cardinality (few hundred distinct page names).
     The benchmark measures worst-case allocation behavior, not typical usage.
     Session 9 added a "realistic cardinality" benchmark variant that reuses a
-    pool of ~100 distinct `Rc<str>` values, showing 35% improvement at 1M scale.
+    pool of ~100 distinct `Arc<str>` values, showing 35% improvement at 1M scale.
 
 ## Combine Operations
 
@@ -406,13 +406,13 @@ Accumulated from past development sessions. Consult before beginning any work.
     Future optimization should target string interning, arena allocation, or
     SmallString optimization for short event values (<24 bytes).
 
-43. **Rc\<str\> beats String for shared immutable event values**: Replacing
-    `Option<String>` with `Option<Rc<str>>` in `NextNodeEvent` delivered 2.1-5.8x
+43. **Arc\<str\> beats String for shared immutable event values**: Replacing
+    `Option<String>` with `Option<Arc<str>>` in `NextNodeEvent` delivered 2.1-5.8x
     improvement with zero functionality change. The key insight: event values in
     behavioral analytics are read-only after creation, making reference counting
-    ideal. `Rc::clone` is a single atomic increment (~1ns) vs `String::clone`
+    ideal. `Arc::clone` is a single atomic increment (~1ns) vs `String::clone`
     which copies len bytes (~20-80ns). The improvement compounds in combine
-    operations where every element is cloned. Always prefer `Rc<str>` over
+    operations where every element is cloned. Always prefer `Arc<str>` over
     `String` for immutable shared data in aggregate state.
 
 44. **String pool with separate index vectors is a pessimization**: Separating
@@ -422,18 +422,18 @@ Accumulated from past development sessions. Consult before beginning any work.
     paths, pool cloning in combine) outweighs the per-element size reduction.
     Only the 1M scale showed improvement (22%) where cache line utilization
     dominated. Lesson: measure before committing to "obviously better" data
-    structures. Simple reference counting (Rc) beat the clever pool design.
+    structures. Simple reference counting (Arc) beat the clever pool design.
 
 45. **Struct size reduction has diminishing returns below cache line**: Reducing
-    `NextNodeEvent` from 40 bytes (String) to 32 bytes (Rc\<str\>) improved
+    `NextNodeEvent` from 40 bytes (String) to 32 bytes (Arc\<str\>) improved
     throughput by 2.1-5.8x, but most of the gain came from O(1) clone, not
     size reduction. The further reduction to 24 bytes (PooledEvent with u32
     index) was a net negative. Below one cache line (64 bytes), the access
     pattern and clone cost matter more than the absolute struct size.
 
-46. **Realistic cardinality benchmarks reveal Rc sharing benefits**: With 100
-    distinct `Rc<str>` values (typical for page names), `Rc::clone` from the
-    pool avoids even the initial `Rc::from()` allocation. At 1M events this
+46. **Realistic cardinality benchmarks reveal Arc sharing benefits**: With 100
+    distinct `Arc<str>` values (typical for page names), `Arc::clone` from the
+    pool avoids even the initial `Arc::from()` allocation. At 1M events this
     provides 35% additional improvement over unique-string benchmarks. Always
     include a realistic-cardinality benchmark alongside worst-case (unique
     values) to understand production performance characteristics.

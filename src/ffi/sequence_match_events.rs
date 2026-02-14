@@ -113,10 +113,10 @@ unsafe extern "C" fn state_update(
         let ts_data = duckdb_vector_get_data(ts_vec) as *const i64;
         let ts_validity = duckdb_vector_get_validity(ts_vec);
 
-        let mut cond_vectors: Vec<(*const bool, *mut u64)> = Vec::with_capacity(num_conditions);
+        let mut cond_vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(num_conditions);
         for c in 2..col_count {
             let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const bool;
+            let data = duckdb_vector_get_data(vec) as *const u8;
             let validity = duckdb_vector_get_validity(vec);
             cond_vectors.push((data, validity));
         }
@@ -152,7 +152,7 @@ unsafe extern "C" fn state_update(
             for (c, &(data, validity)) in cond_vectors.iter().enumerate() {
                 let valid =
                     validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) {
+                if valid && *data.add(i) != 0 {
                     bitmask |= 1 << c;
                 }
             }

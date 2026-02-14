@@ -57,7 +57,7 @@ src/
 ├── retention.rs            # Retention state (bitmask-based)
 ├── window_funnel.rs        # Window funnel state (greedy forward scan, bitflag modes)
 ├── sequence.rs             # Sequence match/count/events state (wraps pattern engine)
-├── sequence_next_node.rs   # Sequence next node state (sequential matching, Rc<str> values)
+├── sequence_next_node.rs   # Sequence next node state (sequential matching, Arc<str> values)
 └── ffi/
     ├── mod.rs              # register_all_raw() — dispatches to all FFI modules
     ├── sessionize.rs       # FFI callbacks for sessionize
@@ -387,18 +387,18 @@ for DuckDB community extension submission.
 
 **Changes:**
 
-1. **Rc\<str\> optimization** (PERF-2): Replaced `Option<String>` with `Option<Rc<str>>`
+1. **Rc\<str\> optimization** (PERF-2): Replaced `Option<String>` with `Option<Arc<str>>`
    in `NextNodeEvent`, reducing struct size from 40 to 32 bytes and enabling O(1)
    clone via reference counting. Delivered 2.1-5.8x improvement across all scales,
    with combine operations improving 2.8-6.4x. Updated FFI layer to convert
-   `read_varchar` results to `Rc<str>`.
+   `read_varchar` results to `Arc<str>`.
 
 2. **String pool attempt** (PERF-1, NEGATIVE): Tested `PooledEvent` (24 bytes, Copy)
    with separate `Vec<String>` pool. Measured 10-55% regression at most scales due to
    dual-vector overhead. Only 1M showed improvement (22%). Reverted and documented.
 
 3. **Realistic cardinality benchmark**: Added `sequence_next_node_realistic` benchmark
-   using a pool of 100 distinct `Rc<str>` values, matching typical behavioral analytics
+   using a pool of 100 distinct `Arc<str>` values, matching typical behavioral analytics
    cardinality. Shows 35% improvement over unique strings at 1M events.
 
 4. **Community extension infrastructure**: Added `Makefile` with configure/debug/release
@@ -406,9 +406,9 @@ for DuckDB community extension submission.
    extension submission, and SQL integration tests in `test/sql/` covering all 7
    functions.
 
-5. **9 new tests** (366 → 375): `Rc<str>` sharing verification, struct size assertion,
+5. **9 new tests** (366 → 375): `Arc<str>` sharing verification, struct size assertion,
    combine reference sharing, empty/unicode/long string values, 32-condition
-   interaction, three-state combine chain, mixed null/Rc values in combine.
+   interaction, three-state combine chain, mixed null/Arc values in combine.
 
 Test count increased from 366 to 375 (+9 tests).
 
@@ -606,7 +606,7 @@ categories:
 - **`sequence_next_node` tests**: Direction/base parsing, forward/backward matching,
   head/tail/first_match/last_match combinations, multi-step patterns, combine
   correctness, NULL value handling, gap events, presorted detection, proptest,
-  Rc\<str\> sharing verification, struct size assertions, unicode/long strings
+  Arc\<str\> sharing verification, struct size assertions, unicode/long strings
 
 Run with `cargo test`. All 403 tests + 1 doc-test run in <1 second.
 

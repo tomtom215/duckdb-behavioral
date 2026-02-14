@@ -151,7 +151,7 @@ completeness, achieving complete ClickHouse behavioral analytics parity.
 
 ### Session 9: Rc\<str\> Optimization
 
-Replaced `Option<String>` with `Option<Rc<str>>` in `NextNodeEvent`, reducing
+Replaced `Option<String>` with `Option<Arc<str>>` in `NextNodeEvent`, reducing
 struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
 
 | Function | Scale | Improvement |
@@ -162,11 +162,11 @@ struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
 A string pool attempt (`PooledEvent` with `Copy` semantics, 24 bytes) was
 measured 10-55% slower at most scales due to dual-vector overhead. The key
 insight: below one cache line (64 bytes), clone cost matters more than absolute
-struct size. `Rc::clone` (~1ns atomic increment) consistently beats
+struct size. `Arc::clone` (~1ns atomic increment) consistently beats
 `String::clone` (copies len bytes).
 
 Also added a realistic cardinality benchmark using a pool of 100 distinct
-`Rc<str>` values, showing 35% improvement over unique strings at 1M events.
+`Arc<str>` values, showing 35% improvement over unique strings at 1M events.
 
 ### Session 10: E2E Validation + Custom C Entry Point
 

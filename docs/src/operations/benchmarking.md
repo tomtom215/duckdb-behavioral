@@ -43,7 +43,7 @@ benchmarks.
 O(1)-state functions (sessionize, retention) store no per-event data,
 enabling benchmarks up to 1 billion elements.
 
-`sequence_next_node` uses 32-byte `NextNodeEvent` structs with `Rc<str>`
+`sequence_next_node` uses 32-byte `NextNodeEvent` structs with `Arc<str>`
 string storage, further reducing the maximum feasible scale.
 
 ## Running Benchmarks

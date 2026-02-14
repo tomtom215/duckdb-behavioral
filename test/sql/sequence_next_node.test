@@ -66,3 +66,99 @@ ORDER BY user_id;
 ----
 1	home
 2	search
+
+# Forward, head: what comes after the first home event?
+query IT
+SELECT user_id, sequence_next_node(
+    'forward',
+    'head',
+    ts,
+    page,
+    is_home,
+    is_home
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	product
+2	search
+
+# Forward, tail: what comes after the last home event?
+query IT
+SELECT user_id, sequence_next_node(
+    'forward',
+    'tail',
+    ts,
+    page,
+    is_home,
+    is_home
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	product
+2	search
+
+# Forward, last_match: return from the last complete match
+query IT
+SELECT user_id, sequence_next_node(
+    'forward',
+    'last_match',
+    ts,
+    page,
+    is_home,
+    is_home
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	product
+2	search
+
+# Backward, tail: what comes before the last product event?
+query IT
+SELECT user_id, sequence_next_node(
+    'backward',
+    'tail',
+    ts,
+    page,
+    is_product,
+    is_product
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	home
+2	search
+
+# Backward, head: from the first product event
+query IT
+SELECT user_id, sequence_next_node(
+    'backward',
+    'head',
+    ts,
+    page,
+    is_product,
+    is_product
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	home
+2	search
+
+# Backward, last_match
+query IT
+SELECT user_id, sequence_next_node(
+    'backward',
+    'last_match',
+    ts,
+    page,
+    is_product,
+    is_product
+) FROM page_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	home
+2	search

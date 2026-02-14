@@ -181,7 +181,7 @@ unsafe extern "C" fn match_state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        let data = duckdb_vector_get_data(result) as *mut bool;
+        let data = duckdb_vector_get_data(result) as *mut u8;
         duckdb_vector_ensure_validity_writable(result);
         let validity = duckdb_vector_get_validity(result);
 
@@ -194,7 +194,7 @@ unsafe extern "C" fn match_state_finalize(
                 duckdb_validity_set_row_invalid(validity, idx as idx_t);
             } else {
                 match (*ffi_state.inner).finalize_match() {
-                    Ok(matched) => *data.add(idx) = matched,
+                    Ok(matched) => *data.add(idx) = u8::from(matched),
                     Err(_) => duckdb_validity_set_row_invalid(validity, idx as idx_t),
                 }
             }
@@ -273,10 +273,10 @@ unsafe extern "C" fn sequence_state_update(
         let ts_validity = duckdb_vector_get_validity(ts_vec);
 
         // Vectors 2..N: BOOLEAN conditions
-        let mut cond_vectors: Vec<(*const bool, *mut u64)> = Vec::with_capacity(num_conditions);
+        let mut cond_vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(num_conditions);
         for c in 2..col_count {
             let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const bool;
+            let data = duckdb_vector_get_data(vec) as *const u8;
             let validity = duckdb_vector_get_validity(vec);
             cond_vectors.push((data, validity));
         }
@@ -318,7 +318,7 @@ unsafe extern "C" fn sequence_state_update(
             for (c, &(data, validity)) in cond_vectors.iter().enumerate() {
                 let valid =
                     validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) {
+                if valid && *data.add(i) != 0 {
                     bitmask |= 1 << c;
                 }
             }

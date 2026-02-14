@@ -21,7 +21,7 @@ src/
   retention.rs                 Bitmask-based cohort retention (O(1) combine)
   window_funnel.rs             Greedy forward scan with combinable mode bitflags
   sequence.rs                  Sequence match/count/events state management
-  sequence_next_node.rs        Next event value after pattern match (Rc<str>)
+  sequence_next_node.rs        Next event value after pattern match (Arc<str>)
   ffi/
     mod.rs                     register_all_raw() dispatcher
     sessionize.rs              FFI callbacks for sessionize

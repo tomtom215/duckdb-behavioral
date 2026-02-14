@@ -63,3 +63,21 @@ ORDER BY user_id;
 1	1
 2	0
 3	1
+
+# Test with 5 boolean conditions
+statement ok
+CREATE TABLE multi_cond (ts TIMESTAMP, c1 BOOLEAN, c2 BOOLEAN, c3 BOOLEAN, c4 BOOLEAN, c5 BOOLEAN);
+
+statement ok
+INSERT INTO multi_cond VALUES
+    ('2024-01-01 00:00:00', true, false, false, false, false),
+    ('2024-01-01 00:01:00', false, true, false, false, false),
+    ('2024-01-01 00:02:00', false, false, true, false, false),
+    ('2024-01-01 00:03:00', false, false, false, true, false),
+    ('2024-01-01 00:04:00', false, false, false, false, true);
+
+query I
+SELECT sequence_match('(?1)(?2)(?3)(?4)(?5)', ts, c1, c2, c3, c4, c5)
+FROM multi_cond;
+----
+true

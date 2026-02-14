@@ -329,7 +329,7 @@ well-optimized. Added 15 tests.
 with full direction/base support, achieving COMPLETE ClickHouse behavioral analytics
 feature parity. Added 42 tests and new benchmarks.
 
-**Session 9 — Rc\<str\> Optimization**: Replaced `String` with `Rc<str>` in
+**Session 9 — Rc\<str\> Optimization**: Replaced `String` with `Arc<str>` in
 `sequence_next_node` for O(1) clone via reference counting (2.1-5.8x improvement).
 Added realistic cardinality benchmarks and community extension infrastructure.
 

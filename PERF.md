@@ -80,11 +80,11 @@ cargo bench -- sequence_match
 | `sequence_combine` | `sequence_*` | combine_in_place + finalize | 100 to 1M states | In-place append + NFA cost |
 | `sort_events` | (isolated) | sort only | 100 to 100M events | pdqsort scaling (random) |
 | `sort_events_presorted` | (isolated) | sort only | 100 to 100M events | pdqsort adaptive path |
-| `sequence_next_node` | `sequence_next_node` | update + finalize | 100 to 10M events | Sequential matching + Rc\<str\> clone |
+| `sequence_next_node` | `sequence_next_node` | update + finalize | 100 to 10M events | Sequential matching + Arc\<str\> clone |
 | `sequence_next_node_combine` | `sequence_next_node` | combine_in_place + finalize | 100 to 100K states | In-place append + sequential matching |
 | `sequence_match_events` | `sequence_match_events` | update + finalize_events | 100 to 100M events | NFA pattern matching + timestamp collection |
 | `sequence_match_events_combine` | `sequence_match_events` | combine_in_place + finalize_events | 100 to 1M states | In-place append + NFA + timestamp cost |
-| `sequence_next_node_realistic` | `sequence_next_node` | update + finalize (100 distinct values) | 100 to 1M events | Realistic cardinality Rc\<str\> sharing |
+| `sequence_next_node_realistic` | `sequence_next_node` | update + finalize (100 distinct values) | 100 to 1M events | Realistic cardinality Arc\<str\> sharing |
 
 ## Algorithmic Complexity
 
@@ -650,25 +650,25 @@ indirection overhead outweighs the size reduction.
 
 #### PERF-2: Rc\<str\> Reference-Counted Strings (ACCEPTED)
 
-**Hypothesis**: Replacing `Option<String>` with `Option<Rc<str>>` in `NextNodeEvent`
+**Hypothesis**: Replacing `Option<String>` with `Option<Arc<str>>` in `NextNodeEvent`
 reduces the struct from 40 bytes to 32 bytes and makes `clone()` O(1) (reference
 count increment) instead of O(n) (deep copy). This benefits both update (avoiding
 String allocation when values come from shared sources) and combine (O(1) clone per
 element instead of per-character copy).
 
 **Technique**:
-1. Changed `NextNodeEvent::value` from `Option<String>` to `Option<Rc<str>>`
-2. Updated FFI layer to convert `read_varchar` results via `Rc::from()`
+1. Changed `NextNodeEvent::value` from `Option<String>` to `Option<Arc<str>>`
+2. Updated FFI layer to convert `read_varchar` results via `Arc::from()`
 3. Updated `finalize()` to use `.as_deref().map(String::from)` for final String extraction
 4. Struct size reduced from 40 bytes (String = ptr+len+cap = 24 bytes + Option tag + padding)
-   to 32 bytes (Rc\<str\> = ptr+len = 16 bytes + Option tag + padding)
+   to 32 bytes (Arc\<str\> = ptr+len = 16 bytes + Option tag + padding)
 
 **Basis**:
 - Stroustrup (2013) "The C++ Programming Language" — shared_ptr/reference counting
   for immutable string data in analytics pipelines
 - Event values in behavioral analytics have low cardinality (~100 distinct page names
   across millions of events), making reference counting ideal
-- Rc\<str\> eliminates the capacity field (3-word String → 2-word fat pointer), reducing
+- Arc\<str\> eliminates the capacity field (3-word String → 2-word fat pointer), reducing
   per-element memory by 20%
 
 **Measured Results** (3 runs, 95% CIs, all non-overlapping):
@@ -689,26 +689,26 @@ element instead of per-character copy).
 **Analysis**: The speedup increases from 2.6x at 100 events to 5.8x at 100K events,
 then decreases to 1.8-2.1x at 1M-10M. This pattern reflects two competing effects:
 
-1. **Clone cost reduction** (dominant at small/medium scales): Rc::clone is a single
+1. **Clone cost reduction** (dominant at small/medium scales): Arc::clone is a single
    atomic increment (~1ns) vs String::clone which copies len bytes (~20-80ns for
    typical page names). At 100K events with 3-step matching, combine touches ~100K
    elements, saving ~2-8µs per element clone = ~200-800ms total → 5.8x.
 
 2. **Memory bandwidth saturation** (dominant at large scales): At 1M+ events, the
    working set (32 bytes × 1M = 32MB) exceeds L3 cache. The bottleneck shifts from
-   per-element allocation cost to DRAM bandwidth. Rc\<str\> (32 bytes) vs String (40
+   per-element allocation cost to DRAM bandwidth. Arc\<str\> (32 bytes) vs String (40
    bytes) provides a 20% struct size reduction, yielding a 1.8-2.1x improvement from
    better cache line utilization rather than clone cost savings.
 
 Combine sees larger speedups (5.1-6.4x at 1K-10K) because combine_in_place clones
-every element from the source state. With O(1) Rc::clone, the combine operation
+every element from the source state. With O(1) Arc::clone, the combine operation
 becomes pure memcpy + atomic increment, close to the theoretical minimum.
 
 #### Realistic Cardinality Benchmark
 
 Added `sequence_next_node_realistic` benchmark that draws from a pool of 100
-distinct `Rc<str>` values (matching typical behavioral analytics cardinality).
-This measures the benefit of Rc\<str\> sharing in realistic workloads.
+distinct `Arc<str>` values (matching typical behavioral analytics cardinality).
+This measures the benefit of Arc\<str\> sharing in realistic workloads.
 
 **Measured Results** (3 runs, 95% CIs):
 
@@ -729,10 +729,10 @@ This measures the benefit of Rc\<str\> sharing in realistic workloads.
 | 100K | 1.58 ms | 1.37 ms | **13%** |
 | 1M | 80.5 ms | 52.3 ms | **35%** |
 
-At 100K+ events, Rc\<str\> sharing provides additional 13-35% improvement over
-unique strings because `Rc::clone` from the pool avoids even the initial `Rc::from()`
+At 100K+ events, Arc\<str\> sharing provides additional 13-35% improvement over
+unique strings because `Arc::clone` from the pool avoids even the initial `Arc::from()`
 allocation that unique strings require. The benefit scales with working set size
-as shared Rc values reduce total heap allocation pressure.
+as shared Arc values reduce total heap allocation pressure.
 
 ### Session 11: NFA Reusable Stack + Fast-Path Linear Scan
 
@@ -910,11 +910,11 @@ Criterion before/after measurements with non-overlapping 95% CIs.
 
 ### Sequence Next Node
 
-Updated Session 9 (Rc\<str\> optimization). Validated with 3 consecutive runs.
+Updated Session 9 (Arc\<str\> optimization). Validated with 3 consecutive runs.
 
-`sequence_next_node` stores `NextNodeEvent` structs (timestamp + `Option<Rc<str>>` +
+`sequence_next_node` stores `NextNodeEvent` structs (timestamp + `Option<Arc<str>>` +
 conditions + base_condition, 32 bytes) which are larger than the `Copy` `Event` struct
-(16 bytes). Session 9's Rc\<str\> optimization delivered 2.1-5.8x improvement over the
+(16 bytes). Session 9's Arc\<str\> optimization delivered 2.1-5.8x improvement over the
 Session 8 String-based implementation by enabling O(1) clone and reducing struct size.
 
 | Benchmark | Mean [95% CI] | Throughput |
@@ -935,17 +935,17 @@ Session 8 String-based implementation by enabling O(1) clone and reducing struct
 | `sequence_next_node_realistic/100000` | 1.37 ms [1.35, 1.40] | 72.9 Melem/s |
 | `sequence_next_node_realistic/1000000` | 52.3 ms [51.3, 53.0] | 19.1 Melem/s |
 
-**Analysis**: With Rc\<str\>, `sequence_next_node` is now only 1.1-2.5x slower per
+**Analysis**: With Arc\<str\>, `sequence_next_node` is now only 1.1-2.5x slower per
 element than `sequence_match` (down from 7.9-9.6x with String), approaching the
 theoretical minimum overhead of storing per-event values.
 
 - At 10K events: 90.1 Melem/s vs `sequence_match`'s 588 Melem/s (6.5x gap) — remaining
   gap is from 32-byte struct (vs 16-byte Event) reducing cache utilization by 2x, plus
-  the initial Rc::from() allocation per unique string.
+  the initial Arc::from() allocation per unique string.
 - The realistic cardinality benchmark (100 distinct values) shows 35% improvement over
-  unique strings at 1M events, demonstrating the Rc sharing benefit in production workloads.
+  unique strings at 1M events, demonstrating the Arc sharing benefit in production workloads.
 - Combine throughput improved dramatically: 174 Melem/s at 100 states (was 25.9 Melem/s),
-  because Rc::clone is a single atomic increment vs deep String copy.
+  because Arc::clone is a single atomic increment vs deep String copy.
 
 ### Per-Element Cost at Scale
 
@@ -959,7 +959,7 @@ Cost per element at scale. Session 13 refresh numbers:
 | `sequence_match` | 100M | 902 ms | 9.02 | 111 Melem/s | Sort + O(n) fast-path scan |
 | `sequence_count` | 100M | 1.05 s | 10.5 | 95 Melem/s | Sort + O(n) fast-path counting |
 | `sequence_match_events` | 100M | 921 ms | 9.21 | 109 Melem/s | Sort + NFA + timestamp collection |
-| `sequence_next_node` | 10M | 438 ms | 43.8 | 23 Melem/s | Sort + sequential scan + Rc\<str\> alloc |
+| `sequence_next_node` | 10M | 438 ms | 43.8 | 23 Melem/s | Sort + sequential scan + Arc\<str\> alloc |
 | `sort_events` (random) | 100M | 2.046 s | 20.46 | 48.9 Melem/s | O(n log n) pdqsort, DRAM-bound |
 | `sort_events` (presorted) | 100M | 1.829 s | 18.29 | 54.7 Melem/s | O(n) adaptive, DRAM-bound |
 
@@ -983,7 +983,7 @@ Memory constraint: Event-collecting functions store 16 bytes per event. At 100M 
 = 1.6GB working set. 1B events would require 16GB + clone overhead, exceeding
 available memory (21GB) during Criterion's measurement loop. The 100M scale is
 the measured maximum for these functions — not extrapolated. `sequence_next_node`
-stores per-event Rc\<str\> data (32 bytes per NextNodeEvent) limiting its practical
+stores per-event Arc\<str\> data (32 bytes per NextNodeEvent) limiting its practical
 benchmark maximum to 10M events.
 
 ## Session Improvement Protocol

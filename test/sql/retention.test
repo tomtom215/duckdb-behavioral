@@ -53,3 +53,9 @@ SELECT retention(
 ) FROM user_actions WHERE user_id = 1;
 ----
 [false, false]
+
+# Empty table returns empty list
+query I
+SELECT retention(true, false) FROM user_actions WHERE 1=0;
+----
+[]

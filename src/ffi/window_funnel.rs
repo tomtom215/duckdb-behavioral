@@ -209,10 +209,10 @@ unsafe fn update_impl(
         let ts_validity = duckdb_vector_get_validity(ts_vec);
 
         // BOOLEAN condition vectors
-        let mut cond_vectors: Vec<(*const bool, *mut u64)> = Vec::with_capacity(num_conditions);
+        let mut cond_vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(num_conditions);
         for c in bool_start..col_count {
             let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const bool;
+            let data = duckdb_vector_get_data(vec) as *const u8;
             let validity = duckdb_vector_get_validity(vec);
             cond_vectors.push((data, validity));
         }
@@ -268,7 +268,7 @@ unsafe fn update_impl(
             for (c, &(data, validity)) in cond_vectors.iter().enumerate() {
                 let valid =
                     validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) {
+                if valid && *data.add(i) != 0 {
                     bitmask |= 1 << c;
                 }
             }

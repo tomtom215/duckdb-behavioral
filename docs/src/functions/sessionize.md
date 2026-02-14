@@ -66,3 +66,8 @@ which enables efficient evaluation via DuckDB's segment tree windowing machinery
 
 At benchmark scale, `sessionize` processes **1 billion rows in 1.18 seconds**
 (848 Melem/s).
+
+## See Also
+
+- [`retention`](./retention.md) -- cohort retention analysis using boolean conditions
+- [`window_funnel`](./window-funnel.md) -- conversion funnel step tracking within time windows

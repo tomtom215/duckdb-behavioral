@@ -109,11 +109,11 @@ GROUP BY user_id;
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
 | Finalize | O(n * k) sequential scan, where n = events, k = event conditions |
-| Space | O(n) -- all events stored (each includes an `Rc<str>` value) |
+| Space | O(n) -- all events stored (each includes an `Arc<str>` value) |
 
 Note: Unlike other event-collecting functions where the `Event` struct is `Copy`
 (16 bytes), `sequence_next_node` uses a dedicated `NextNodeEvent` struct (32 bytes)
-that stores an `Rc<str>` value per event. The `Rc<str>` enables O(1) clone via
+that stores an `Arc<str>` value per event. The `Arc<str>` enables O(1) clone via
 reference counting, which significantly reduces combine overhead compared to
 per-event `String` cloning.
 
