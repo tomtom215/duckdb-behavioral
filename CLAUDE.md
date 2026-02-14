@@ -764,6 +764,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 - **ci.yml**: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver,
   coverage, cross-platform (Linux + macOS), extension-build
+- **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
 - **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
   creates GitHub release on tag push with SemVer validation

@@ -25,6 +25,17 @@ ensure code quality across multiple dimensions.
 | **cross-platform** | Linux + macOS test matrix | `cargo test` on both OSes |
 | **extension-build** | Community extension packaging | `make configure && make release` |
 
+### CodeQL (`codeql.yml`)
+
+Runs GitHub's CodeQL static analysis for Rust on every push to `main`, every
+pull request, and on a weekly schedule (Monday 06:00 UTC). Uses the
+`security-and-quality` query suite for comprehensive coverage.
+
+- **Triggers**: push to main, PRs, weekly cron
+- **Language**: Rust
+- **Action version**: `github/codeql-action` v4.32.3 (SHA-pinned)
+- **Permissions**: `security-events: write` (required to upload SARIF results)
+
 ### E2E Tests (`e2e.yml`)
 
 Runs on every push to `main` and every pull request. Builds the extension
