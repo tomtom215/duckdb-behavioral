@@ -88,6 +88,36 @@ release with SHA256 checksums and build provenance attestations.
 - Immutable artifacts with 30-day retention
 - Build provenance tied to specific git commit
 
+### Community Submission (`community-submission.yml`)
+
+On-demand workflow for preparing and submitting the extension to the
+[DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
+repository. Triggered via `workflow_dispatch` with a `dry_run` toggle.
+
+**Phases:**
+
+| Phase | Purpose |
+|-------|---------|
+| **Validate** | description.yml schema, version consistency (Cargo.toml vs description.yml), required files |
+| **Quality Gate** | `cargo test`, `cargo clippy`, `cargo fmt`, `cargo doc` |
+| **Build & Test** | `make configure && make release && make test_release` (community Makefile toolchain) |
+| **Pin Ref** | Updates `description.yml` ref to the validated commit SHA (skipped in dry run) |
+| **Submission Package** | Uploads description.yml artifact, generates step-by-step PR commands |
+
+**Usage:**
+
+```bash
+# Dry run — validate everything without making changes
+gh workflow run community-submission.yml -f dry_run=true
+
+# Full run — validate, build, test, pin ref, generate submission package
+gh workflow run community-submission.yml -f dry_run=false
+```
+
+After a full run, the workflow summary contains the exact `gh` CLI commands to
+fork `duckdb/community-extensions`, create the submission branch, and open the
+PR — ensuring deterministic, repeatable submissions.
+
 ### Pages (`pages.yml`)
 
 Deploys mdBook documentation to GitHub Pages on push to `main`. Uses

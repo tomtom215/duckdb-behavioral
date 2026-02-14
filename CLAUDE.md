@@ -768,6 +768,8 @@ GitHub Actions workflows in `.github/workflows/`:
 - **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
   creates GitHub release on tag push with SemVer validation
+- **community-submission.yml**: On-demand workflow for community extension
+  submission — validates, builds, tests, pins ref, generates submission package
 - **pages.yml**: Deploys mdBook documentation to GitHub Pages
 
 ## Common Tasks

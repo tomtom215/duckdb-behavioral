@@ -376,102 +376,47 @@ fixes, documentation polish, and full benchmark baseline refresh.
 All measurements: Criterion.rs 0.8.2, 95% confidence intervals. Full methodology, optimization history, and baseline
 records: [`PERF.md`](PERF.md).
 
-## Community Extension Submission Roadmap
+## Community Extension Submission
 
-The following is a complete, step-by-step checklist for submitting this extension
-to the [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
-repository. Every item must be verified with zero exceptions.
+This extension is designed for the
+[DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
+repository. All submission infrastructure is in place: `description.yml`,
+`Makefile`, `extension-ci-tools` submodule, SQLLogicTest tests, and a dedicated
+CI workflow.
 
-### Infrastructure Already in Place
-
-- [x] `description.yml` with extension metadata, maintainer, and docs fields
-- [x] `Makefile` with `configure`, `debug`, `release`, `test` targets
-  (includes `extension-ci-tools` base and Rust makefiles)
-- [x] `.gitmodules` referencing `extension-ci-tools` submodule
-- [x] SQLLogicTest integration tests in `test/sql/` (7 test files covering all 7 functions)
-- [x] Custom C entry point (`behavioral_init_c_api`) compatible with `build: cargo`
-- [x] `Cargo.toml` with `crate-type = ["cdylib", "rlib"]` and `libduckdb-sys` loadable-extension feature
-- [x] MIT license
-
-### Completed Steps
-
-- [x] **Step 1: Initialize the `extension-ci-tools` submodule** — Initialized and
-  pinned to a commit compatible with DuckDB v1.4.4.
-- [x] **Step 2: Verify the Makefile build chain locally** — `make configure &&
-  make release && make test_release` passes all 7 SQL test files.
-- [x] **Step 3: Verify all unit tests pass** — `cargo test` (434 + 1 doc-test),
-  `cargo clippy --all-targets` (zero warnings), `cargo fmt -- --check` (clean).
-
-### Remaining Steps
-
-**Step 4: Push the finalized repository to GitHub**
-
-The repository at `github.com/tomtom215/duckdb-behavioral` must be **public** and
-contain the Makefile, initialized submodule, Cargo.lock, source, tests, and license
-at the root level.
-
-**Step 5: Pin `description.yml` to a specific commit hash**
+### Submission Process
 
 ```bash
-git rev-parse HEAD  # Capture the 40-character SHA
+# 1. Validate readiness (dry run)
+gh workflow run community-submission.yml -f dry_run=true
+
+# 2. Pin ref and generate submission package
+gh workflow run community-submission.yml -f dry_run=false
+
+# 3. Follow the commands in the workflow summary to open the PR
 ```
 
-Update `description.yml` field `repo.ref` from `main` to the exact commit hash.
-The community CI checks out this specific commit for reproducible builds. Branch
-names are not accepted.
+The [`community-submission.yml`](.github/workflows/community-submission.yml)
+workflow automates the full pre-submission pipeline in 5 phases:
 
-**Step 6: Fork `duckdb/community-extensions` and create the submission PR**
+| Phase | Purpose |
+|-------|---------|
+| Validate | `description.yml` schema, version consistency, required files |
+| Quality Gate | `cargo test` (434 + doc-test), `clippy`, `fmt`, `doc` |
+| Build & Test | `make configure && make release && make test_release` |
+| Pin Ref | Updates `description.yml` ref to the validated commit SHA |
+| Submission Package | Uploads artifact, generates step-by-step PR commands |
 
-The PR adds exactly one file:
+After the workflow completes, the only manual step is opening a PR to
+`duckdb/community-extensions` that adds `extensions/behavioral/description.yml`.
+The community CI handles all platform builds, test execution, and binary signing.
 
-```
-extensions/behavioral/description.yml
-```
+### Post-Publication Updates
 
-This is the **only** artifact submitted. The extension source code stays in our
-repository. The community CI clones our repo at the pinned `ref`, builds for all
-non-excluded platforms, runs the SQLLogicTest tests, and signs the binaries.
-
-**Step 7: Pass CI on all platforms**
-
-The community CI builds for every platform not in `excluded_platforms`. Our
-exclusions: `wasm_mvp`, `wasm_eh`, `wasm_threads`, `windows_amd64_rtools`,
-`windows_amd64_mingw`, `linux_amd64_musl`. If CI fails on any platform, the
-error logs are visible in the PR checks.
-
-**Step 8: Address maintainer review**
-
-DuckDB maintainers verify metadata correctness and build success. There is no
-code review of extension source — only build + test pass/fail. Potential review
-items: naming conflicts with core extensions, `description.yml` formatting,
-platform compatibility issues.
-
-**Step 9: Merge and publication**
-
-After merge, the extension becomes installable by any DuckDB user:
-
-```sql
-INSTALL behavioral FROM community;
-LOAD behavioral;
-```
-
-An auto-generated documentation page appears at
-`https://duckdb.org/community_extensions/extensions/behavioral`.
-
-### Post-Publication Maintenance
-
-To release updates: push changes to our repo, then open a new PR to
-`duckdb/community-extensions` updating the `ref` field to the new commit hash.
-When DuckDB releases a new version, update `libduckdb-sys` in Cargo.toml,
-`TARGET_DUCKDB_VERSION` in Makefile, and the `extension-ci-tools` submodule.
-
-### Known Risks
-
-| Risk | Mitigation |
-|---|---|
-| `build: cargo` is experimental (only `rusty_quack` uses it) | Our Makefile matches the official `extension-template-rs` exactly |
-| `USE_UNSTABLE_C_API=1` pins to a specific DuckDB version | Documented in Makefile; `ref_next` field available for dev builds |
-| Extension naming is at DuckDB Foundation discretion | "behavioral" is descriptive and does not conflict with core extensions |
+Push changes to this repository, re-run the submission workflow to pin the new
+ref, then open a new PR updating the ref field. When DuckDB releases a new
+version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
+`extension-ci-tools` submodule.
 
 ## Versioning
 
@@ -493,6 +438,7 @@ for the full SemVer rules applied to SQL function signatures.
 | **CI** | Push/PR to main | 13 jobs: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build |
 | **E2E** | Push/PR to main | Builds extension, tests all 7 functions against real DuckDB, load tests 100K events |
 | **Release** | Tag push `v*` | SemVer validation, 4-platform build, SQL tests, provenance attestation, GitHub Release |
+| **Community Submission** | Manual dispatch | Validate, quality gate, build & test, pin ref, generate submission package |
 | **Pages** | Push to main | Deploys mdBook documentation to GitHub Pages |
 
 ## Development
