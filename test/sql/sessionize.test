@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 # name: test/sql/sessionize.test
 # group: [behavioral]
 
@@ -44,3 +46,13 @@ SELECT ts, sessionize(ts, INTERVAL '1 hour') OVER (ORDER BY ts) AS session_id
 FROM (SELECT TIMESTAMP '2024-01-01 00:00:00' AS ts);
 ----
 2024-01-01 00:00:00	1
+
+# NULL timestamp should be handled gracefully
+query II
+SELECT ts, sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) AS session_id
+FROM (VALUES (TIMESTAMP '2024-01-01 00:00:00'), (NULL), (TIMESTAMP '2024-01-01 00:05:00')) t(ts)
+ORDER BY ts;
+----
+2024-01-01 00:00:00	1
+2024-01-01 00:05:00	1
+NULL	NULL

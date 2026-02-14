@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! `sequence_match` and `sequence_count` — Pattern matching over event sequences.
 //!
 //! These aggregate functions match a mini-regex pattern against a time-ordered
@@ -34,6 +37,7 @@ use crate::pattern::parser::{parse_pattern, CompiledPattern, PatternError};
 /// Collects timestamped events during `update`, then matches them against
 /// the compiled pattern during `finalize`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SequenceState {
     /// Collected events (timestamp + conditions). Sorted in finalize.
     pub events: Vec<Event>,

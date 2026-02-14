@@ -90,8 +90,8 @@ ClickHouse semantics.
 | Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `sequence_match` processes **100 million events in 1.05 s**
-(95 Melem/s).
+At benchmark scale, `sequence_match` processes **100 million events in 951 ms**
+(105 Melem/s).
 
 ## See Also
 

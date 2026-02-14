@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 # name: test/sql/retention.test
 # group: [behavioral]
 
@@ -53,3 +55,9 @@ SELECT retention(
 ) FROM user_actions WHERE user_id = 1;
 ----
 [false, false]
+
+# Empty table returns empty list
+query I
+SELECT retention(true, false) FROM user_actions WHERE 1=0;
+----
+[]

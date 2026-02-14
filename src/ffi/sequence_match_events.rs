@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `sequence_match_events` aggregate function.
 
 use crate::common::event::Event;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
@@ -22,7 +24,7 @@ const MAX_CONDITIONS: usize = 32;
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
     unsafe {
-        let name = CString::new("sequence_match_events").unwrap();
+        let name = c"sequence_match_events";
         let set = duckdb_create_aggregate_function_set(name.as_ptr());
 
         for n in MIN_CONDITIONS..=MAX_CONDITIONS {
@@ -113,10 +115,10 @@ unsafe extern "C" fn state_update(
         let ts_data = duckdb_vector_get_data(ts_vec) as *const i64;
         let ts_validity = duckdb_vector_get_validity(ts_vec);
 
-        let mut cond_vectors: Vec<(*const bool, *mut u64)> = Vec::with_capacity(num_conditions);
+        let mut cond_vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(num_conditions);
         for c in 2..col_count {
             let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const bool;
+            let data = duckdb_vector_get_data(vec) as *const u8;
             let validity = duckdb_vector_get_validity(vec);
             cond_vectors.push((data, validity));
         }
@@ -152,7 +154,7 @@ unsafe extern "C" fn state_update(
             for (c, &(data, validity)) in cond_vectors.iter().enumerate() {
                 let valid =
                     validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) {
+                if valid && *data.add(i) != 0 {
                     bitmask |= 1 << c;
                 }
             }

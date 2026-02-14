@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! NFA-based pattern executor for sequence matching.
 //!
 //! Executes compiled patterns against sorted event streams using a
@@ -14,6 +17,7 @@ const MAX_NFA_STATES: usize = 10_000;
 
 /// Result of executing a pattern against an event stream.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MatchResult {
     /// Whether any full match was found.
     pub matched: bool,

@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `window_funnel` aggregate function.
 
 use crate::common::event::Event;
 use crate::common::timestamp::interval_to_micros;
 use crate::window_funnel::{FunnelMode, WindowFunnelState};
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Minimum number of boolean condition parameters for `window_funnel`.
 const MIN_CONDITIONS: usize = 2;
@@ -25,7 +27,7 @@ const MAX_CONDITIONS: usize = 32;
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_window_funnel(con: duckdb_connection) {
     unsafe {
-        let name = CString::new("window_funnel").unwrap();
+        let name = c"window_funnel";
         let set = duckdb_create_aggregate_function_set(name.as_ptr());
 
         // Register overloads WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)
@@ -209,10 +211,10 @@ unsafe fn update_impl(
         let ts_validity = duckdb_vector_get_validity(ts_vec);
 
         // BOOLEAN condition vectors
-        let mut cond_vectors: Vec<(*const bool, *mut u64)> = Vec::with_capacity(num_conditions);
+        let mut cond_vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(num_conditions);
         for c in bool_start..col_count {
             let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const bool;
+            let data = duckdb_vector_get_data(vec) as *const u8;
             let validity = duckdb_vector_get_validity(vec);
             cond_vectors.push((data, validity));
         }
@@ -268,7 +270,7 @@ unsafe fn update_impl(
             for (c, &(data, validity)) in cond_vectors.iter().enumerate() {
                 let valid =
                     validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) {
+                if valid && *data.add(i) != 0 {
                     bitmask |= 1 << c;
                 }
             }

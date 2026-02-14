@@ -14,23 +14,23 @@ improvements and algorithmic scaling are hardware-independent.
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | 1 billion | 1.18 s | 848 Melem/s |
-| `retention` (combine) | 1 billion | 2.94 s | 340 Melem/s |
-| `window_funnel` | 100 million | 715 ms | 140 Melem/s |
-| `sequence_match` | 100 million | 902 ms | 111 Melem/s |
-| `sequence_count` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
-| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
+| `sessionize` | 1 billion | 1.21 s | 826 Melem/s |
+| `retention` (combine) | 100 million | 259 ms | 386 Melem/s |
+| `window_funnel` | 100 million | 755 ms | 132 Melem/s |
+| `sequence_match` | 100 million | 951 ms | 105 Melem/s |
+| `sequence_count` | 100 million | 1.10 s | 91 Melem/s |
+| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s |
+| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s |
 
 ### Per-Element Cost
 
 | Function | Cost per Element | Bound |
 |---|---|---|
 | `sessionize` | 1.2 ns | CPU-bound (register-only loop) |
-| `retention` | 3.0 ns | CPU-bound (bitmask OR) |
+| `retention` | 2.6 ns | CPU-bound (bitmask OR) |
 | `window_funnel` | 7.6 ns | Memory-bound at 100M (1.6 GB working set) |
-| `sequence_match` | 10.5 ns | Memory-bound (NFA + event traversal) |
-| `sequence_count` | 14.5 ns | Memory-bound (NFA restart overhead) |
+| `sequence_match` | 9.5 ns | Memory-bound (NFA + event traversal) |
+| `sequence_count` | 11.0 ns | Memory-bound (NFA restart overhead) |
 
 ## Algorithmic Complexity
 
@@ -49,7 +49,7 @@ s = pattern steps.
 
 ## Optimization History
 
-Thirteen engineering sessions have produced the current performance profile. Each
+Fourteen engineering sessions have produced the current performance profile. Each
 optimization below was measured independently with before/after Criterion data
 and non-overlapping confidence intervals (except where noted as negative results).
 
@@ -151,7 +151,7 @@ completeness, achieving complete ClickHouse behavioral analytics parity.
 
 ### Session 9: Rc\<str\> Optimization
 
-Replaced `Option<String>` with `Option<Rc<str>>` in `NextNodeEvent`, reducing
+Replaced `Option<String>` with `Option<Arc<str>>` in `NextNodeEvent`, reducing
 struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
 
 | Function | Scale | Improvement |
@@ -162,11 +162,11 @@ struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
 A string pool attempt (`PooledEvent` with `Copy` semantics, 24 bytes) was
 measured 10-55% slower at most scales due to dual-vector overhead. The key
 insight: below one cache line (64 bytes), clone cost matters more than absolute
-struct size. `Rc::clone` (~1ns atomic increment) consistently beats
+struct size. `Arc::clone` (~1ns atomic increment) consistently beats
 `String::clone` (copies len bytes).
 
 Also added a realistic cardinality benchmark using a pool of 100 distinct
-`Rc<str>` values, showing 35% improvement over unique strings at 1M events.
+`Arc<str>` values, showing 35% improvement over unique strings at 1M events.
 
 ### Session 10: E2E Validation + Custom C Entry Point
 

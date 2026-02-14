@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 # name: test/sql/window_funnel.test
 # group: [behavioral]
 
@@ -64,6 +66,102 @@ query II
 SELECT user_id, window_funnel(
     INTERVAL '1 hour',
     'strict_increase',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1
+
+# Empty table returns 0
+query I
+SELECT window_funnel(
+    INTERVAL '1 hour',
+    ts,
+    event = 'view',
+    event = 'cart'
+) FROM funnel_events WHERE 1=0;
+----
+0
+
+# strict mode: no backward movement allowed
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '1 hour',
+    'strict',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1
+
+# strict_order mode: events must be in exact sequential order
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '1 hour',
+    'strict_order',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1
+
+# strict_deduplication mode: same-timestamp events deduplicated
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '1 hour',
+    'strict_deduplication',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1
+
+# strict_once mode: each event advances at most one step
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '1 hour',
+    'strict_once',
+    ts,
+    event = 'view',
+    event = 'cart',
+    event = 'purchase'
+) FROM funnel_events
+GROUP BY user_id
+ORDER BY user_id;
+----
+1	3
+2	2
+3	1
+
+# allow_reentry mode: funnel resets on re-entry
+query II
+SELECT user_id, window_funnel(
+    INTERVAL '1 hour',
+    'allow_reentry',
     ts,
     event = 'view',
     event = 'cart',

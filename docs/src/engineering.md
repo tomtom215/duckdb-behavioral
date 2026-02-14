@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 403 unit tests, 11 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 403 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -132,7 +132,7 @@ This architecture enables:
 graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
-        L2["E2E Tests (11)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
+        L2["E2E Tests (27)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
         L1["Unit Tests (403)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
     end
 
@@ -159,7 +159,7 @@ Organized by category within each module:
 - **Mutation-testing-guided tests (51)** -- tests written specifically to kill
   mutants that survived initial test suites
 
-**Level 2: E2E Tests (11 tests)**
+**Level 2: E2E Tests (27 tests)**
 
 Integration tests against a real DuckDB CLI instance that validate the complete
 chain: extension loading, function registration, SQL execution, and result
@@ -197,7 +197,7 @@ Every performance claim in this project is backed by:
 - **Criterion.rs benchmarks** with 95% confidence intervals
 - **Multiple runs** (minimum 3) to establish baselines
 - **Throughput reporting** (elements per second) alongside wall clock time
-- **Negative results documented honestly** -- three attempted optimizations
+- **Negative results documented honestly** -- five attempted optimizations
   were measured, found to be regressions, reverted, and documented
 
 ### Scale
@@ -206,11 +206,11 @@ Every performance claim in this project is backed by:
 |---|---|---|
 | O(1) state (sessionize, retention) | **1 billion elements** | Compute-bound; no per-event memory |
 | Event-collecting (window_funnel, sequence_*) | **100 million elements** | 1.6 GB working set at 16 bytes/event |
-| String-carrying (sequence_next_node) | **10 million elements** | 32 bytes/event with `Rc<str>` allocation |
+| String-carrying (sequence_next_node) | **10 million elements** | 32 bytes/event with `Arc<str>` allocation |
 
 ### Optimization History
 
-Thirteen sessions of measured optimization, each following a documented protocol:
+Fourteen sessions of measured optimization, each following a documented protocol:
 
 1. Establish baseline with 3 Criterion runs
 2. Implement one optimization per commit
@@ -225,15 +225,17 @@ Selected highlights:
 | Event bitmask (Vec\<bool\> to u32) | 5--13x | All event functions |
 | In-place combine (O(N^2) to O(N)) | Up to **2,436x** | Combine operations at 10K states |
 | NFA lazy matching (greedy to lazy) | **1,961x** | sequence_match at 1M events |
-| Rc\<str\> (String to reference counted) | 2.1--5.8x | sequence_next_node |
+| Arc\<str\> (String to reference counted) | 2.1--5.8x | sequence_next_node |
 | NFA fast paths (linear scan) | 39--61% | sequence_count |
 
-Three attempted optimizations were negative results:
+Five attempted optimizations were negative results:
 
 - **LSD radix sort**: 4.3x slower than pdqsort for 16-byte embedded-key structs
 - **Branchless sessionize**: 5--10% regression; branch predictor handles 90/10
   patterns efficiently
-- **String pool with index vectors**: 10--55% slower than Rc\<str\> at most scales
+- **String pool with index vectors**: 10--55% slower than Arc\<str\> at most scales
+- **Compiled pattern preservation**: Caching parsed patterns did not improve performance
+- **First-condition pre-check**: Adding an early-exit branch for non-matching first conditions increased overhead
 
 Full optimization history with confidence intervals: [Performance](./internals/performance.md)
 
@@ -371,7 +373,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 |---|---|
 | Unit tests | 403 |
 | Doc-tests | 1 |
-| E2E tests | 11 |
+| E2E tests | 27 |
 | Property-based tests | 26 (proptest) |
 | Mutation-guided tests | 51 |
 | Mutation kill rate | 88.4% (130/147) |
@@ -381,7 +383,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements |
 | CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
-| Documented negative results | 3 (radix sort, branchless, string pool) |
+| Documented negative results | 5 (radix sort, branchless, string pool, compiled pattern, first-condition pre-check) |
 | ClickHouse parity | Complete (7/7 functions, all modes, 32 conditions) |
 
 ---

@@ -1,6 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 [package]
 name = "duckdb-behavioral"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.80"
 authors = ["Tom F <tomtom215@users.noreply.github.com>"]

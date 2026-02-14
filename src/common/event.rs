@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Event types shared across behavioral analytics functions.
 //!
 //! Several functions (`window_funnel`, `sequence_match`, `sequence_count`)
@@ -28,6 +31,7 @@ pub const MAX_EVENT_CONDITIONS: usize = 32;
 /// condition `i`. This supports up to 32 conditions, matching `ClickHouse`'s
 /// limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Event {
     /// Timestamp in microseconds since Unix epoch.
     pub timestamp_us: i64,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Timestamp normalization and interval handling utilities.
 //!
 //! `DuckDB` stores timestamps internally as `i64` microseconds since Unix epoch.

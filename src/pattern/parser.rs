@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! Recursive descent parser for sequence match pattern strings.
 //!
 //! Parses patterns like `(?1).*(?2)(?t>=3600)(?3)` into a structured AST
@@ -53,6 +56,7 @@ impl TimeOp {
 
 /// A compiled pattern ready for execution.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CompiledPattern {
     /// Ordered steps that events must match.
     pub steps: Vec<PatternStep>,
@@ -60,6 +64,7 @@ pub struct CompiledPattern {
 
 /// Error returned when pattern parsing fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PatternError {
     /// Human-readable error message.
     pub message: String,

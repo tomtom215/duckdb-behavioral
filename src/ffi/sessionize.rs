@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `sessionize` aggregate/window function.
 
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Registers the `sessionize` function with `DuckDB`.
 ///
@@ -23,7 +25,7 @@ pub unsafe fn register_sessionize(con: duckdb_connection) {
     unsafe {
         let func = duckdb_create_aggregate_function();
 
-        let name = CString::new("sessionize").unwrap();
+        let name = c"sessionize";
         duckdb_aggregate_function_set_name(func, name.as_ptr());
 
         // Parameter 0: TIMESTAMP (event timestamp)
@@ -112,8 +114,9 @@ unsafe extern "C" fn state_update(
             let ffi_state = &mut *(state_ptr as *mut FfiState);
             let state = &mut *ffi_state.inner;
 
-            // Skip NULL timestamps
+            // NULL timestamps: mark state so finalize emits NULL for this row
             if !ts_validity.is_null() && !duckdb_validity_row_is_valid(ts_validity, i as idx_t) {
+                state.mark_null_row();
                 continue;
             }
 
@@ -187,7 +190,10 @@ unsafe extern "C" fn state_finalize(
             let ffi_state = &*(state_ptr as *const FfiState);
             let idx = offset as usize + i;
 
-            if ffi_state.inner.is_null() || (*ffi_state.inner).first_ts.is_none() {
+            if ffi_state.inner.is_null()
+                || (*ffi_state.inner).first_ts.is_none()
+                || (*ffi_state.inner).current_row_null
+            {
                 duckdb_validity_set_row_invalid(validity, idx as idx_t);
             } else {
                 *data.add(idx) = (*ffi_state.inner).finalize();

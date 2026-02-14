@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `retention` aggregate function.
 
 use crate::retention::RetentionState;
 use libduckdb_sys::*;
-use std::ffi::CString;
 
 /// Minimum number of boolean condition parameters for retention.
 const MIN_CONDITIONS: usize = 2;
@@ -19,7 +21,7 @@ const MAX_CONDITIONS: usize = 32;
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_retention(con: duckdb_connection) {
     unsafe {
-        let name = CString::new("retention").unwrap();
+        let name = c"retention";
         let set = duckdb_create_aggregate_function_set(name.as_ptr());
 
         for n in MIN_CONDITIONS..=MAX_CONDITIONS {
@@ -98,10 +100,10 @@ unsafe extern "C" fn state_update(
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
 
         // Read all boolean condition vectors
-        let mut vectors: Vec<(*const bool, *mut u64)> = Vec::with_capacity(col_count);
+        let mut vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(col_count);
         for c in 0..col_count {
             let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const bool;
+            let data = duckdb_vector_get_data(vec) as *const u8;
             let validity = duckdb_vector_get_validity(vec);
             vectors.push((data, validity));
         }
@@ -115,7 +117,7 @@ unsafe extern "C" fn state_update(
             for &(data, validity) in &vectors {
                 let valid =
                     validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                let value = if valid { *data.add(i) } else { false };
+                let value = if valid { *data.add(i) != 0 } else { false };
                 conditions.push(value);
             }
 
@@ -160,6 +162,11 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
+        // Ensure validity bitmap is writable once before the loop (idempotent
+        // but wasteful if called per-iteration).
+        duckdb_vector_ensure_validity_writable(result);
+        let validity = duckdb_vector_get_validity(result);
+
         // Result is a LIST(BOOLEAN) vector
         for i in 0..count as usize {
             let state_ptr = *source.add(i);
@@ -167,8 +174,6 @@ unsafe extern "C" fn state_finalize(
             let idx = offset as usize + i;
 
             if ffi_state.inner.is_null() {
-                duckdb_vector_ensure_validity_writable(result);
-                let validity = duckdb_vector_get_validity(result);
                 duckdb_validity_set_row_invalid(validity, idx as idx_t);
                 continue;
             }
@@ -188,9 +193,9 @@ unsafe extern "C" fn state_finalize(
             (*list_data.add(idx)).length = retention_result.len() as idx_t;
 
             // Write boolean values to child vector
-            let child_data = duckdb_vector_get_data(child) as *mut bool;
+            let child_data = duckdb_vector_get_data(child) as *mut u8;
             for (j, &val) in retention_result.iter().enumerate() {
-                *child_data.add(current_size as usize + j) = val;
+                *child_data.add(current_size as usize + j) = u8::from(val);
             }
         }
     }

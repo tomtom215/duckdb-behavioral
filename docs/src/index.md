@@ -130,6 +130,29 @@ worked example, see the [Getting Started](./getting-started.md) guide.
 
 ## Functions
 
+### Choosing the Right Function
+
+```mermaid
+flowchart TD
+    Q{What do you want<br/>to analyze?}
+    Q -->|"Break events<br/>into sessions"| S["sessionize"]
+    Q -->|"Did users come<br/>back over time?"| R["retention"]
+    Q -->|"How far through<br/>a multi-step flow?"| WF["window_funnel"]
+    Q -->|"Did a specific<br/>event pattern occur?"| SM{Need details?}
+    SM -->|"Yes/No answer"| SEQ["sequence_match"]
+    SM -->|"How many times?"| SC["sequence_count"]
+    SM -->|"When did each<br/>step happen?"| SME["sequence_match_events"]
+    Q -->|"What happened<br/>next/before?"| SNN["sequence_next_node"]
+
+    style S fill:#e8f5e9,stroke:#2e7d32
+    style R fill:#e3f2fd,stroke:#1565c0
+    style WF fill:#fff3e0,stroke:#e65100
+    style SEQ fill:#fce4ec,stroke:#c62828
+    style SC fill:#fce4ec,stroke:#c62828
+    style SME fill:#fce4ec,stroke:#c62828
+    style SNN fill:#f3e5f5,stroke:#6a1b9a
+```
+
 Seven functions covering the full spectrum of behavioral analytics:
 
 | Function | Type | Returns | Description |
@@ -157,13 +180,13 @@ performance claim below is backed by
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| **`sessionize`** | **1 billion rows** | **1.18 s** | **848 Melem/s** |
-| **`retention`** | **1 billion rows** | **2.94 s** | **340 Melem/s** |
-| `window_funnel` | 100 million rows | 715 ms | 140 Melem/s |
-| `sequence_match` | 100 million rows | 902 ms | 111 Melem/s |
-| `sequence_count` | 100 million rows | 1.05 s | 95 Melem/s |
-| `sequence_match_events` | 100 million rows | 921 ms | 109 Melem/s |
-| `sequence_next_node` | 10 million rows | 438 ms | 23 Melem/s |
+| **`sessionize`** | **1 billion rows** | **1.21 s** | **826 Melem/s** |
+| **`retention`** | **100 million rows** | **259 ms** | **386 Melem/s** |
+| `window_funnel` | 100 million rows | 755 ms | 132 Melem/s |
+| `sequence_match` | 100 million rows | 951 ms | 105 Melem/s |
+| `sequence_count` | 100 million rows | 1.10 s | 91 Melem/s |
+| `sequence_match_events` | 100 million rows | 988 ms | 101 Melem/s |
+| `sequence_next_node` | 10 million rows | 559 ms | 18 Melem/s |
 
 Key design choices that enable this performance:
 
@@ -193,8 +216,8 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 403 unit tests, 11 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
-| **Performance** | Thirteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Three negative results documented honestly. |
+| **Testing Rigor** | 403 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
+| **Performance** | Fourteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | Raw DuckDB C API integration via custom entry point. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
 | **CI/CD** | 13 CI jobs, 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |

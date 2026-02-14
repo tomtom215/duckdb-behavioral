@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! `sequence_next_node` — Returns the next event value after a matched sequence.
 //!
 //! Implements `ClickHouse`'s `sequenceNextNode` function for flow analysis.
@@ -29,17 +32,19 @@
 //! - **Backward**: Returns the value of the event immediately before the
 //!   earliest matched event.
 //!
-//! # `Rc<str>` Value Storage (Session 9)
+//! # `Arc<str>` Value Storage (Session 9)
 //!
-//! Event values use `Rc<str>` (reference-counted immutable string) instead of
-//! `String`. This reduces the per-event struct size from 40 bytes to 32 bytes
-//! (20% reduction) and makes `clone()` O(1) via reference count increment
-//! instead of O(n) deep string copy. The O(1) clone directly benefits:
+//! Event values use `Arc<str>` (atomically reference-counted immutable string)
+//! instead of `String`. This reduces the per-event struct size from 40 bytes
+//! to 32 bytes (20% reduction) and makes `clone()` O(1) via reference count
+//! increment instead of O(n) deep string copy. Unlike `Rc<str>`, `Arc<str>`
+//! is `Send + Sync`, eliminating theoretical unsoundness if `DuckDB` ever
+//! parallelizes combine operations. The O(1) clone directly benefits:
 //! - **Combine**: cloning events in `combine_in_place` is O(1) per event
 //! - **Sort**: swapping 32-byte elements vs 40-byte elements
 //! - **Cache utilization**: 2 events per cache line vs 1.6 previously
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Direction of traversal for sequence matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +72,7 @@ pub enum Base {
 
 /// A single timestamped event with a string value for `sequence_next_node`.
 ///
-/// Uses `Rc<str>` instead of `String` for O(1) clone semantics. This reduces
+/// Uses `Arc<str>` instead of `String` for O(1) clone semantics. This reduces
 /// per-event struct size from 40 bytes to 32 bytes and eliminates deep string
 /// copying in combine operations (reference count increment instead of heap
 /// allocation + memcpy).
@@ -76,17 +81,36 @@ pub enum Base {
 /// this struct stores a reference-counted string value that may be returned as
 /// the function result.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NextNodeEvent {
     /// Timestamp in microseconds since Unix epoch.
     pub timestamp_us: i64,
-    /// The event column value (candidate return value). Uses `Rc<str>` for
+    /// The event column value (candidate return value). Uses `Arc<str>` for
     /// O(1) clone — critical for combine performance in `DuckDB`'s segment tree.
-    pub value: Option<Rc<str>>,
+    pub value: Option<Arc<str>>,
     /// Whether the base condition is satisfied for this event.
     pub base_condition: bool,
     /// Bitmask of which sequential event conditions this event satisfies.
     /// Bit `i` is set if this event matches event `i+1` (1-indexed) in the chain.
     pub conditions: u32,
+}
+
+impl NextNodeEvent {
+    /// Creates a new event with the given timestamp, value, base condition, and conditions bitmask.
+    #[must_use]
+    pub fn new(
+        timestamp_us: i64,
+        value: Option<Arc<str>>,
+        base_condition: bool,
+        conditions: u32,
+    ) -> Self {
+        Self {
+            timestamp_us,
+            value,
+            base_condition,
+            conditions,
+        }
+    }
 }
 
 /// State for the `sequence_next_node` aggregate function.
@@ -95,6 +119,7 @@ pub struct NextNodeEvent {
 /// sequential matching during `finalize` to find the next event value
 /// after a completed sequence match.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SequenceNextNodeState {
     /// Collected events. Sorted by timestamp in finalize.
     pub events: Vec<NextNodeEvent>,
@@ -412,7 +437,7 @@ mod tests {
         }
         NextNodeEvent {
             timestamp_us: ts,
-            value: Some(Rc::from(value)),
+            value: Some(Arc::from(value)),
             base_condition: base_cond,
             conditions: bitmask,
         }
@@ -1069,21 +1094,21 @@ mod tests {
         assert_eq!(state.finalize(), None);
     }
 
-    // --- Session 9: Rc<str> specific tests ---
+    // --- Session 9: Arc<str> specific tests ---
 
     #[test]
     fn test_rc_str_clone_is_shared() {
-        // Verify that Rc<str> values are shared references, not deep copies
-        let value: Rc<str> = Rc::from("shared");
+        // Verify that Arc<str> values are shared references, not deep copies
+        let value: Arc<str> = Arc::from("shared");
         let event1 = NextNodeEvent {
             timestamp_us: 1,
-            value: Some(Rc::clone(&value)),
+            value: Some(Arc::clone(&value)),
             base_condition: true,
             conditions: 1,
         };
         let event2 = event1.clone();
-        // Both events share the same Rc allocation
-        assert!(Rc::ptr_eq(
+        // Both events share the same Arc allocation
+        assert!(Arc::ptr_eq(
             event1.value.as_ref().unwrap(),
             event2.value.as_ref().unwrap()
         ));
@@ -1091,13 +1116,13 @@ mod tests {
 
     #[test]
     fn test_next_node_event_size() {
-        // Verify NextNodeEvent with Rc<str> is 32 bytes (down from 40 with String)
+        // Verify NextNodeEvent with Arc<str> is 32 bytes (down from 40 with String)
         assert_eq!(std::mem::size_of::<NextNodeEvent>(), 32);
     }
 
     #[test]
     fn test_rc_str_combine_shares_references() {
-        // Verify combine_in_place preserves Rc sharing
+        // Verify combine_in_place preserves Arc sharing
         let mut a = SequenceNextNodeState::new();
         a.direction = Some(Direction::Forward);
         a.base = Some(Base::FirstMatch);
@@ -1109,7 +1134,7 @@ mod tests {
 
         a.combine_in_place(&b);
         // After combine, the value in b's event should be shared with a's copy
-        // (both are Rc clones, not deep copies)
+        // (both are Arc clones, not deep copies)
         assert_eq!(a.events.len(), 2);
         assert_eq!(a.finalize(), Some("B".to_string()));
     }
@@ -1124,13 +1149,13 @@ mod tests {
 
         state.update(NextNodeEvent {
             timestamp_us: 1,
-            value: Some(Rc::from("")),
+            value: Some(Arc::from("")),
             base_condition: true,
             conditions: 1,
         });
         state.update(NextNodeEvent {
             timestamp_us: 2,
-            value: Some(Rc::from("")),
+            value: Some(Arc::from("")),
             base_condition: false,
             conditions: 0,
         });
@@ -1140,7 +1165,7 @@ mod tests {
 
     #[test]
     fn test_unicode_string_value() {
-        // Edge case: Unicode strings should be preserved through Rc<str>
+        // Edge case: Unicode strings should be preserved through Arc<str>
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Forward);
         state.base = Some(Base::FirstMatch);
@@ -1148,13 +1173,13 @@ mod tests {
 
         state.update(NextNodeEvent {
             timestamp_us: 1,
-            value: Some(Rc::from("hello")),
+            value: Some(Arc::from("hello")),
             base_condition: true,
             conditions: 1,
         });
         state.update(NextNodeEvent {
             timestamp_us: 2,
-            value: Some(Rc::from("world")),
+            value: Some(Arc::from("world")),
             base_condition: false,
             conditions: 0,
         });
@@ -1174,7 +1199,7 @@ mod tests {
         state.update(make_event(1, "A", true, &[true]));
         state.update(NextNodeEvent {
             timestamp_us: 2,
-            value: Some(Rc::from(long_value.as_str())),
+            value: Some(Arc::from(long_value.as_str())),
             base_condition: false,
             conditions: 0,
         });
@@ -1185,7 +1210,7 @@ mod tests {
 
     #[test]
     fn test_32_conditions_with_rc_str() {
-        // Verify 32-condition support works with Rc<str> values
+        // Verify 32-condition support works with Arc<str> values
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Forward);
         state.base = Some(Base::FirstMatch);
@@ -1194,27 +1219,27 @@ mod tests {
         // Event with all 32 conditions set
         state.update(NextNodeEvent {
             timestamp_us: 1,
-            value: Some(Rc::from("start")),
+            value: Some(Arc::from("start")),
             base_condition: true,
             conditions: 0xFFFF_FFFF,
         });
         state.update(NextNodeEvent {
             timestamp_us: 2,
-            value: Some(Rc::from("result")),
+            value: Some(Arc::from("result")),
             base_condition: false,
             conditions: 0,
         });
 
         // With 32 steps and all conditions set on one event, only step 0
         // matches at position 0. Steps 1-31 need separate events.
-        // This tests that the condition bitmask works correctly with Rc<str>.
+        // This tests that the condition bitmask works correctly with Arc<str>.
         // (Full match won't happen with just one event for 32 steps, so None)
         assert_eq!(state.finalize(), None);
     }
 
     #[test]
     fn test_combine_chain_three_states() {
-        // Verify combine chain with 3 states preserves all Rc<str> values
+        // Verify combine chain with 3 states preserves all Arc<str> values
         let mut s1 = SequenceNextNodeState::new();
         s1.direction = Some(Direction::Forward);
         s1.base = Some(Base::FirstMatch);
@@ -1237,7 +1262,7 @@ mod tests {
 
     #[test]
     fn test_mixed_null_and_rc_values_in_combine() {
-        // Verify combine handles mixed null/non-null Rc<str> values correctly
+        // Verify combine handles mixed null/non-null Arc<str> values correctly
         let mut a = SequenceNextNodeState::new();
         a.direction = Some(Direction::Forward);
         a.base = Some(Base::FirstMatch);
@@ -1367,7 +1392,7 @@ mod proptests {
 
             state.update(NextNodeEvent {
                 timestamp_us: 0,
-                value: Some(Rc::from("start")),
+                value: Some(Arc::from("start")),
                 base_condition: true,
                 conditions: 1, // event1
             });
@@ -1375,7 +1400,7 @@ mod proptests {
             for i in 0..num_gap_events {
                 state.update(NextNodeEvent {
                     timestamp_us: (i as i64 + 1),
-                    value: Some(Rc::from(format!("gap_{i}").as_str())),
+                    value: Some(Arc::from(format!("gap_{i}").as_str())),
                     base_condition: false,
                     conditions: 0,
                 });
@@ -1383,14 +1408,14 @@ mod proptests {
 
             state.update(NextNodeEvent {
                 timestamp_us: (num_gap_events as i64 + 1),
-                value: Some(Rc::from("matched")),
+                value: Some(Arc::from("matched")),
                 base_condition: false,
                 conditions: 2, // event2
             });
 
             state.update(NextNodeEvent {
                 timestamp_us: (num_gap_events as i64 + 2),
-                value: Some(Rc::from("result")),
+                value: Some(Arc::from("result")),
                 base_condition: false,
                 conditions: 0,
             });
@@ -1411,7 +1436,7 @@ mod proptests {
             for i in 0..n_a {
                 a.update(NextNodeEvent {
                     timestamp_us: i as i64,
-                    value: Some(Rc::from(format!("a_{i}").as_str())),
+                    value: Some(Arc::from(format!("a_{i}").as_str())),
                     base_condition: true,
                     conditions: 1,
                 });
@@ -1421,7 +1446,7 @@ mod proptests {
             for i in 0..n_b {
                 b.update(NextNodeEvent {
                     timestamp_us: (n_a + i) as i64,
-                    value: Some(Rc::from(format!("b_{i}").as_str())),
+                    value: Some(Arc::from(format!("b_{i}").as_str())),
                     base_condition: false,
                     conditions: 0,
                 });
@@ -1443,7 +1468,7 @@ mod proptests {
             for i in 0..num_events {
                 state.update(NextNodeEvent {
                     timestamp_us: i as i64,
-                    value: Some(Rc::from(format!("evt_{i}").as_str())),
+                    value: Some(Arc::from(format!("evt_{i}").as_str())),
                     base_condition: false, // no base condition satisfied
                     conditions: 1,
                 });

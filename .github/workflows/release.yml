@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 name: Release
 
 # Release workflow following Semantic Versioning (https://semver.org/).
@@ -15,7 +18,8 @@ name: Release
 #   1. Update version in Cargo.toml and description.yml
 #   2. Commit: "chore: bump version to X.Y.Z"
 #   3. Tag: git tag vX.Y.Z && git push origin vX.Y.Z
-#   4. This workflow builds, tests, and publishes the release
+#   4. This workflow validates, builds, tests, publishes, and auto-updates
+#      description.yml ref to the tagged commit SHA on main
 
 on:
   push:
@@ -45,7 +49,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       semver: ${{ steps.version.outputs.semver }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Determine version
         id: version
@@ -122,7 +126,7 @@ jobs:
             lib_ext: dylib
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: recursive
           fetch-depth: 0
@@ -131,12 +135,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           key: release-${{ matrix.target }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -173,11 +177,11 @@ jobs:
           tar czf ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz -C dist .
 
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
         with:
           subject-path: ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ env.EXTENSION_NAME }}-${{ matrix.platform }}
           path: |
@@ -197,15 +201,15 @@ jobs:
             platform: osx_arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -223,11 +227,11 @@ jobs:
     needs: [validate, build, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           path: artifacts
 
@@ -251,7 +255,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
           tag_name: ${{ needs.validate.outputs.version }}
           name: ${{ env.EXTENSION_NAME }} ${{ needs.validate.outputs.version }}
@@ -296,3 +300,38 @@ jobs:
             `sessionize`, `retention`, `window_funnel`, `sequence_match`, `sequence_count`, `sequence_match_events`, `sequence_next_node`
 
             See [documentation](https://tomtom215.github.io/duckdb-behavioral/) for full usage.
+
+  # After a successful release, update description.yml ref on main to point
+  # to the tagged commit. This resolves the chicken-and-egg problem: the ref
+  # cannot be set before the commit exists, so we update it after the release.
+  # The updated description.yml is what gets submitted to DuckDB community-extensions.
+  update-description-ref:
+    name: Update description.yml ref
+    needs: [validate, release]
+    runs-on: ubuntu-latest
+    # Only run for tag pushes on main (not workflow_dispatch or pre-releases)
+    if: github.event_name == 'push' && !contains(needs.validate.outputs.semver, '-')
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update description.yml ref to tagged commit
+        run: |
+          TAGGED_SHA="${{ github.sha }}"
+          CURRENT_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
+
+          if [ "$CURRENT_REF" = "$TAGGED_SHA" ]; then
+            echo "description.yml ref already matches tagged commit ($TAGGED_SHA)"
+            exit 0
+          fi
+
+          echo "Updating description.yml ref: $CURRENT_REF -> $TAGGED_SHA"
+          sed -i "s|  ref: .*|  ref: $TAGGED_SHA|" description.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add description.yml
+          git commit -m "chore: update description.yml ref to ${{ needs.validate.outputs.version }} ($TAGGED_SHA)"
+          git push origin main

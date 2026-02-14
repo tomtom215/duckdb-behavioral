@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
 //! FFI registration for the `sequence_next_node` aggregate function.
 
 use crate::sequence_next_node::{NextNodeEvent, SequenceNextNodeState};
 use libduckdb_sys::*;
 use std::ffi::CString;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Minimum number of event condition boolean parameters.
 const MIN_EVENT_CONDITIONS: usize = 1;
@@ -33,7 +36,7 @@ const FIXED_PARAMS: usize = 5;
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_sequence_next_node(con: duckdb_connection) {
     unsafe {
-        let name = CString::new("sequence_next_node").unwrap();
+        let name = c"sequence_next_node";
         let set = duckdb_create_aggregate_function_set(name.as_ptr());
 
         for n in MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS {
@@ -175,15 +178,15 @@ unsafe extern "C" fn state_update(
         let value_vec = duckdb_data_chunk_get_vector(input, 3);
         // Column 4: BOOLEAN (base_condition)
         let base_cond_vec = duckdb_data_chunk_get_vector(input, 4);
-        let base_cond_data = duckdb_vector_get_data(base_cond_vec) as *const bool;
+        let base_cond_data = duckdb_vector_get_data(base_cond_vec) as *const u8;
         let base_cond_validity = duckdb_vector_get_validity(base_cond_vec);
 
         // Columns 5..N: BOOLEAN event conditions
-        let mut event_cond_vectors: Vec<(*const bool, *mut u64)> =
+        let mut event_cond_vectors: Vec<(*const u8, *mut u64)> =
             Vec::with_capacity(num_event_conditions);
         for c in FIXED_PARAMS..col_count {
             let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const bool;
+            let data = duckdb_vector_get_data(vec) as *const u8;
             let validity = duckdb_vector_get_validity(vec);
             event_cond_vectors.push((data, validity));
         }
@@ -223,14 +226,14 @@ unsafe extern "C" fn state_update(
 
             let timestamp = *ts_data.add(i);
 
-            // Read event_column value (nullable), convert to Rc<str> for O(1) clone
-            let value: Option<Rc<str>> = read_varchar(value_vec, i).map(Rc::from);
+            // Read event_column value (nullable), convert to Arc<str> for O(1) clone
+            let value: Option<Arc<str>> = read_varchar(value_vec, i).map(Arc::from);
 
             // Read base_condition
             let base_condition = {
                 let valid = base_cond_validity.is_null()
                     || duckdb_validity_row_is_valid(base_cond_validity, i as idx_t);
-                valid && *base_cond_data.add(i)
+                valid && *base_cond_data.add(i) != 0
             };
 
             // Pack event conditions into u32 bitmask
@@ -238,7 +241,7 @@ unsafe extern "C" fn state_update(
             for (c, &(data, validity)) in event_cond_vectors.iter().enumerate() {
                 let valid =
                     validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) {
+                if valid && *data.add(i) != 0 {
                     bitmask |= 1 << c;
                 }
             }
@@ -301,8 +304,17 @@ unsafe extern "C" fn state_finalize(
 
             match (*ffi_state.inner).finalize() {
                 Some(value) => {
-                    let c_str = CString::new(value).unwrap_or_default();
-                    duckdb_vector_assign_string_element(result, idx, c_str.as_ptr());
+                    // Interior null bytes would cause CString::new to fail.
+                    // Strip them defensively rather than silently producing
+                    // an empty string via unwrap_or_default().
+                    let sanitized: String = value.replace('\0', "");
+                    if let Ok(c_str) = CString::new(sanitized) {
+                        duckdb_vector_assign_string_element(result, idx, c_str.as_ptr());
+                    } else {
+                        // Should be unreachable after stripping null bytes,
+                        // but return NULL rather than panicking across FFI.
+                        duckdb_validity_set_row_invalid(validity, idx);
+                    }
                 }
                 None => {
                     duckdb_validity_set_row_invalid(validity, idx);
