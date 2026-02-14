@@ -106,7 +106,7 @@ cargo build
 # Build (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all unit tests (375 tests + 1 doc-test)
+# Run all unit tests (403 tests + 1 doc-test)
 cargo test
 
 # Run clippy (must produce zero warnings)
