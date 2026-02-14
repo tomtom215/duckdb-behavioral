@@ -64,5 +64,5 @@ which enables efficient evaluation via DuckDB's segment tree windowing machinery
 | Finalize | O(1) |
 | Space | O(1) per partition segment |
 
-At benchmark scale, `sessionize` processes **1 billion rows in 1.16 seconds**
-(862 Melem/s).
+At benchmark scale, `sessionize` processes **1 billion rows in 1.18 seconds**
+(848 Melem/s).

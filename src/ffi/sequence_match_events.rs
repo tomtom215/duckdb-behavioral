@@ -197,7 +197,7 @@ unsafe extern "C" fn state_finalize(
 ) {
     unsafe {
         let list_child = duckdb_list_vector_get_child(result);
-        let mut list_offset: idx_t = 0;
+        let mut list_offset: idx_t = duckdb_list_vector_get_size(result);
 
         for i in 0..count as usize {
             let state_ptr = *source.add(i);

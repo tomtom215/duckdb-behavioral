@@ -39,7 +39,7 @@ reproducibility, or trustworthiness:
   single codegen unit.
 - **Every optimization session** documents hypothesis, technique, measured
   before/after data with confidence intervals, and negative results are
-  reported honestly (3 reverted optimizations documented in PERF.md).
+  reported honestly (5 negative results documented in PERF.md).
 - **All source code is publicly auditable** under the MIT license.
 
 AI tooling was used as an accelerator for implementation. All correctness
@@ -298,7 +298,7 @@ cargo build --release
 
 ## Performance
 
-Eleven sessions of measured, Criterion-validated optimizations and feature work:
+Thirteen sessions of measured, Criterion-validated optimizations and feature work:
 
 **Session 1 — Event Bitmask**: Bitmask replaces `Vec<bool>` per event,
 eliminating heap allocation and enabling `Copy` semantics (5-13x speedup).
@@ -310,7 +310,7 @@ in-place extend, plus pdqsort and pattern clone elimination (up to **2,436x**).
 yielding **1,961x** speedup for `sequence_match` at 1M events.
 
 **Session 4 — Billion-Row Benchmarks**: Expanded to 100M/1B elements.
-**1 billion sessionize events processed in 1.16 seconds** (862 Melem/s).
+**1 billion sessionize events processed in 1.18 seconds** (848 Melem/s).
 
 **Session 5 — ClickHouse Feature Parity**: Combinable `FunnelMode` bitflags,
 three new modes (`strict_increase`, `strict_once`, `allow_reentry`), and
@@ -341,6 +341,13 @@ extraction with a custom C entry point. 11 E2E tests against real DuckDB.
 **Session 11 — NFA Fast Paths + Git Mining Demo**: Pattern classification dispatches
 common shapes to specialized O(n) scans (39-61% improvement for `sequence_count`).
 Added 21 combine propagation tests, 7 fast-path tests, and git mining SQL examples.
+
+**Session 12 — Community Extension Readiness**: Added `sequence_match_events`
+benchmark, fixed library name for community extension, fixed `sequence_next_node`
+NULL handling, corrected SQL tests, and expanded GitHub Pages documentation.
+
+**Session 13 — CI/CD Hardening + Benchmark Refresh**: Added E2E workflow, SemVer
+release validation, expanded documentation, refreshed all benchmark baselines.
 
 **Headline numbers (Criterion-validated, 95% CI, Session 13):**
 

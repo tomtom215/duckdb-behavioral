@@ -83,6 +83,9 @@ timestamp collection path separate from the performance-critical
 | Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
 | Space | O(n) -- all collected events |
 
+At benchmark scale, `sequence_match_events` processes **100 million events in 921 ms**
+(109 Melem/s).
+
 ## See Also
 
 - [`sequence_match`](./sequence-match.md) -- check whether the pattern matches (boolean)

@@ -116,7 +116,7 @@ Once loaded, all seven functions are available in the current session:
 Run these minimal queries to confirm each function category is working:
 
 ```sql
--- Sessionize: should return session ID 0
+-- Sessionize: should return session ID 1
 SELECT sessionize(TIMESTAMP '2024-01-01 10:00:00', INTERVAL '30 minutes')
   OVER () as session_id;
 

@@ -14,18 +14,13 @@ improvements and algorithmic scaling are hardware-independent.
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | 1 billion | 1.16 s | 862 Melem/s |
-| `retention` (combine) | 1 billion | 2.96 s | 338 Melem/s |
-| `window_funnel` | 100 million | 761 ms | 131 Melem/s |
-| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million | 1.45 s | 69 Melem/s |
-| `sequence_match_events` | 100 million | — | — |
-| `sequence_next_node` | 10 million | 1.23 s | 8.1 Melem/s |
-
-Note: `sequence_match_events` uses the same event collection as `sequence_match`
-and `sequence_count` but calls the timestamp-collecting NFA variant
-(`execute_pattern_events`). Benchmark baseline is pending initial measurement
-via `cargo bench -- sequence_match_events`.
+| `sessionize` | 1 billion | 1.18 s | 848 Melem/s |
+| `retention` (combine) | 1 billion | 2.94 s | 340 Melem/s |
+| `window_funnel` | 100 million | 715 ms | 140 Melem/s |
+| `sequence_match` | 100 million | 902 ms | 111 Melem/s |
+| `sequence_count` | 100 million | 1.05 s | 95 Melem/s |
+| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
+| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
 
 ### Per-Element Cost
 
@@ -54,7 +49,7 @@ s = pattern steps.
 
 ## Optimization History
 
-Eleven engineering sessions have produced the current performance profile. Each
+Thirteen engineering sessions have produced the current performance profile. Each
 optimization below was measured independently with before/after Criterion data
 and non-overlapping confidence intervals (except where noted as negative results).
 

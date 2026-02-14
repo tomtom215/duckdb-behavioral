@@ -210,7 +210,7 @@ Every performance claim in this project is backed by:
 
 ### Optimization History
 
-Twelve sessions of measured optimization, each following a documented protocol:
+Thirteen sessions of measured optimization, each following a documented protocol:
 
 1. Establish baseline with 3 Criterion runs
 2. Implement one optimization per commit

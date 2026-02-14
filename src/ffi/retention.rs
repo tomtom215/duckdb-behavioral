@@ -167,6 +167,7 @@ unsafe extern "C" fn state_finalize(
             let idx = offset as usize + i;
 
             if ffi_state.inner.is_null() {
+                duckdb_vector_ensure_validity_writable(result);
                 let validity = duckdb_vector_get_validity(result);
                 duckdb_validity_set_row_invalid(validity, idx as idx_t);
                 continue;
@@ -178,8 +179,8 @@ unsafe extern "C" fn state_finalize(
             let child = duckdb_list_vector_get_child(result);
             let current_size = duckdb_list_vector_get_size(result);
             let new_size = current_size + retention_result.len() as idx_t;
-            duckdb_list_vector_set_size(result, new_size);
             duckdb_list_vector_reserve(result, new_size);
+            duckdb_list_vector_set_size(result, new_size);
 
             // Set the list entry (offset and length)
             let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
