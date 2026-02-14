@@ -133,6 +133,15 @@ flowchart LR
     ADJ --> RES["MatchResult"]
     WC --> RES
     NFA --> RES
+
+    style SQL fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    style PARSE fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
+    style CP fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    style CLASS fill:#fce4ec,stroke:#c62828,color:#1a1a1a
+    style ADJ fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style WC fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style NFA fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
+    style RES fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
 ```
 
 ### Parser
@@ -195,6 +204,17 @@ flowchart TB
         M -->|"sort events"| SORT["Sorted Events"]
         SORT -->|"scan / match"| OUT["Result"]
     end
+
+    style R fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
+    style L1 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    style L2 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    style L3 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    style L4 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    style T fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    style S fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    style M fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style SORT fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
+    style OUT fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
 ```
 
 | Function | Combine Strategy | Complexity |

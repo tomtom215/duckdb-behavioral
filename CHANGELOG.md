@@ -78,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sequence_match_events` -- return timestamps of matched pattern steps
 - `sequence_next_node` -- find next/previous event value after pattern match
 - Complete ClickHouse behavioral analytics function parity
-- 403 unit tests + 1 doc-test
+- 411 unit tests + 1 doc-test
 - 27 E2E SQL integration tests
 - Criterion.rs benchmarks for all 7 functions (up to 1 billion elements)
 - 88.4% mutation testing kill rate (cargo-mutants)

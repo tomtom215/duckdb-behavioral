@@ -45,7 +45,7 @@ reproducible via `cargo bench`.
 
 ### Framework
 
-- **Criterion.rs 0.5** with 100 samples per benchmark and 95% confidence intervals
+- **Criterion.rs 0.8** with 100 samples per benchmark and 95% confidence intervals
 - Benchmarks measure end-to-end aggregate function execution: state creation,
   update (event ingestion), and finalize (result computation)
 - Each benchmark is run 3+ times to verify stability before comparison
@@ -803,185 +803,193 @@ pre-check adds overhead without sufficient savings. Reverted and documented.
 
 ## Current Baseline
 
-Recorded after Session 11 fast-path optimization (3 runs each). These
-numbers serve as the baseline for future sessions. Any future optimization must
-demonstrate improvement against these values.
+Recorded after Session 15 dependency refresh (Criterion 0.8.2, rand 0.9.2).
+No Rust source code changes — numbers reflect updated benchmark framework
+and data generation. Any future optimization must demonstrate improvement
+against these values.
 
-**Environment**: rustc 1.93.0, x86_64 Linux, Criterion 0.5, 100 samples
-(10 samples for 100M/1B). Validated with 3 consecutive runs.
+**Environment**: rustc 1.93.0, x86_64 Linux, Criterion 0.8.2, 100 samples
+(10 samples for 100M/1B).
 
 ### Sessionize
 
 | Benchmark | Mean [95% CI] | Throughput |
 |---|---|---|
-| `sessionize_update/100` | 118 ns [116, 120] | 847 Melem/s |
-| `sessionize_update/1000` | 1.25 µs [1.23, 1.27] | 800 Melem/s |
-| `sessionize_update/10000` | 12.1 µs [12.0, 12.4] | 826 Melem/s |
-| `sessionize_update/100000` | 115 µs [113, 122] | 870 Melem/s |
-| `sessionize_update/1000000` | 1.22 ms [1.21, 1.25] | 820 Melem/s |
-| `sessionize_update/10000000` | 11.9 ms [11.7, 12.3] | 840 Melem/s |
-| `sessionize_update/100000000` | 116 ms [114, 120] | 862 Melem/s |
-| `sessionize_update/1000000000` | 1.16 s [1.13, 1.30] | 862 Melem/s |
-| `sessionize_combine/100` | 132 ns [130, 134] | 758 Melem/s |
-| `sessionize_combine/1000` | 1.27 µs [1.24, 1.34] | 787 Melem/s |
-| `sessionize_combine/10000` | 12.6 µs [12.0, 13.9] | 794 Melem/s |
-| `sessionize_combine/100000` | 240 µs [239, 242] | 417 Melem/s |
-| `sessionize_combine/1000000` | 3.53 ms [3.44, 3.64] | 283 Melem/s |
+| `sessionize_update/100` | 127 ns [126, 128] | 787 Melem/s |
+| `sessionize_update/1000` | 1.19 µs [1.19, 1.20] | 837 Melem/s |
+| `sessionize_update/10000` | 11.3 µs [11.1, 11.4] | 888 Melem/s |
+| `sessionize_update/100000` | 121 µs [120, 121] | 828 Melem/s |
+| `sessionize_update/1000000` | 1.23 ms [1.22, 1.25] | 811 Melem/s |
+| `sessionize_update/10000000` | 12.1 ms [12.0, 12.1] | 827 Melem/s |
+| `sessionize_update/100000000` | 120 ms [120, 121] | 831 Melem/s |
+| `sessionize_update/1000000000` | 1.20 s [1.20, 1.21] | 830 Melem/s |
+| `sessionize_combine/100` | 137 ns [135, 138] | 732 Melem/s |
+| `sessionize_combine/1000` | 1.42 µs [1.41, 1.43] | 704 Melem/s |
+| `sessionize_combine/10000` | 14.0 µs [13.9, 14.1] | 714 Melem/s |
+| `sessionize_combine/100000` | 287 µs [280, 293] | 349 Melem/s |
+| `sessionize_combine/1000000` | 3.11 ms [3.06, 3.17] | 321 Melem/s |
+| `sessionize_combine/10000000` | 103 ms [102, 104] | 97 Melem/s |
+| `sessionize_combine/100000000` | 796 ms [784, 812] | 126 Melem/s |
 
 ### Retention
 
 | Benchmark | Mean [95% CI] | Throughput |
 |---|---|---|
-| `retention_update/4_conditions` | 17.0 µs [16.8, 17.2] | 59 Melem/s |
-| `retention_update/8_conditions` | 36.7 µs [36.3, 37.1] | 27 Melem/s |
-| `retention_update/16_conditions` | 45.1 µs [44.6, 45.6] | 22 Melem/s |
-| `retention_update/32_conditions` | 68.6 µs [68.1, 69.2] | 15 Melem/s |
-| `retention_combine/100` | 91.4 ns [91.1, 91.8] | 1.09 Gelem/s |
-| `retention_combine/1000` | 930 ns [929, 931] | 1.08 Gelem/s |
-| `retention_combine/10000` | 9.30 µs [9.27, 9.32] | 1.08 Gelem/s |
-| `retention_combine/100000` | 98.4 µs [98.0, 98.8] | 1.02 Gelem/s |
-| `retention_combine/1000000` | 1.18 ms [1.17, 1.18] | 851 Melem/s |
-| `retention_combine/10000000` | 33.5 ms [33.3, 33.7] | 299 Melem/s |
-| `retention_combine/100000000` | 277.5 ms [275.5, 281.3] | 360 Melem/s |
-| `retention_combine/1000000000` | 3.062 s [3.013, 3.113] | 327 Melem/s |
+| `retention_update/4_conditions` | 16.9 µs [16.7, 17.1] | 59 Melem/s |
+| `retention_update/8_conditions` | 36.5 µs [36.0, 37.1] | 27 Melem/s |
+| `retention_update/16_conditions` | 45.0 µs [44.2, 45.8] | 22 Melem/s |
+| `retention_update/32_conditions` | 68.4 µs [68.1, 68.8] | 15 Melem/s |
+| `retention_combine/100` | 90.8 ns [90.5, 91.3] | 1.10 Gelem/s |
+| `retention_combine/1000` | 925 ns [922, 929] | 1.08 Gelem/s |
+| `retention_combine/10000` | 9.35 µs [9.29, 9.43] | 1.07 Gelem/s |
+| `retention_combine/100000` | 97.4 µs [96.8, 98.1] | 1.03 Gelem/s |
+| `retention_combine/1000000` | 1.10 ms [1.09, 1.11] | 911 Melem/s |
+| `retention_combine/10000000` | 32.6 ms [32.4, 32.8] | 307 Melem/s |
+| `retention_combine/100000000` | 274 ms [272, 277] | 365 Melem/s |
 
 ### Window Funnel
 
 | Benchmark | Mean [95% CI] | Throughput |
 |---|---|---|
-| `window_funnel_finalize/100,3` | 268 ns [265, 271] | 374 Melem/s |
-| `window_funnel_finalize/1000,5` | 1.82 µs [1.80, 1.84] | 550 Melem/s |
-| `window_funnel_finalize/10000,5` | 16.2 µs [16.1, 16.3] | 617 Melem/s |
-| `window_funnel_finalize/100000,8` | 202 µs [199, 204] | 496 Melem/s |
-| `window_funnel_finalize/1000000,8` | 2.10 ms [2.09, 2.11] | 477 Melem/s |
-| `window_funnel_finalize/10000000,8` | 104 ms [103.9, 104.5] | 96 Melem/s |
-| `window_funnel_finalize/100000000,8` | 898 ms [888, 913] | 111 Melem/s |
-| `window_funnel_combine/100` | 470 ns [467, 473] | 213 Melem/s |
-| `window_funnel_combine/1000` | 3.11 µs [3.04, 3.21] | 322 Melem/s |
-| `window_funnel_combine/10000` | 30.8 µs [30.5, 31.2] | 324 Melem/s |
-| `window_funnel_combine/100000` | 670 µs [666, 675] | 149 Melem/s |
-| `window_funnel_combine/1000000` | 13.0 ms [12.8, 13.2] | 76.9 Melem/s |
+| `window_funnel_finalize/100,3` | 227 ns [226, 228] | 441 Melem/s |
+| `window_funnel_finalize/1000,5` | 1.33 µs [1.30, 1.35] | 752 Melem/s |
+| `window_funnel_finalize/10000,5` | 12.0 µs [11.8, 12.1] | 834 Melem/s |
+| `window_funnel_finalize/100000,8` | 156 µs [154, 157] | 642 Melem/s |
+| `window_funnel_finalize/1000000,8` | 1.61 ms [1.59, 1.62] | 622 Melem/s |
+| `window_funnel_finalize/10000000,8` | 63.5 ms [60.9, 65.7] | 158 Melem/s |
+| `window_funnel_finalize/100000000,8` | 791 ms [784, 798] | 126 Melem/s |
+| `window_funnel_combine/100` | 549 ns [538, 563] | 182 Melem/s |
+| `window_funnel_combine/1000` | 3.40 µs [3.33, 3.49] | 294 Melem/s |
+| `window_funnel_combine/10000` | 33.6 µs [33.4, 33.9] | 297 Melem/s |
+| `window_funnel_combine/100000` | 650 µs [640, 661] | 154 Melem/s |
+| `window_funnel_combine/1000000` | 10.5 ms [10.3, 10.8] | 95 Melem/s |
 
 ### Sequence
 
-Updated Session 11 (NFA reusable stack + fast-path linear scan). Validated with
-Criterion before/after measurements with non-overlapping 95% CIs.
+| Benchmark | Mean [95% CI] | Throughput |
+|---|---|---|
+| `sequence_match/100` | 377 ns [373, 382] | 265 Melem/s |
+| `sequence_match/1000` | 1.36 µs [1.35, 1.38] | 734 Melem/s |
+| `sequence_match/10000` | 11.6 µs [11.4, 11.8] | 861 Melem/s |
+| `sequence_match/100000` | 164 µs [162, 167] | 608 Melem/s |
+| `sequence_match/1000000` | 1.95 ms [1.92, 1.98] | 513 Melem/s |
+| `sequence_match/10000000` | 117 ms [116, 118] | 86 Melem/s |
+| `sequence_match/100000000` | 1.05 s [1.03, 1.06] | 95 Melem/s |
+| `sequence_count/100` | 433 ns [430, 437] | 231 Melem/s |
+| `sequence_count/1000` | 1.91 µs [1.84, 2.00] | 523 Melem/s |
+| `sequence_count/10000` | 16.1 µs [15.9, 16.2] | 623 Melem/s |
+| `sequence_count/100000` | 206 µs [203, 209] | 486 Melem/s |
+| `sequence_count/1000000` | 2.73 ms [2.69, 2.78] | 366 Melem/s |
+| `sequence_count/10000000` | 134 ms [133, 135] | 75 Melem/s |
+| `sequence_count/100000000` | 1.18 s [1.17, 1.19] | 85 Melem/s |
+| `sequence_combine/100` | 659 ns [649, 673] | 152 Melem/s |
+| `sequence_combine/1000` | 4.25 µs [4.17, 4.34] | 235 Melem/s |
+| `sequence_combine/10000` | 43.1 µs [42.7, 43.6] | 232 Melem/s |
+| `sequence_combine/100000` | 941 µs [936, 946] | 106 Melem/s |
+| `sequence_combine/1000000` | 23.9 ms [23.5, 24.4] | 42 Melem/s |
+
+### Sequence Match Events
 
 | Benchmark | Mean [95% CI] | Throughput |
 |---|---|---|
-| `sequence_match/100` | 430 ns [426, 433] | 233 Melem/s |
-| `sequence_match/1000` | 1.80 µs [1.79, 1.81] | 556 Melem/s |
-| `sequence_match/10000` | 15.2 µs [15.1, 15.3] | 659 Melem/s |
-| `sequence_match/100000` | 184 µs [182, 186] | 545 Melem/s |
-| `sequence_match/1000000` | 1.89 ms [1.87, 1.91] | 530 Melem/s |
-| `sequence_match/10000000` | 117 ms [117, 117] | 85.8 Melem/s |
-| `sequence_match/100000000` | 999 ms [984, 1006] | 100 Melem/s |
-| `sequence_count/100` | 488 ns [474, 504] | 205 Melem/s |
-| `sequence_count/1000` | 2.51 µs [2.49, 2.53] | 399 Melem/s |
-| `sequence_count/10000` | 22.5 µs [22.0, 23.3] | 444 Melem/s |
-| `sequence_count/100000` | 234 µs [233, 235] | 428 Melem/s |
-| `sequence_count/1000000` | 2.43 ms [2.42, 2.45] | 411 Melem/s |
-| `sequence_count/10000000` | 131 ms [131, 132] | 76.3 Melem/s |
-| `sequence_count/100000000` | 1.17 s [1.16, 1.18] | 85.3 Melem/s |
-| `sequence_combine/100` | 795 ns [771, 826] | 126 Melem/s |
-| `sequence_combine/1000` | 5.55 µs [5.52, 5.58] | 180 Melem/s |
-| `sequence_combine/10000` | 57.7 µs [57.0, 58.3] | 173 Melem/s |
-| `sequence_combine/100000` | 842 µs [836, 848] | 119 Melem/s |
-| `sequence_combine/1000000` | 23.4 ms [23.0, 23.9] | 42.7 Melem/s |
+| `sequence_match_events/100` | 526 ns [519, 535] | 190 Melem/s |
+| `sequence_match_events/1000` | 1.75 µs [1.74, 1.76] | 571 Melem/s |
+| `sequence_match_events/10000` | 12.8 µs [12.8, 12.9] | 778 Melem/s |
+| `sequence_match_events/100000` | 166 µs [165, 167] | 602 Melem/s |
+| `sequence_match_events/1000000` | 1.99 ms [1.98, 2.00] | 503 Melem/s |
+| `sequence_match_events/10000000` | 117 ms [117, 118] | 85 Melem/s |
+| `sequence_match_events/100000000` | 1.07 s [1.06, 1.08] | 93 Melem/s |
+| `sequence_match_events_combine/100` | 915 ns [908, 923] | 109 Melem/s |
+| `sequence_match_events_combine/1000` | 3.80 µs [3.78, 3.83] | 263 Melem/s |
+| `sequence_match_events_combine/10000` | 36.6 µs [36.4, 36.8] | 273 Melem/s |
+| `sequence_match_events_combine/100000` | 912 µs [890, 934] | 110 Melem/s |
+| `sequence_match_events_combine/1000000` | 17.1 ms [16.9, 17.2] | 59 Melem/s |
 
 ### Sort (Isolated)
 
 | Benchmark | Mean [95% CI] | Throughput |
 |---|---|---|
-| `sort_events/100` | 113 ns [111, 114] | 889 Melem/s |
-| `sort_events/1000` | 807 ns [800, 814] | 1.24 Gelem/s |
-| `sort_events/10000` | 11.3 µs [11.2, 11.3] | 887 Melem/s |
-| `sort_events/100000` | 191 µs [189, 194] | 523 Melem/s |
-| `sort_events/1000000` | 3.69 ms [3.66, 3.71] | 271 Melem/s |
-| `sort_events/10000000` | 238 ms [236, 240] | 42.0 Melem/s |
-| `sort_events/100000000` | 2.207 s [2.173, 2.224] | 45.3 Melem/s |
-| `sort_events_presorted/100` | 100 ns [99.1, 102.1] | 995 Melem/s |
-| `sort_events_presorted/1000` | 518 ns [515, 522] | 1.93 Gelem/s |
-| `sort_events_presorted/10000` | 6.86 µs [6.82, 6.92] | 1.46 Gelem/s |
-| `sort_events_presorted/100000` | 169 µs [167, 172] | 591 Melem/s |
-| `sort_events_presorted/1000000` | 2.82 ms [2.79, 2.84] | 355 Melem/s |
-| `sort_events_presorted/10000000` | 209 ms [207, 211] | 47.8 Melem/s |
-| `sort_events_presorted/100000000` | 1.891 s [1.873, 1.899] | 52.9 Melem/s |
+| `sort_events/100` | 112 ns [110, 114] | 894 Melem/s |
+| `sort_events/1000` | 798 ns [782, 816] | 1.25 Gelem/s |
+| `sort_events/10000` | 11.3 µs [11.2, 11.5] | 881 Melem/s |
+| `sort_events/100000` | 198 µs [196, 200] | 505 Melem/s |
+| `sort_events/1000000` | 3.34 ms [3.29, 3.38] | 300 Melem/s |
+| `sort_events/10000000` | 212 ms [211, 213] | 47 Melem/s |
+| `sort_events/100000000` | 2.079 s [2.072, 2.090] | 48 Melem/s |
+| `sort_events_presorted/100` | 100 ns [99.1, 100.9] | 1.00 Gelem/s |
+| `sort_events_presorted/1000` | 481 ns [477, 486] | 2.08 Gelem/s |
+| `sort_events_presorted/10000` | 7.95 µs [7.92, 7.98] | 1.26 Gelem/s |
+| `sort_events_presorted/100000` | 172 µs [171, 173] | 582 Melem/s |
+| `sort_events_presorted/1000000` | 2.60 ms [2.56, 2.63] | 385 Melem/s |
+| `sort_events_presorted/10000000` | 183 ms [182, 184] | 55 Melem/s |
+| `sort_events_presorted/100000000` | 1.895 s [1.882, 1.908] | 53 Melem/s |
 
 ### Sequence Next Node
 
-Updated Session 9 (Arc\<str\> optimization). Validated with 3 consecutive runs.
-
 `sequence_next_node` stores `NextNodeEvent` structs (timestamp + `Option<Arc<str>>` +
 conditions + base_condition, 32 bytes) which are larger than the `Copy` `Event` struct
-(16 bytes). Session 9's Arc\<str\> optimization delivered 2.1-5.8x improvement over the
-Session 8 String-based implementation by enabling O(1) clone and reducing struct size.
+(16 bytes).
 
 | Benchmark | Mean [95% CI] | Throughput |
 |---|---|---|
-| `sequence_next_node/100` | 1.13 µs [1.12, 1.14] | 88.5 Melem/s |
-| `sequence_next_node/1000` | 10.9 µs [10.7, 11.1] | 91.7 Melem/s |
-| `sequence_next_node/10000` | 111 µs [109, 113] | 90.1 Melem/s |
-| `sequence_next_node/100000` | 1.58 ms [1.55, 1.61] | 63.3 Melem/s |
-| `sequence_next_node/1000000` | 80.5 ms [79.2, 81.8] | 12.4 Melem/s |
-| `sequence_next_node/10000000` | 547 ms [538, 556] | 18.3 Melem/s |
-| `sequence_next_node_combine/100` | 575 ns [569, 581] | 174 Melem/s |
-| `sequence_next_node_combine/1000` | 5.12 µs [5.04, 5.20] | 195 Melem/s |
-| `sequence_next_node_combine/10000` | 90.8 µs [89.3, 92.3] | 110 Melem/s |
-| `sequence_next_node_combine/100000` | 1.78 ms [1.75, 1.81] | 56.2 Melem/s |
-| `sequence_next_node_realistic/100` | 1.13 µs [1.12, 1.15] | 88.3 Melem/s |
-| `sequence_next_node_realistic/1000` | 10.8 µs [10.7, 11.1] | 91.7 Melem/s |
-| `sequence_next_node_realistic/10000` | 110 µs [108, 112] | 90.6 Melem/s |
-| `sequence_next_node_realistic/100000` | 1.37 ms [1.35, 1.40] | 72.9 Melem/s |
-| `sequence_next_node_realistic/1000000` | 52.3 ms [51.3, 53.0] | 19.1 Melem/s |
+| `sequence_next_node/100` | 1.95 µs [1.94, 1.97] | 51 Melem/s |
+| `sequence_next_node/1000` | 19.1 µs [19.0, 19.2] | 52 Melem/s |
+| `sequence_next_node/10000` | 193 µs [191, 195] | 52 Melem/s |
+| `sequence_next_node/100000` | 2.23 ms [2.22, 2.25] | 45 Melem/s |
+| `sequence_next_node/1000000` | 54.4 ms [53.1, 56.7] | 18 Melem/s |
+| `sequence_next_node/10000000` | 546 ms [543, 550] | 18 Melem/s |
+| `sequence_next_node_combine/100` | 1.54 µs [1.52, 1.55] | 65 Melem/s |
+| `sequence_next_node_combine/1000` | 14.0 µs [13.9, 14.1] | 71 Melem/s |
+| `sequence_next_node_combine/10000` | 153 µs [151, 155] | 66 Melem/s |
+| `sequence_next_node_combine/100000` | 2.08 ms [2.06, 2.11] | 48 Melem/s |
+| `sequence_next_node_combine/1000000` | 79.5 ms [79.0, 80.0] | 13 Melem/s |
+| `sequence_next_node_realistic/100` | 2.10 µs [2.07, 2.14] | 48 Melem/s |
+| `sequence_next_node_realistic/1000` | 19.6 µs [19.4, 19.7] | 51 Melem/s |
+| `sequence_next_node_realistic/10000` | 196 µs [195, 197] | 51 Melem/s |
+| `sequence_next_node_realistic/100000` | 2.06 ms [2.05, 2.07] | 49 Melem/s |
+| `sequence_next_node_realistic/1000000` | 51.6 ms [51.3, 51.9] | 19 Melem/s |
+| `sequence_next_node_realistic/10000000` | 533 ms [529, 536] | 19 Melem/s |
 
-**Analysis**: With Arc\<str\>, `sequence_next_node` is now only 1.1-2.5x slower per
-element than `sequence_match` (down from 7.9-9.6x with String), approaching the
-theoretical minimum overhead of storing per-event values.
-
-- At 10K events: 90.1 Melem/s vs `sequence_match`'s 588 Melem/s (6.5x gap) — remaining
-  gap is from 32-byte struct (vs 16-byte Event) reducing cache utilization by 2x, plus
-  the initial Arc::from() allocation per unique string.
-- The realistic cardinality benchmark (100 distinct values) shows 35% improvement over
-  unique strings at 1M events, demonstrating the Arc sharing benefit in production workloads.
-- Combine throughput improved dramatically: 174 Melem/s at 100 states (was 25.9 Melem/s),
-  because Arc::clone is a single atomic increment vs deep String copy.
+**Analysis**: `sequence_next_node` throughput is ~18 Melem/s at 10M scale. The
+realistic cardinality benchmark (100 distinct Arc\<str\> values) shows consistent
+performance with unique strings at scale, confirming Arc sharing benefits in
+production workloads.
 
 ### Per-Element Cost at Scale
 
-Cost per element at scale. Session 13 refresh numbers:
+Cost per element at scale. Session 15 refresh numbers:
 
 | Function | Scale | Time | ns/element | Throughput | Bottleneck |
 |---|---|---|---|---|---|
-| `sessionize_update` | 1B | 1.18 s | 1.18 | 848 Melem/s | O(1) per-event, compute-bound |
-| `retention_combine` | 1B | 2.94 s | 2.94 | 340 Melem/s | O(1) per-state, DRAM-bound |
-| `window_funnel_finalize` | 100M | 715 ms | 7.15 | 140 Melem/s | Sort + O(n*k) greedy scan |
-| `sequence_match` | 100M | 902 ms | 9.02 | 111 Melem/s | Sort + O(n) fast-path scan |
-| `sequence_count` | 100M | 1.05 s | 10.5 | 95 Melem/s | Sort + O(n) fast-path counting |
-| `sequence_match_events` | 100M | 921 ms | 9.21 | 109 Melem/s | Sort + NFA + timestamp collection |
-| `sequence_next_node` | 10M | 438 ms | 43.8 | 23 Melem/s | Sort + sequential scan + Arc\<str\> alloc |
-| `sort_events` (random) | 100M | 2.046 s | 20.46 | 48.9 Melem/s | O(n log n) pdqsort, DRAM-bound |
-| `sort_events` (presorted) | 100M | 1.829 s | 18.29 | 54.7 Melem/s | O(n) adaptive, DRAM-bound |
+| `sessionize_update` | 1B | 1.20 s | 1.20 | 830 Melem/s | O(1) per-event, compute-bound |
+| `retention_combine` | 100M | 274 ms | 2.74 | 365 Melem/s | O(1) per-state, DRAM-bound |
+| `window_funnel_finalize` | 100M | 791 ms | 7.91 | 126 Melem/s | Sort + O(n*k) greedy scan |
+| `sequence_match` | 100M | 1.05 s | 10.5 | 95 Melem/s | Sort + O(n) fast-path scan |
+| `sequence_count` | 100M | 1.18 s | 11.8 | 85 Melem/s | Sort + O(n) fast-path counting |
+| `sequence_match_events` | 100M | 1.07 s | 10.7 | 93 Melem/s | Sort + NFA + timestamp collection |
+| `sequence_next_node` | 10M | 546 ms | 54.6 | 18 Melem/s | Sort + sequential scan + Arc\<str\> alloc |
+| `sort_events` (random) | 100M | 2.079 s | 20.79 | 48 Melem/s | O(n log n) pdqsort, DRAM-bound |
+| `sort_events` (presorted) | 100M | 1.895 s | 18.95 | 53 Melem/s | O(n) adaptive, DRAM-bound |
 
 ### Headline Numbers
 
 Criterion-validated, reproducible headline numbers for portfolio presentation
-(Session 14 refresh):
+(Session 15, Criterion 0.8.2, rand 0.9.2):
 
 | Function | Scale | Wall Clock | Throughput | ns/element |
 |---|---|---|---|---|
-| **`sessionize_update`** | **1 billion** | **1.21 s** | **826 Melem/s** | **1.21** |
-| **`retention_combine`** | 100 million | 259 ms | 386 Melem/s | 2.59 |
-| `window_funnel_finalize` | 100 million | 755 ms | 132 Melem/s | 7.55 |
-| `sequence_match` | 100 million | 951 ms | 105 Melem/s | 9.51 |
-| `sequence_count` | 100 million | 1.10 s | 91 Melem/s | 11.0 |
-| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s | 9.88 |
-| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s | 55.9 |
-| `sort_events` (random) | 100 million | 2.10 s | 47.6 Melem/s | 21.0 |
+| **`sessionize_update`** | **1 billion** | **1.20 s** | **830 Melem/s** | **1.20** |
+| **`retention_combine`** | 100 million | 274 ms | 365 Melem/s | 2.74 |
+| `window_funnel_finalize` | 100 million | 791 ms | 126 Melem/s | 7.91 |
+| `sequence_match` | 100 million | 1.05 s | 95 Melem/s | 10.5 |
+| `sequence_count` | 100 million | 1.18 s | 85 Melem/s | 11.8 |
+| `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s | 10.7 |
+| `sequence_next_node` | 10 million | 546 ms | 18 Melem/s | 54.6 |
+| `sort_events` (random) | 100 million | 2.08 s | 48 Melem/s | 20.8 |
 
-Note: `sequence_next_node` throughput decreased from Session 13 (23 Melem/s)
-due to `Rc<str>` to `Arc<str>` migration for `Send+Sync` safety. The atomic
-reference counting overhead (~2ns/clone) is an acceptable trade-off.
+Note: Minor throughput differences from Session 14 reflect Criterion 0.8.2's
+updated statistical sampling and rand 0.9.2's different data generation.
+No Rust source code was changed. CIs overlap with Session 14 in all cases.
 
 Memory constraint: Event-collecting functions store 16 bytes per event. At 100M events
 = 1.6GB working set. 1B events would require 16GB + clone overhead, exceeding

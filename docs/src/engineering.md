@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 403 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 411 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -88,9 +88,25 @@ graph TB
     SQ --> EV
     SN --> EV
 
-    style EP fill:#f9f,stroke:#333
-    style DDB fill:#bbf,stroke:#333
-    style SEG fill:#bbf,stroke:#333
+    style EP fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
+    style DDB fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
+    style SEG fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
+    style REG fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    style FS fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
+    style FR fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
+    style FW fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
+    style FQ fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
+    style FE fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
+    style FN fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
+    style SS fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style SR fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style SW fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style SQ fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style SN fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style PP fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
+    style PE fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
+    style EV fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
+    style TS fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
 ```
 
 - **Business logic** (`src/*.rs`, `src/common/`, `src/pattern/`): Pure safe
@@ -114,7 +130,7 @@ graph TB
 This architecture enables:
 
 - **Independent unit testing**: Business logic tests run in < 1 second with no
-  DuckDB instance. All 403 tests exercise Rust structs directly.
+  DuckDB instance. All 411 tests exercise Rust structs directly.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
   is decoupled from the database.
@@ -133,17 +149,17 @@ graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
         L2["E2E Tests (27)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
-        L1["Unit Tests (403)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
+        L1["Unit Tests (411)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
     end
 
-    style L1 fill:#d4edda,stroke:#155724
-    style L2 fill:#fff3cd,stroke:#856404
-    style L3 fill:#f8d7da,stroke:#721c24
+    style L1 fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style L2 fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
+    style L3 fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
 ```
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (403 tests)**
+**Level 1: Unit Tests (411 tests)**
 
 Organized by category within each module:
 
@@ -163,7 +179,7 @@ Organized by category within each module:
 
 Integration tests against a real DuckDB CLI instance that validate the complete
 chain: extension loading, function registration, SQL execution, and result
-correctness. These tests caught three critical bugs that all 403 unit tests
+correctness. These tests caught three critical bugs that all 411 unit tests
 missed:
 
 1. A segmentation fault on extension load (incorrect pointer arithmetic)
@@ -282,7 +298,7 @@ aggregations cannot express efficiently:
 These problems are inherently large-scale. A mid-sized SaaS application
 generates millions of events per day. An e-commerce platform during a sale
 event can produce hundreds of millions of events per hour. The ability to
-process one billion sessionize events in 1.18 seconds on a single core means
+process one billion sessionize events in 1.20 seconds on a single core means
 these analyses can run as interactive queries rather than batch jobs.
 
 ---
@@ -346,6 +362,14 @@ flowchart LR
     CLASS -->|"All adjacent"| FAST1["O(n) Sliding<br/>Window"]
     CLASS -->|"Wildcard-separated"| FAST2["O(n) Linear<br/>Scan"]
     CLASS -->|"Time constraints<br/>or mixed"| NFA["NFA<br/>Backtracking"]
+
+    style SQL fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
+    style PARSE fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
+    style STEPS fill:#fff3e0,stroke:#e65100,color:#1a1a1a
+    style CLASS fill:#fce4ec,stroke:#c62828,color:#1a1a1a
+    style FAST1 fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style FAST2 fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style NFA fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
 ```
 
 - A **recursive descent parser** that compiles pattern strings (e.g.,
@@ -371,7 +395,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 403 |
+| Unit tests | 411 |
 | Doc-tests | 1 |
 | E2E tests | 27 |
 | Property-based tests | 26 (proptest) |

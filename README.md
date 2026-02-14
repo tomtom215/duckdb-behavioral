@@ -8,7 +8,9 @@ Provides `sessionize`, `retention`, `window_funnel`, `sequence_match`,
 DuckDB extension written in Rust. **Complete ClickHouse behavioral analytics parity.**
 
 [![CI](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg)](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml)
+[![E2E Tests](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg)](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![MSRV: 1.80](https://img.shields.io/badge/MSRV-1.80-blue.svg)](https://www.rust-lang.org)
 
 > **Personal Project Disclaimer**: This is a personal project developed on my own
 > time. It is not affiliated with, endorsed by, or related to my employer or
@@ -23,7 +25,7 @@ programming). In the interest of full transparency and academic rigor, the
 following safeguards ensure that AI assistance does not compromise correctness,
 reproducibility, or trustworthiness:
 
-- **403 unit tests + 1 doc-test** covering all functions, edge cases, combine
+- **411 unit tests + 1 doc-test** covering all functions, edge cases, combine
   associativity, property-based testing (proptest), and mutation-testing-guided
   coverage. All tests run in under 1 second via `cargo test`.
 - **27 end-to-end SQL tests** against a real DuckDB v1.4.4 instance validating
@@ -355,21 +357,19 @@ release validation, expanded documentation, refreshed all benchmark baselines.
 safety, defensive FFI (no-panic entry point, `*const u8` boolean reading, null
 byte handling), 16 new E2E tests, pinned GitHub Actions to commit SHAs.
 
-**Headline numbers (Criterion-validated, 95% CI, Session 14):**
+**Headline numbers (Criterion 0.8.2, 95% CI):**
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | **1 billion** | **1.21 s** | **826 Melem/s** |
-| `retention` (combine) | 100 million | 259 ms | 386 Melem/s |
-| `window_funnel` | 100 million | 755 ms | 132 Melem/s |
-| `sequence_match` | 100 million | 951 ms | 105 Melem/s |
-| `sequence_count` | 100 million | 1.10 s | 91 Melem/s |
-| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s |
-| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s |
+| `sessionize` | **1 billion** | **1.20 s** | **830 Melem/s** |
+| `retention` (combine) | 100 million | 274 ms | 365 Melem/s |
+| `window_funnel` | 100 million | 791 ms | 126 Melem/s |
+| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
+| `sequence_count` | 100 million | 1.18 s | 85 Melem/s |
+| `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
+| `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
 
-All measurements: Criterion.rs, 95% confidence intervals. `sequence_next_node`
-throughput reflects `Arc<str>` migration for `Send+Sync` safety (atomic ref
-counting vs non-atomic). Full methodology, optimization history, and baseline
+All measurements: Criterion.rs 0.8.2, 95% confidence intervals. Full methodology, optimization history, and baseline
 records: [`PERF.md`](PERF.md).
 
 ## Community Extension Submission Roadmap
@@ -395,7 +395,7 @@ repository. Every item must be verified with zero exceptions.
   pinned to a commit compatible with DuckDB v1.4.4.
 - [x] **Step 2: Verify the Makefile build chain locally** — `make configure &&
   make release && make test_release` passes all 7 SQL test files.
-- [x] **Step 3: Verify all unit tests pass** — `cargo test` (403 + 1 doc-test),
+- [x] **Step 3: Verify all unit tests pass** — `cargo test` (411 + 1 doc-test),
   `cargo clippy --all-targets` (zero warnings), `cargo fmt -- --check` (clean).
 
 ### Remaining Steps
@@ -494,7 +494,7 @@ for the full SemVer rules applied to SQL function signatures.
 ## Development
 
 ```bash
-# Run tests (403 unit tests + 1 doc-test)
+# Run tests (411 unit tests + 1 doc-test)
 cargo test
 
 # Run clippy (zero warnings required)

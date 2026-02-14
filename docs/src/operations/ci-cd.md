@@ -13,7 +13,7 @@ ensure code quality across multiple dimensions.
 | Job | Purpose | Tool |
 |-----|---------|------|
 | **check** | Verify compilation | `cargo check --all-targets` |
-| **test** | Run 403 unit tests + 1 doc-test | `cargo test` |
+| **test** | Run 411 unit tests + 1 doc-test | `cargo test` |
 | **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
 | **fmt** | Formatting verification | `cargo fmt --check` |
 | **doc** | Documentation builds without warnings | `cargo doc` with `-Dwarnings` |
@@ -24,6 +24,32 @@ ensure code quality across multiple dimensions.
 | **coverage** | Code coverage reporting | `cargo-tarpaulin` + Codecov |
 | **cross-platform** | Linux + macOS test matrix | `cargo test` on both OSes |
 | **extension-build** | Community extension packaging | `make configure && make release` |
+
+### CodeQL (`codeql.yml`)
+
+Runs GitHub's CodeQL static analysis for Rust on every push to `main`, every
+pull request, and on a weekly schedule (Monday 06:00 UTC). Uses the
+`security-and-quality` query suite for comprehensive coverage.
+
+- **Triggers**: push to main, PRs, weekly cron
+- **Language**: Rust
+- **Action version**: `github/codeql-action` v4.32.3 (SHA-pinned)
+- **Permissions**: `security-events: write` (required to upload SARIF results)
+
+**Prerequisite — Disable Default Setup:**
+
+This workflow uses CodeQL's "advanced setup" (explicit workflow file). GitHub
+does not allow both Default Setup and advanced setup to be active simultaneously.
+If Default Setup is enabled, the SARIF upload will fail with:
+
+> `CodeQL analyses from advanced configurations cannot be processed when the default setup is enabled`
+
+The workflow includes a pre-flight check that detects this conflict and fails
+fast with actionable remediation steps. To resolve:
+
+1. Go to **Settings → Code security → Code scanning → CodeQL analysis**
+2. Click the **⋯** menu → **Disable CodeQL**
+3. Or via CLI: `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`
 
 ### E2E Tests (`e2e.yml`)
 

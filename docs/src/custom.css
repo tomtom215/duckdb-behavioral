@@ -12,17 +12,26 @@
 /* Code block styling */
 pre {
     border-radius: 4px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 code {
     font-size: 0.9em;
 }
 
-/* Table styling */
+/* ── Table styling ────────────────────────────────────────────────────
+ * Tables use a horizontal scroll wrapper on narrow viewports to prevent
+ * layout overflow. Performance tables with many columns remain readable
+ * without truncating content or breaking the page layout.
+ */
 table {
     width: 100%;
     border-collapse: collapse;
     margin: 1em 0;
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 table thead th {
@@ -30,6 +39,7 @@ table thead th {
     font-weight: 600;
     border-bottom: 2px solid var(--table-border-color);
     padding: 8px 12px;
+    white-space: nowrap;
 }
 
 table tbody td {
@@ -41,8 +51,14 @@ table tbody tr:last-child td {
     border-bottom: none;
 }
 
-/* Performance numbers emphasis */
+/* Performance numbers emphasis — prevent wrapping in data cells */
 table td code {
+    white-space: nowrap;
+}
+
+/* Prevent benchmark function names from wrapping mid-name */
+table td:first-child,
+table th:first-child {
     white-space: nowrap;
 }
 
@@ -82,4 +98,206 @@ blockquote {
     padding: 0.5em 1em;
     margin: 1em 0;
     background-color: var(--quote-bg);
+}
+
+/* ── Mermaid Diagram Contrast Fix ──────────────────────────────────────
+ * Forces high-contrast text and borders on all Mermaid diagram elements.
+ * Ensures readability in both light (default) and dark (navy/coal) themes.
+ * Without these overrides, Mermaid's default pastel fills produce
+ * unreadable text — especially in dark mode.
+ */
+
+/* Force all mermaid text to be dark (readable against pastel fills) */
+.mermaid text,
+.mermaid .nodeLabel,
+.mermaid .edgeLabel,
+.mermaid .label,
+.mermaid .cluster-label,
+.mermaid span {
+    color: #1a1a1a !important;
+    fill: #1a1a1a !important;
+}
+
+/* Ensure node borders are visible */
+.mermaid .node rect,
+.mermaid .node circle,
+.mermaid .node polygon,
+.mermaid .node path {
+    stroke: #444 !important;
+    stroke-width: 2px !important;
+}
+
+/* Subgraph/cluster labels and borders */
+.mermaid .cluster rect {
+    stroke: #666 !important;
+    stroke-width: 2px !important;
+    rx: 4px !important;
+    ry: 4px !important;
+}
+
+.mermaid .cluster text,
+.mermaid .cluster span {
+    fill: #1a1a1a !important;
+    color: #1a1a1a !important;
+    font-weight: 600 !important;
+}
+
+/* Edge/arrow lines */
+.mermaid .edgePath path {
+    stroke: #555 !important;
+    stroke-width: 2px !important;
+}
+
+/* Arrow markers */
+.mermaid marker path {
+    fill: #555 !important;
+}
+
+/* Edge labels background for readability */
+.mermaid .edgeLabel rect {
+    fill: #fff !important;
+    opacity: 0.9 !important;
+}
+
+/* State diagram specifics */
+.mermaid .statediagram-state rect {
+    stroke: #444 !important;
+    stroke-width: 2px !important;
+}
+
+.mermaid .statediagram-state .state-title {
+    fill: #1a1a1a !important;
+    font-weight: 600 !important;
+}
+
+/* Decision diamond (rhombus) text */
+.mermaid .node .label {
+    color: #1a1a1a !important;
+}
+
+/* Note boxes in state diagrams */
+.mermaid .note {
+    fill: #fff9c4 !important;
+    stroke: #c8a415 !important;
+}
+
+.mermaid .note text {
+    fill: #333 !important;
+}
+
+/* ── Dark theme overrides ──────────────────────────────────────────────
+ * In mdBook's navy and coal themes, override mermaid background fills
+ * to use lighter, more saturated colors with guaranteed contrast.
+ */
+.navy .mermaid text,
+.navy .mermaid .nodeLabel,
+.navy .mermaid .edgeLabel,
+.navy .mermaid .label,
+.navy .mermaid span,
+.coal .mermaid text,
+.coal .mermaid .nodeLabel,
+.coal .mermaid .edgeLabel,
+.coal .mermaid .label,
+.coal .mermaid span {
+    color: #1a1a1a !important;
+    fill: #1a1a1a !important;
+}
+
+.navy .mermaid .edgePath path,
+.coal .mermaid .edgePath path {
+    stroke: #888 !important;
+}
+
+.navy .mermaid marker path,
+.coal .mermaid marker path {
+    fill: #888 !important;
+}
+
+.navy .mermaid .edgeLabel rect,
+.coal .mermaid .edgeLabel rect {
+    fill: #e8e8e8 !important;
+    opacity: 0.95 !important;
+}
+
+/* ── Mobile responsiveness ───────────────────────────────────────────
+ * Ensures the documentation renders correctly on phones and tablets.
+ * Tables scroll horizontally, code blocks don't overflow, and content
+ * has appropriate padding at narrow viewport widths.
+ */
+
+/* Prevent content overflow on narrow screens */
+.content main {
+    overflow-x: hidden;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Mermaid diagrams: scroll horizontally on narrow viewports */
+.mermaid {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+}
+
+/* Mermaid SVG should not exceed container width */
+.mermaid svg {
+    max-width: 100%;
+    height: auto;
+}
+
+@media screen and (max-width: 768px) {
+    /* Reduce padding on mobile */
+    .content main {
+        padding: 0 12px;
+    }
+
+    /* Tighter table cells */
+    table thead th,
+    table tbody td {
+        padding: 6px 8px;
+        font-size: 0.88em;
+    }
+
+    /* Allow long inline code to break */
+    code {
+        word-break: break-all;
+    }
+
+    /* Reduce heading margins */
+    .content main h2 {
+        margin-top: 1.5em;
+        padding-top: 0.3em;
+    }
+
+    .content main h3 {
+        margin-top: 1em;
+    }
+
+    /* Blockquotes tighter on mobile */
+    blockquote {
+        padding: 0.3em 0.8em;
+        margin: 0.8em 0;
+    }
+
+    /* Prevent horizontal overflow from wide content */
+    pre {
+        max-width: calc(100vw - 40px);
+    }
+}
+
+@media screen and (max-width: 480px) {
+    /* Extra-small screens */
+    table thead th,
+    table tbody td {
+        padding: 4px 6px;
+        font-size: 0.82em;
+    }
+
+    .content main {
+        padding: 0 8px;
+    }
+
+    code {
+        font-size: 0.85em;
+    }
 }

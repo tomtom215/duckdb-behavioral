@@ -14,7 +14,8 @@
 
 use behavioral::common::event::Event;
 use behavioral::window_funnel::WindowFunnelState;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 
 fn make_funnel_events(num_events: usize, num_conditions: usize) -> Vec<Event> {
     (0..num_events)

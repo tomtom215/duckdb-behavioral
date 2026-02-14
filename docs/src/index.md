@@ -144,13 +144,13 @@ flowchart TD
     SM -->|"When did each<br/>step happen?"| SME["sequence_match_events"]
     Q -->|"What happened<br/>next/before?"| SNN["sequence_next_node"]
 
-    style S fill:#e8f5e9,stroke:#2e7d32
-    style R fill:#e3f2fd,stroke:#1565c0
-    style WF fill:#fff3e0,stroke:#e65100
-    style SEQ fill:#fce4ec,stroke:#c62828
-    style SC fill:#fce4ec,stroke:#c62828
-    style SME fill:#fce4ec,stroke:#c62828
-    style SNN fill:#f3e5f5,stroke:#6a1b9a
+    style S fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
+    style R fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
+    style WF fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
+    style SEQ fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
+    style SC fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
+    style SME fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
+    style SNN fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
 ```
 
 Seven functions covering the full spectrum of behavioral analytics:
@@ -180,13 +180,13 @@ performance claim below is backed by
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| **`sessionize`** | **1 billion rows** | **1.21 s** | **826 Melem/s** |
-| **`retention`** | **100 million rows** | **259 ms** | **386 Melem/s** |
-| `window_funnel` | 100 million rows | 755 ms | 132 Melem/s |
-| `sequence_match` | 100 million rows | 951 ms | 105 Melem/s |
-| `sequence_count` | 100 million rows | 1.10 s | 91 Melem/s |
-| `sequence_match_events` | 100 million rows | 988 ms | 101 Melem/s |
-| `sequence_next_node` | 10 million rows | 559 ms | 18 Melem/s |
+| **`sessionize`** | **1 billion rows** | **1.20 s** | **830 Melem/s** |
+| **`retention`** | **100 million rows** | **274 ms** | **365 Melem/s** |
+| `window_funnel` | 100 million rows | 791 ms | 126 Melem/s |
+| `sequence_match` | 100 million rows | 1.05 s | 95 Melem/s |
+| `sequence_count` | 100 million rows | 1.18 s | 85 Melem/s |
+| `sequence_match_events` | 100 million rows | 1.07 s | 93 Melem/s |
+| `sequence_next_node` | 10 million rows | 546 ms | 18 Melem/s |
 
 Key design choices that enable this performance:
 
@@ -216,7 +216,7 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 403 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
+| **Testing Rigor** | 411 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
 | **Performance** | Fourteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | Raw DuckDB C API integration via custom entry point. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |

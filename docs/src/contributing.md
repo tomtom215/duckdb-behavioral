@@ -21,7 +21,7 @@ cargo build
 ### Running Tests
 
 ```bash
-# Unit tests (403 tests + 1 doc-test, runs in <1 second)
+# Unit tests (411 tests + 1 doc-test, runs in <1 second)
 cargo test
 
 # Clippy (zero warnings required)

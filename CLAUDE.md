@@ -26,6 +26,7 @@ This file provides context for AI assistants working on this codebase.
   - [Session 12: Community Extension Readiness + Benchmark Completion](#session-12-community-extension-readiness--benchmark-completion)
   - [Session 13: CI/CD Hardening + Benchmark Refresh](#session-13-cicd-hardening--benchmark-refresh)
   - [Session 14: Production Readiness Hardening](#session-14-production-readiness-hardening)
+  - [Session 15: Enterprise Quality Standards](#session-15-enterprise-quality-standards)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Testing](#testing)
 - [CI/CD](#cicd)
@@ -108,7 +109,7 @@ cargo build
 # Build (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all unit tests (403 tests + 1 doc-test)
+# Run all unit tests (411 tests + 1 doc-test)
 cargo test
 
 # Run clippy (must produce zero warnings)
@@ -156,14 +157,17 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   runtime function pointer stubs via global atomic statics initialized by
   `duckdb_rs_extension_api_init`.
 
-**Dev-only** (unit tests):
+**Dev-only** (unit tests and benchmarks):
 - `duckdb = "=1.4.4"` with `bundled` feature — Used in `#[cfg(test)]` modules
   for `Connection::open_in_memory()`. Not linked into the release extension.
+- `criterion = "0.8"` with `html_reports` feature — Statistical benchmarking
+- `proptest = "1"` — Property-based testing
+- `rand = "0.9"` — Random data generation for benchmarks
 
 ## Code Quality Standards
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **403 unit tests** covering all functions, edge cases, combine associativity,
+- **411 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage, and
   ClickHouse mode combinations
 - **1 doc-test** for the pattern parser
@@ -562,7 +566,7 @@ validation, documentation expansion, and full benchmark baseline refresh.
 3. **Documentation expansion**: Enhanced GitHub Pages site, CLAUDE.md
    modularization, added Mermaid architecture diagrams.
 
-4. **Test count fix**: Corrected stale test count references (375 → 403).
+4. **Test count fix**: Corrected stale test count references (375 → 411).
 
 **Session 13 baseline (Criterion-validated, 95% CI):**
 
@@ -659,6 +663,57 @@ Performance is consistent with Session 13 baseline. `sequence_next_node`
 throughput decreased from 23 to 18 Melem/s due to `Arc<str>` atomic reference
 counting overhead — an expected and acceptable cost for `Send+Sync` safety.
 
+### Session 15: Enterprise Quality Standards
+
+Session focused on dependency consolidation, documentation polish, benchmark
+refresh, and GitHub Pages improvements. No Rust source code changes.
+
+**Dependency updates (7 dependabot PRs consolidated):**
+
+1. **Criterion 0.5 → 0.8.2**: Migrated `criterion::black_box` to
+   `std::hint::black_box` across all 7 benchmark files.
+2. **rand 0.8 → 0.9.2**: Transparent update — no code uses rand directly.
+3. **Swatinem/rust-cache v2.7.8 → v2.8.2**: CI workflow cache action.
+4. **actions/setup-python v5.6.0 → v6.2.0**: CI workflow Python setup.
+5. **actions/attest-build-provenance v2.2.3 → v3.2.0**: Release attestation.
+6. **actions/download-artifact v4.2.1 → v7.0.0**: Release artifact download.
+7. **dtolnay/rust-toolchain**: Skipped — uses branch refs, not version tags.
+
+**GitHub Pages improvements:**
+
+8. **Mermaid diagram contrast**: Added comprehensive CSS overrides in
+   `custom.css` forcing dark text and visible borders on all mermaid elements.
+   Added inline `style` directives with saturated fill colors and explicit
+   `color:#1a1a1a` to all mermaid diagrams across 4 documentation files.
+9. **Dark theme support**: Navy/coal theme overrides for mermaid edge labels,
+   arrows, and backgrounds.
+10. **SUMMARY.md restructure**: Reorganized into 4 sections: Getting Started,
+    Function Reference, Technical Deep Dive, Operations & Contributing.
+
+**Documentation updates:**
+
+11. **Test count**: Updated 403 → 411 across all documentation files.
+12. **Criterion version**: Updated 0.5 → 0.8 references in PERF.md and
+    performance.md.
+13. **README.md badges**: Added E2E Tests and MSRV badges.
+14. **Benchmark baseline refresh**: Full `cargo bench` with Criterion 0.8.2.
+
+**Session 15 baseline (Criterion 0.8.2, 95% CI):**
+
+| Function | Scale | Wall Clock | Throughput |
+|---|---|---|---|
+| `sessionize_update` | **1 billion** | **1.20 s** | **830 Melem/s** |
+| `retention_combine` | 100 million | 274 ms | 365 Melem/s |
+| `window_funnel` | 100 million | 791 ms | 126 Melem/s |
+| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
+| `sequence_count` | 100 million | 1.18 s | 85 Melem/s |
+| `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
+| `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
+
+Performance is consistent with Session 14 baseline. Minor throughput
+differences reflect Criterion 0.8.2's updated statistical sampling and
+rand 0.9.2's different data generation — no Rust source code was changed.
+
 ## ClickHouse Parity Status
 
 **COMPLETE** — All ClickHouse behavioral analytics functions are implemented
@@ -694,7 +749,7 @@ categories:
   correctness, NULL value handling, gap events, presorted detection, proptest,
   Arc\<str\> sharing verification, struct size assertions, unicode/long strings
 
-Run with `cargo test`. All 403 tests + 1 doc-test run in <1 second.
+Run with `cargo test`. All 411 tests + 1 doc-test run in <1 second.
 
 **E2E tests** (manual, against real DuckDB CLI):
 - 27 test cases covering all 7 functions
@@ -709,6 +764,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 - **ci.yml**: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver,
   coverage, cross-platform (Linux + macOS), extension-build
+- **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
 - **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
   creates GitHub release on tag push with SemVer validation

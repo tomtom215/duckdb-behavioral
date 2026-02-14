@@ -14,7 +14,7 @@ cd duckdb-behavioral
 cargo build
 
 # Run all checks (all must pass)
-cargo test                     # 403 unit tests + 1 doc-test
+cargo test                     # 411 unit tests + 1 doc-test
 cargo clippy --all-targets     # Zero warnings required
 cargo fmt -- --check           # Format check
 ```

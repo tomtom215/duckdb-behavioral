@@ -378,7 +378,7 @@ or `brew install cmake` (macOS).
 
 ## Running Tests
 
-The extension includes 403 unit tests and 1 doc-test:
+The extension includes 411 unit tests and 1 doc-test:
 
 ```bash
 cargo test
