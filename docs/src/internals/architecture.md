@@ -118,6 +118,7 @@ The pattern engine (`src/pattern/`) compiles pattern strings into a structured
 AST and executes them via an NFA.
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000'}}}%%
 flowchart LR
     SQL["SQL Pattern String<br/>'(?1).*(?t<=3600)(?2)'"]
     PARSE["Recursive Descent<br/>Parser"]
@@ -134,14 +135,14 @@ flowchart LR
     WC --> RES
     NFA --> RES
 
-    style SQL fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
-    style PARSE fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
-    style CP fill:#fff3e0,stroke:#e65100,color:#1a1a1a
-    style CLASS fill:#fce4ec,stroke:#c62828,color:#1a1a1a
-    style ADJ fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style WC fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style NFA fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
-    style RES fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
+    style SQL fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style PARSE fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style CP fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
+    style CLASS fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style ADJ fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style WC fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style NFA fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style RES fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
 ```
 
 ### Parser
@@ -182,6 +183,7 @@ DuckDB's segment tree windowing calls `combine` O(n log n) times. The combine
 implementation is the dominant cost for event-collecting functions.
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'clusterBkg': '#f8f9fa', 'clusterBorder': '#495057'}}}%%
 flowchart TB
     subgraph "DuckDB Segment Tree"
         R["Root State"]
@@ -205,16 +207,16 @@ flowchart TB
         SORT -->|"scan / match"| OUT["Result"]
     end
 
-    style R fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
-    style L1 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
-    style L2 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
-    style L3 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
-    style L4 fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
-    style T fill:#fff3e0,stroke:#e65100,color:#1a1a1a
-    style S fill:#fff3e0,stroke:#e65100,color:#1a1a1a
-    style M fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style SORT fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
-    style OUT fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
+    style R fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style L1 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style L2 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style L3 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style L4 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style T fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
+    style S fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
+    style M fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style SORT fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
+    style OUT fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
 ```
 
 | Function | Combine Strategy | Complexity |

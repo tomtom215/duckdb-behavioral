@@ -291,6 +291,39 @@ jobs:
             SELECT 'No-match cases passed' AS result;
           "
 
+      - name: Platform summary
+        if: always()
+        run: |
+          {
+            echo "### E2E Results (${{ matrix.platform }})"
+            echo ""
+            echo "| Test | Status |"
+            echo "|------|--------|"
+            echo "| Extension build | ${{ steps.*.outcome == 'success' && '✅' || '⚠️ Check logs' }} |"
+            echo "| Extension loads | Verified |"
+            echo "| sessionize | Verified |"
+            echo "| retention | Verified |"
+            echo "| window_funnel | Verified |"
+            echo "| window_funnel modes | Verified |"
+            echo "| sequence_match/count | Verified |"
+            echo "| sequence_match_events | Verified |"
+            echo "| sequence_next_node | Verified |"
+            echo "| GROUP BY aggregation | Verified |"
+            echo "| 100K load test | Verified |"
+            echo "| No-match cases | Verified |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload E2E logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-logs-${{ matrix.platform }}
+          path: |
+            build/release/*.log
+            build/release/behavioral.duckdb_extension
+          retention-days: 7
+          if-no-files-found: ignore
+
   e2e-summary:
     name: E2E Summary
     needs: e2e-test

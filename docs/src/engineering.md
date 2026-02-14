@@ -37,6 +37,7 @@ The codebase enforces a strict separation between business logic and FFI
 integration:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'mainBkg': '#f8f9fa', 'clusterBkg': '#f8f9fa', 'clusterBorder': '#495057'}}}%%
 graph TB
     subgraph "DuckDB Process"
         DDB[DuckDB Engine]
@@ -88,25 +89,25 @@ graph TB
     SQ --> EV
     SN --> EV
 
-    style EP fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
-    style DDB fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
-    style SEG fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
-    style REG fill:#fff3e0,stroke:#e65100,color:#1a1a1a
-    style FS fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
-    style FR fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
-    style FW fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
-    style FQ fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
-    style FE fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
-    style FN fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
-    style SS fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style SR fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style SW fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style SQ fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style SN fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style PP fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
-    style PE fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
-    style EV fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
-    style TS fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
+    style EP fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
+    style DDB fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style SEG fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style REG fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
+    style FS fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
+    style FR fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
+    style FW fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
+    style FQ fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
+    style FE fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
+    style FN fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
+    style SS fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style SR fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style SW fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style SQ fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style SN fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style PP fill:#e8f5e9,stroke:#198754,stroke-width:2px,color:#000000
+    style PE fill:#e8f5e9,stroke:#198754,stroke-width:2px,color:#000000
+    style EV fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
+    style TS fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
 ```
 
 - **Business logic** (`src/*.rs`, `src/common/`, `src/pattern/`): Pure safe
@@ -145,6 +146,7 @@ This architecture enables:
 ### The Test Pyramid
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'clusterBkg': '#f8f9fa', 'clusterBorder': '#495057'}}}%%
 graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
@@ -152,9 +154,9 @@ graph TB
         L1["Unit Tests (411)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
     end
 
-    style L1 fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style L2 fill:#fff9c4,stroke:#f9a825,color:#1a1a1a
-    style L3 fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
+    style L1 fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style L2 fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
+    style L3 fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
 ```
 
 This project implements a rigorous multi-level testing strategy:
@@ -312,6 +314,7 @@ registration. This project uses the raw C API (`libduckdb-sys`) directly,
 implementing five callback functions per aggregate:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#cfe2ff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#0d6efd', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'noteBkgColor': '#fff9c4', 'noteTextColor': '#000000', 'noteBorderColor': '#c8a415', 'labelTextColor': '#000000', 'transitionColor': '#495057'}}}%%
 stateDiagram-v2
     [*] --> state_size: DuckDB queries state byte size
 
@@ -355,6 +358,7 @@ The sequence functions use a custom NFA (Nondeterministic Finite Automaton)
 pattern engine:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000'}}}%%
 flowchart LR
     SQL["Pattern String<br/>'(?1).*(?t<=3600)(?2)'"] --> PARSE["Recursive Descent<br/>Parser"]
     PARSE --> STEPS["CompiledPattern<br/>Condition(1), AnyEvents,<br/>TimeConstraint(<=, 3600),<br/>Condition(2)"]
@@ -363,13 +367,13 @@ flowchart LR
     CLASS -->|"Wildcard-separated"| FAST2["O(n) Linear<br/>Scan"]
     CLASS -->|"Time constraints<br/>or mixed"| NFA["NFA<br/>Backtracking"]
 
-    style SQL fill:#e3f2fd,stroke:#1565c0,color:#1a1a1a
-    style PARSE fill:#e8f5e9,stroke:#2e7d32,color:#1a1a1a
-    style STEPS fill:#fff3e0,stroke:#e65100,color:#1a1a1a
-    style CLASS fill:#fce4ec,stroke:#c62828,color:#1a1a1a
-    style FAST1 fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style FAST2 fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style NFA fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
+    style SQL fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style PARSE fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style STEPS fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
+    style CLASS fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style FAST1 fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style FAST2 fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style NFA fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
 ```
 
 - A **recursive descent parser** that compiles pattern strings (e.g.,
