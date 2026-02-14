@@ -12,7 +12,7 @@ extension:
 
 repo:
   github: tomtom215/duckdb-behavioral
-  ref: 44ef9a21862268e0b3cd0b814ed5037cd9041bcd
+  ref: d0a7a13751fda8547d478dd14a1d86e261c27575
 
 docs:
   hello_world: |
@@ -36,5 +36,5 @@ docs:
     - **sequence_next_node**: Find the next event value after a pattern match
 
     All functions support up to 32 boolean event conditions. Pure Rust implementation
-    with zero unsafe code in business logic. Benchmarked at 848 Melem/s (sessionize)
-    and 111 Melem/s (sequence_match) on commodity hardware.
+    with zero unsafe code in business logic. Benchmarked at 826 Melem/s (sessionize)
+    and 105 Melem/s (sequence_match) on commodity hardware.
