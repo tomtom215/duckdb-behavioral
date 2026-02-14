@@ -247,6 +247,11 @@ mod tests {
 ///
 /// `session_boundaries` counts the number of gaps within this segment that exceed
 /// the threshold. The total number of sessions is `boundaries + 1` for non-empty data.
+///
+/// The `current_row_null` flag tracks whether the rightmost row in this segment
+/// had a `NULL` timestamp. In `DuckDB`'s segment tree window evaluation, the rightmost
+/// leaf in the frame is the current row. When this flag is set, `finalize` signals
+/// that the output should be `NULL` (handled in the FFI layer).
 #[derive(Debug, Clone)]
 pub struct SessionizeBoundaryState {
     /// Earliest timestamp in this segment (microseconds since epoch).
@@ -257,6 +262,9 @@ pub struct SessionizeBoundaryState {
     pub boundaries: i64,
     /// Gap threshold in microseconds.
     pub threshold_us: i64,
+    /// Whether the rightmost row in this segment had a `NULL` timestamp.
+    /// Used by the FFI finalize to emit `NULL` for `NULL`-timestamp rows.
+    pub current_row_null: bool,
 }
 
 impl SessionizeBoundaryState {
@@ -268,12 +276,24 @@ impl SessionizeBoundaryState {
             last_ts: None,
             boundaries: 0,
             threshold_us: 0,
+            current_row_null: false,
         }
     }
 
-    /// Updates the state with a single timestamp.
+    /// Marks this state as representing a `NULL`-timestamp row.
+    ///
+    /// Called from the FFI layer when the current row's timestamp is `NULL`.
+    /// The flag propagates through `combine` so that the rightmost segment's
+    /// `NULL` status is preserved.
+    #[inline]
+    pub fn mark_null_row(&mut self) {
+        self.current_row_null = true;
+    }
+
+    /// Updates the state with a single non-`NULL` timestamp.
     #[inline]
     pub fn update(&mut self, timestamp_us: i64) {
+        self.current_row_null = false;
         match self.last_ts {
             None => {
                 self.first_ts = Some(timestamp_us);
@@ -298,12 +318,21 @@ impl SessionizeBoundaryState {
     /// Combines two states representing adjacent ordered segments.
     ///
     /// O(1) operation: only checks the cross-segment boundary.
+    ///
+    /// The `current_row_null` flag always propagates from `other` (the right/later
+    /// segment), because in `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` the
+    /// current row is the rightmost element of the frame.
     #[must_use]
     #[inline]
     pub fn combine(&self, other: &Self) -> Self {
         match (self.first_ts, other.first_ts) {
             (None, _) => other.clone(),
-            (_, None) => self.clone(),
+            (_, None) => {
+                // other has no timestamp data — propagate other's null flag
+                let mut result = self.clone();
+                result.current_row_null = other.current_row_null;
+                result
+            }
             (Some(_), Some(other_first)) => {
                 let cross_boundary = self.last_ts.map_or(0, |self_last| {
                     i64::from(other_first - self_last > self.threshold_us)
@@ -314,6 +343,7 @@ impl SessionizeBoundaryState {
                     last_ts: other.last_ts.or(self.last_ts),
                     boundaries: self.boundaries + other.boundaries + cross_boundary,
                     threshold_us: self.threshold_us,
+                    current_row_null: other.current_row_null,
                 }
             }
         }
@@ -756,6 +786,149 @@ mod boundary_tests {
         assert_eq!(combined.first_ts, Some(1_000));
         assert_eq!(combined.last_ts, Some(1_000));
         assert_eq!(combined.finalize(), 1);
+    }
+
+    // --- NULL timestamp tracking tests ---
+    // DuckDB window function evaluation: for ROWS BETWEEN UNBOUNDED PRECEDING AND
+    // CURRENT ROW, the current row is the rightmost leaf. When the current row has
+    // a NULL timestamp, the output should be NULL. The current_row_null flag tracks
+    // this through the segment tree combine chain.
+
+    #[test]
+    fn test_mark_null_row() {
+        let mut state = SessionizeBoundaryState::new();
+        assert!(!state.current_row_null);
+        state.mark_null_row();
+        assert!(state.current_row_null);
+        // Timestamps remain unset
+        assert!(state.first_ts.is_none());
+        assert!(state.last_ts.is_none());
+    }
+
+    #[test]
+    fn test_update_clears_null_flag() {
+        let mut state = SessionizeBoundaryState::new();
+        state.threshold_us = 1_000_000;
+        state.mark_null_row();
+        assert!(state.current_row_null);
+        state.update(100);
+        assert!(!state.current_row_null);
+    }
+
+    #[test]
+    fn test_combine_null_right_propagates_flag() {
+        // Simulates: [ts1, ts2, NULL] — frame for NULL row
+        // Left segment: two non-null timestamps
+        let mut left = SessionizeBoundaryState::new();
+        left.threshold_us = 1_800_000_000;
+        left.update(0);
+        left.update(300_000_000);
+        assert!(!left.current_row_null);
+
+        // Right segment: NULL timestamp leaf
+        let mut right = SessionizeBoundaryState::new();
+        right.mark_null_row();
+        assert!(right.current_row_null);
+
+        let combined = left.combine(&right);
+        // Data from left is preserved
+        assert_eq!(combined.first_ts, Some(0));
+        assert_eq!(combined.last_ts, Some(300_000_000));
+        assert_eq!(combined.boundaries, 0);
+        // But null flag from right propagates
+        assert!(combined.current_row_null);
+    }
+
+    #[test]
+    fn test_combine_non_null_right_clears_flag() {
+        // Simulates: [NULL, ts1] — frame for ts1 row
+        let mut left = SessionizeBoundaryState::new();
+        left.mark_null_row();
+
+        let mut right = SessionizeBoundaryState::new();
+        right.threshold_us = 1_000_000;
+        right.update(100);
+        assert!(!right.current_row_null);
+
+        let combined = left.combine(&right);
+        // Left is empty (no timestamps), so result is right's clone
+        assert_eq!(combined.first_ts, Some(100));
+        assert!(!combined.current_row_null);
+    }
+
+    #[test]
+    fn test_combine_three_segments_null_middle() {
+        // Simulates: [ts1, NULL, ts2] — segment tree evaluation
+        let mut s1 = SessionizeBoundaryState::new();
+        s1.threshold_us = 1_800_000_000;
+        s1.update(0);
+
+        let mut s2 = SessionizeBoundaryState::new();
+        s2.mark_null_row();
+
+        let mut s3 = SessionizeBoundaryState::new();
+        s3.threshold_us = 1_800_000_000;
+        s3.update(300_000_000);
+
+        // For row 0 (ts1): frame is [s1] → not null
+        assert!(!s1.current_row_null);
+        assert_eq!(s1.finalize(), 1);
+
+        // For row 1 (NULL): frame is [s1, s2] → null flag from s2
+        let frame_1 = s1.combine(&s2);
+        assert!(frame_1.current_row_null);
+
+        // For row 2 (ts2): frame is [s1, s2, s3] → not null (s3 clears it)
+        let frame_2 = s1.combine(&s2).combine(&s3);
+        assert!(!frame_2.current_row_null);
+        assert_eq!(frame_2.finalize(), 1); // 300ms < 30min, same session
+    }
+
+    #[test]
+    fn test_combine_null_with_null() {
+        // Two consecutive NULL rows
+        let mut a = SessionizeBoundaryState::new();
+        a.mark_null_row();
+        let mut b = SessionizeBoundaryState::new();
+        b.mark_null_row();
+
+        let combined = a.combine(&b);
+        assert!(combined.current_row_null);
+        assert!(combined.first_ts.is_none());
+    }
+
+    #[test]
+    fn test_combine_data_then_null_then_data() {
+        // Verifies: [data, null, data] with segment tree combine
+        let mut d1 = SessionizeBoundaryState::new();
+        d1.threshold_us = 100;
+        d1.update(10);
+
+        let mut null_leaf = SessionizeBoundaryState::new();
+        null_leaf.mark_null_row();
+
+        let mut d2 = SessionizeBoundaryState::new();
+        d2.threshold_us = 100;
+        d2.update(20);
+
+        // Left-to-right: ((d1 + null) + d2)
+        let lr = d1.combine(&null_leaf).combine(&d2);
+        assert!(!lr.current_row_null); // d2 is rightmost, not null
+        assert_eq!(lr.first_ts, Some(10));
+        assert_eq!(lr.last_ts, Some(20));
+
+        // Right-to-left: (d1 + (null + d2))
+        let rl = d1.combine(&null_leaf.combine(&d2));
+        assert!(!rl.current_row_null);
+        assert_eq!(rl.first_ts, Some(10));
+        assert_eq!(rl.last_ts, Some(20));
+    }
+
+    #[test]
+    fn test_new_state_not_null() {
+        // A freshly initialized state is NOT a null row — it's "no data yet"
+        let state = SessionizeBoundaryState::new();
+        assert!(!state.current_row_null);
     }
 }
 
