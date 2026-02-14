@@ -28,6 +28,7 @@ pub const MAX_EVENT_CONDITIONS: usize = 32;
 /// condition `i`. This supports up to 32 conditions, matching `ClickHouse`'s
 /// limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Event {
     /// Timestamp in microseconds since Unix epoch.
     pub timestamp_us: i64,

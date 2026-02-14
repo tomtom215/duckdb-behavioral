@@ -14,6 +14,7 @@ const MAX_NFA_STATES: usize = 10_000;
 
 /// Result of executing a pattern against an event stream.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MatchResult {
     /// Whether any full match was found.
     pub matched: bool,

@@ -193,6 +193,7 @@ impl std::fmt::Display for FunnelMode {
 /// Collects timestamped events during `update`, then processes them in `finalize`
 /// using a greedy forward scan algorithm.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct WindowFunnelState {
     /// Collected events (timestamp + conditions bitmask). Sorted in finalize.
     pub events: Vec<Event>,

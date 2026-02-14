@@ -29,6 +29,7 @@ pub const MAX_CONDITIONS: usize = 32;
 /// During `finalize`, applies the anchor condition (condition 0) requirement:
 /// if condition 0 was never true, all results are false.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RetentionState {
     /// Bitmask of conditions that were true for at least one row.
     /// Bit `i` is set if condition `i` was true for some row.

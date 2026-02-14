@@ -53,6 +53,7 @@ impl TimeOp {
 
 /// A compiled pattern ready for execution.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CompiledPattern {
     /// Ordered steps that events must match.
     pub steps: Vec<PatternStep>,
@@ -60,6 +61,7 @@ pub struct CompiledPattern {
 
 /// Error returned when pattern parsing fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PatternError {
     /// Human-readable error message.
     pub message: String,

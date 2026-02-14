@@ -78,6 +78,7 @@ pub enum Base {
 /// this struct stores a reference-counted string value that may be returned as
 /// the function result.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NextNodeEvent {
     /// Timestamp in microseconds since Unix epoch.
     pub timestamp_us: i64,
@@ -91,12 +92,31 @@ pub struct NextNodeEvent {
     pub conditions: u32,
 }
 
+impl NextNodeEvent {
+    /// Creates a new event with the given timestamp, value, base condition, and conditions bitmask.
+    #[must_use]
+    pub fn new(
+        timestamp_us: i64,
+        value: Option<Arc<str>>,
+        base_condition: bool,
+        conditions: u32,
+    ) -> Self {
+        Self {
+            timestamp_us,
+            value,
+            base_condition,
+            conditions,
+        }
+    }
+}
+
 /// State for the `sequence_next_node` aggregate function.
 ///
 /// Collects events with string values during `update`, then performs
 /// sequential matching during `finalize` to find the next event value
 /// after a completed sequence match.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SequenceNextNodeState {
     /// Collected events. Sorted by timestamp in finalize.
     pub events: Vec<NextNodeEvent>,
