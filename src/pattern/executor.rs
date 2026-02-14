@@ -1112,4 +1112,121 @@ mod tests {
         let result2 = execute_pattern(&pattern2, &events2, false);
         assert!(!result2.matched);
     }
+
+    // --- execute_pattern_events: additional edge case coverage ---
+
+    #[test]
+    fn test_events_wildcard_plus_time_constraint() {
+        // Verifies timestamp collection when pattern contains both .* and (?t<=N).
+        // Only condition timestamps should appear in the result.
+        let pattern = parse_pattern("(?1).*(?t<=5)(?2)").unwrap();
+        let events = make_events(&[
+            (0, &[true, false]),
+            (1_000_000, &[false, false]), // consumed by .*
+            (3_000_000, &[false, true]),  // 3s from (?1), <= 5
+        ]);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, Some(vec![0, 3_000_000]));
+    }
+
+    #[test]
+    fn test_events_wildcard_time_constraint_fails() {
+        // Time constraint not satisfied during event collection — should return None.
+        let pattern = parse_pattern("(?1).*(?t<=1)(?2)").unwrap();
+        let events = make_events(&[
+            (0, &[true, false]),
+            (1_000_000, &[false, false]),
+            (5_000_000, &[false, true]), // 5s from (?1), > 1
+        ]);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_events_nfa_state_limit() {
+        // Pathological pattern with multiple .* should hit MAX_NFA_STATES
+        // and return None during event collection (same as execute_pattern).
+        let pattern = parse_pattern("(?1).*.*.*.*(?2)").unwrap();
+        let mut event_data: Vec<(i64, &[bool])> = Vec::new();
+        let conds_start: [bool; 2] = [true, false];
+        let conds_mid: [bool; 2] = [false, false];
+        event_data.push((0, &conds_start));
+        for i in 1..100 {
+            event_data.push((i, &conds_mid));
+        }
+        let events = make_events(&event_data);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_events_empty_pattern() {
+        // Empty pattern steps should return None.
+        let pattern = CompiledPattern { steps: vec![] };
+        let events = make_events(&[(100, &[true])]);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_events_wildcard_zero_events_between_conditions() {
+        // .* matching zero events between conditions.
+        // (?1) consumes event[0], .* matches zero, (?2) needs event[1].
+        let pattern = parse_pattern("(?1).*(?2)").unwrap();
+        let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, Some(vec![100, 200]));
+    }
+
+    #[test]
+    fn test_events_one_event_gap_fails() {
+        // (?1).(?2) with two gap events — should not match because .
+        // matches exactly one event.
+        let pattern = parse_pattern("(?1).(?2)").unwrap();
+        let events = make_events(&[
+            (100, &[true, false]),
+            (200, &[false, false]),
+            (300, &[false, false]),
+            (400, &[false, true]),
+        ]);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_events_wildcard_at_end_of_stream() {
+        // .* at end of pattern when events run out. The .* should match
+        // zero remaining events and the pattern should succeed.
+        let pattern = parse_pattern("(?1).*").unwrap();
+        let events = make_events(&[(100, &[true])]);
+        let result = execute_pattern_events(&pattern, &events);
+        // Only one condition timestamp collected
+        assert_eq!(result, Some(vec![100]));
+    }
+
+    #[test]
+    fn test_events_time_constraint_vacuous_truth() {
+        // Time constraint at pattern start with no prior timestamp.
+        // Should be vacuously true for event collection too.
+        let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
+        let events = make_events(&[(100, &[true])]);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, Some(vec![100]));
+    }
+
+    #[test]
+    fn test_events_lazy_matching_collects_earliest() {
+        // Verifies lazy matching during event collection: .* prefers
+        // advancing the pattern over consuming events, so the earliest
+        // matching (?2) timestamp is collected.
+        let pattern = parse_pattern("(?1).*(?2)").unwrap();
+        let events = make_events(&[
+            (100, &[true, false]),
+            (200, &[false, true]), // earliest (?2) — lazy match picks this
+            (300, &[false, false]),
+            (400, &[false, true]), // later (?2) — greedy would pick this
+        ]);
+        let result = execute_pattern_events(&pattern, &events);
+        assert_eq!(result, Some(vec![100, 200]));
+    }
 }

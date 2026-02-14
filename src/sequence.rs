@@ -673,6 +673,88 @@ mod tests {
         let events = target.finalize_events().unwrap();
         assert_eq!(events, vec![100, 200]);
     }
+
+    // ── Coverage gap: finalize_events with complex patterns ──
+
+    #[test]
+    fn test_events_wildcard_plus_time_constraint() {
+        // Pattern (?1).*(?t<=5)(?2): wildcard then time constraint.
+        // Validates that time constraint is checked relative to (?1) match,
+        // not to the wildcard-consumed events.
+        let mut state = SequenceState::new();
+        state.set_pattern("(?1).*(?t<=5)(?2)");
+        state.update(make_event(0, &[true, false]));
+        state.update(make_event(1_000_000, &[false, false])); // gap event consumed by .*
+        state.update(make_event(3_000_000, &[false, true])); // 3s from (?1), within <=5
+        let events = state.finalize_events().unwrap();
+        assert_eq!(events, vec![0, 3_000_000]);
+    }
+
+    #[test]
+    fn test_events_wildcard_plus_time_constraint_exceeds() {
+        // Same pattern but time constraint exceeded → no match.
+        let mut state = SequenceState::new();
+        state.set_pattern("(?1).*(?t<=2)(?2)");
+        state.update(make_event(0, &[true, false]));
+        state.update(make_event(1_000_000, &[false, false])); // gap
+        state.update(make_event(3_000_000, &[false, true])); // 3s > 2s → fails
+        let events = state.finalize_events().unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_events_three_step_with_wildcards() {
+        // (?1).*(?2).*(?3): three steps separated by wildcards.
+        let mut state = SequenceState::new();
+        state.set_pattern("(?1).*(?2).*(?3)");
+        state.update(make_event(100, &[true, false, false]));
+        state.update(make_event(200, &[false, false, false])); // gap
+        state.update(make_event(300, &[false, true, false]));
+        state.update(make_event(400, &[false, false, false])); // gap
+        state.update(make_event(500, &[false, false, true]));
+        let events = state.finalize_events().unwrap();
+        assert_eq!(events, vec![100, 300, 500]);
+    }
+
+    #[test]
+    fn test_combine_in_place_complex_pattern_events() {
+        // Combine with wildcard pattern: events split across two states.
+        let mut target = SequenceState::new();
+        let mut s1 = SequenceState::new();
+        s1.set_pattern("(?1).*(?2)");
+        s1.update(make_event(100, &[true, false]));
+
+        let mut s2 = SequenceState::new();
+        s2.update(make_event(200, &[false, false])); // gap
+        s2.update(make_event(300, &[false, true]));
+
+        target.combine_in_place(&s1);
+        target.combine_in_place(&s2);
+        let events = target.finalize_events().unwrap();
+        assert_eq!(events, vec![100, 300]);
+    }
+
+    #[test]
+    fn test_combine_chain_three_states_events() {
+        // Chain combine: target → s1 → s2 → s3 for three-step pattern.
+        let mut target = SequenceState::new();
+
+        let mut s1 = SequenceState::new();
+        s1.set_pattern("(?1)(?2)(?3)");
+        s1.update(make_event(100, &[true, false, false]));
+
+        let mut s2 = SequenceState::new();
+        s2.update(make_event(200, &[false, true, false]));
+
+        let mut s3 = SequenceState::new();
+        s3.update(make_event(300, &[false, false, true]));
+
+        target.combine_in_place(&s1);
+        target.combine_in_place(&s2);
+        target.combine_in_place(&s3);
+        let events = target.finalize_events().unwrap();
+        assert_eq!(events, vec![100, 200, 300]);
+    }
 }
 
 #[cfg(test)]

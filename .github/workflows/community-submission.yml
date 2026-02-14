@@ -1,0 +1,525 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
+name: Community Extension Submission
+
+# On-demand workflow for preparing and submitting this extension to the DuckDB
+# Community Extensions repository (https://github.com/duckdb/community-extensions).
+#
+# This workflow is designed for auditability, determinism, and repeatability:
+#
+#   1. VALIDATE — Verify version consistency, description.yml schema, and
+#      required files are present.
+#   2. QUALITY GATE — Run cargo test, clippy, fmt. Must all pass.
+#   3. BUILD & TEST — Build the extension via the community Makefile and run
+#      SQL integration tests (same toolchain the community CI will use).
+#   4. PIN REF — Update description.yml ref to the validated commit SHA and
+#      push to main. (Skipped in dry-run mode.)
+#   5. SUBMISSION PACKAGE — Generate the exact description.yml to submit,
+#      upload as artifact, and output step-by-step submission commands.
+#
+# Usage:
+#   - Dry run (validate only):     workflow_dispatch with dry_run=true
+#   - Full submission preparation:  workflow_dispatch with dry_run=false
+#
+# After the workflow completes, follow the commands in the job summary to
+# open the PR against duckdb/community-extensions.
+#
+# Security: This workflow does NOT require secrets beyond the default
+# GITHUB_TOKEN. The community-extensions PR is opened manually to avoid
+# storing PATs with cross-repository write access.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: validate and build without updating ref or generating submission"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: community-submission
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+  EXTENSION_NAME: behavioral
+
+jobs:
+  # ── Phase 1: Validate submission readiness ─────────────────────────────
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.versions.outputs.version }}
+      current_sha: ${{ steps.sha.outputs.current_sha }}
+      pinned_ref: ${{ steps.sha.outputs.pinned_ref }}
+      ref_is_current: ${{ steps.sha.outputs.ref_is_current }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Validate description.yml schema
+        id: schema
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          echo "=== Validating description.yml required fields ==="
+
+          # Required top-level extension fields
+          for field in name description version language build license excluded_platforms requires_toolchains maintainers; do
+            if ! grep -q "  $field:" description.yml 2>/dev/null && ! grep -q "$field:" description.yml 2>/dev/null; then
+              echo "::error::Missing required field: $field"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          # Required repo fields
+          for field in github ref; do
+            if ! grep -q "  $field:" description.yml; then
+              echo "::error::Missing required repo field: $field"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          # Required docs fields
+          for field in hello_world extended_description; do
+            if ! grep -q "  $field:" description.yml; then
+              echo "::error::Missing required docs field: $field"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          # Validate build system
+          BUILD=$(grep '  build:' description.yml | head -1 | awk '{print $2}')
+          if [ "$BUILD" != "cargo" ]; then
+            echo "::error::Expected build: cargo, got: $BUILD"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Validate language
+          LANG=$(grep '  language:' description.yml | head -1 | awk '{print $2}')
+          if [ "$LANG" != "Rust" ]; then
+            echo "::error::Expected language: Rust, got: $LANG"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::$ERRORS schema validation errors found"
+            exit 1
+          fi
+
+          echo "description.yml schema: valid"
+
+      - name: Validate version consistency
+        id: versions
+        run: |
+          set -euo pipefail
+
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          DESC_VERSION=$(grep '  version:' description.yml | head -1 | awk '{print $2}')
+
+          echo "Cargo.toml version:     $CARGO_VERSION"
+          echo "description.yml version: $DESC_VERSION"
+
+          if [ "$CARGO_VERSION" != "$DESC_VERSION" ]; then
+            echo "::error::Version mismatch: Cargo.toml=$CARGO_VERSION, description.yml=$DESC_VERSION"
+            exit 1
+          fi
+
+          echo "version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version consistency: $CARGO_VERSION"
+
+      - name: Validate required files
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          for file in Cargo.toml Cargo.lock Makefile LICENSE description.yml src/lib.rs; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Missing required file: $file"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          # Check submodule is initialized
+          if [ ! -f "extension-ci-tools/makefiles/c_api_extensions/base.Makefile" ]; then
+            echo "::error::extension-ci-tools submodule is not initialized"
+            echo "Run: git submodule update --init --recursive"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          # Check test/sql/ directory has test files
+          SQL_TESTS=$(find test/sql -name '*.test' 2>/dev/null | wc -l)
+          if [ "$SQL_TESTS" -eq 0 ]; then
+            echo "::error::No SQL integration tests found in test/sql/"
+            ERRORS=$((ERRORS + 1))
+          fi
+          echo "SQL integration tests found: $SQL_TESTS"
+
+          if [ "$ERRORS" -gt 0 ]; then
+            exit 1
+          fi
+
+          echo "Required files: present"
+
+      - name: Record commit SHAs
+        id: sha
+        run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          PINNED_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
+
+          echo "current_sha=$CURRENT_SHA" >> "$GITHUB_OUTPUT"
+          echo "pinned_ref=$PINNED_REF" >> "$GITHUB_OUTPUT"
+
+          if [ "$CURRENT_SHA" = "$PINNED_REF" ]; then
+            echo "ref_is_current=true" >> "$GITHUB_OUTPUT"
+            echo "description.yml ref is current ($CURRENT_SHA)"
+          else
+            echo "ref_is_current=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::description.yml ref ($PINNED_REF) differs from HEAD ($CURRENT_SHA)"
+          fi
+
+      - name: Validation summary
+        if: always()
+        run: |
+          {
+            echo "### Phase 1: Validation"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| description.yml schema | ${{ steps.schema.outcome == 'success' && 'Pass' || 'FAIL' }} |"
+            echo "| Version consistency | ${{ steps.versions.outcome == 'success' && 'Pass' || 'FAIL' }} (${{ steps.versions.outputs.version }}) |"
+            echo "| Current HEAD | \`${{ steps.sha.outputs.current_sha }}\` |"
+            echo "| Pinned ref | \`${{ steps.sha.outputs.pinned_ref }}\` |"
+            echo "| Ref is current | ${{ steps.sha.outputs.ref_is_current }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Phase 2: Quality gate ──────────────────────────────────────────────
+  quality-gate:
+    name: Quality Gate
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: community-submission
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (zero warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test
+
+      - name: Documentation build
+        run: cargo doc --no-deps
+
+      - name: Quality gate summary
+        if: always()
+        run: |
+          {
+            echo "### Phase 2: Quality Gate"
+            echo ""
+            echo "All code quality checks passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Phase 3: Build and test via community Makefile ─────────────────────
+  build-test:
+    name: Build & Test
+    needs: [validate, quality-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: community-submission-build
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Configure extension
+        run: make configure
+
+      - name: Build release extension
+        run: make release
+
+      - name: Run SQL integration tests
+        run: make test_release
+
+      - name: Verify extension artifact exists
+        run: |
+          ARTIFACT="build/release/${{ env.EXTENSION_NAME }}.duckdb_extension"
+          if [ ! -f "$ARTIFACT" ]; then
+            echo "::error::Extension artifact not found: $ARTIFACT"
+            exit 1
+          fi
+          ls -la "$ARTIFACT"
+          echo "Extension artifact verified: $(wc -c < "$ARTIFACT") bytes"
+
+      - name: Build & test summary
+        if: always()
+        run: |
+          {
+            echo "### Phase 3: Build & Test"
+            echo ""
+            echo "Extension built and tested via community Makefile toolchain."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Phase 4: Pin ref in description.yml ────────────────────────────────
+  pin-ref:
+    name: Pin Ref
+    needs: [validate, quality-gate, build-test]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      pinned_sha: ${{ steps.pin.outputs.pinned_sha }}
+      commit_sha: ${{ steps.push.outputs.commit_sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update description.yml ref
+        id: pin
+        run: |
+          set -euo pipefail
+
+          # Pin to the commit that was validated, built, and tested
+          TARGET_SHA="${{ needs.validate.outputs.current_sha }}"
+          CURRENT_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
+
+          echo "Current ref:  $CURRENT_REF"
+          echo "Target SHA:   $TARGET_SHA"
+
+          if [ "$CURRENT_REF" = "$TARGET_SHA" ]; then
+            echo "description.yml ref already matches target ($TARGET_SHA)"
+            echo "pinned_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sed -i "s|  ref: .*|  ref: $TARGET_SHA|" description.yml
+
+          # Verify the substitution worked
+          UPDATED_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
+          if [ "$UPDATED_REF" != "$TARGET_SHA" ]; then
+            echo "::error::sed substitution failed: expected $TARGET_SHA, got $UPDATED_REF"
+            exit 1
+          fi
+
+          echo "pinned_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "Updated description.yml ref to $TARGET_SHA"
+
+      - name: Commit and push
+        id: push
+        if: steps.pin.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add description.yml
+          git commit -m "chore: pin description.yml ref to ${{ steps.pin.outputs.pinned_sha }} for community submission"
+
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+
+          git push origin main
+
+          echo "Pushed ref pin commit: $COMMIT_SHA"
+
+      - name: Pin ref summary
+        if: always()
+        run: |
+          echo "### Phase 4: Pin Ref" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.pin.outputs.changed }}" = "true" ]; then
+            echo "Updated \`description.yml\` ref to \`${{ steps.pin.outputs.pinned_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Ref already current. No changes needed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ── Phase 5: Generate submission package ───────────────────────────────
+  submission:
+    name: Submission Package
+    needs: [validate, quality-gate, build-test, pin-ref]
+    if: ${{ always() && !inputs.dry_run && needs.build-test.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+
+      - name: Prepare submission artifact
+        run: |
+          mkdir -p "submission/extensions/${{ env.EXTENSION_NAME }}"
+          cp description.yml "submission/extensions/${{ env.EXTENSION_NAME }}/description.yml"
+
+      - name: Upload submission artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: community-extension-submission
+          path: submission/
+          retention-days: 90
+
+      - name: Generate submission instructions
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << 'SUMMARY_EOF'
+          ### Phase 5: Submission Package
+
+          The submission artifact has been uploaded. Follow these steps to
+          submit to the DuckDB Community Extensions repository.
+
+          ---
+
+          #### Pre-submission checklist
+
+          - [ ] Repository is **public**: [github.com/tomtom215/duckdb-behavioral](https://github.com/tomtom215/duckdb-behavioral)
+          - [ ] `description.yml` ref points to validated commit
+          - [ ] All quality gates passed in this workflow run
+          - [ ] Extension builds and tests pass via community Makefile
+
+          #### Submission commands
+
+          ```bash
+          # 1. Fork the community-extensions repository (one-time)
+          gh repo fork duckdb/community-extensions --clone
+          cd community-extensions
+
+          # 2. Create a submission branch
+          git checkout -b add-behavioral-extension
+
+          # 3. Create the extension directory and copy description.yml
+          mkdir -p extensions/behavioral
+
+          # 4. Download the submission artifact from this workflow run,
+          #    or copy description.yml directly from the source repository:
+          cp /path/to/duckdb-behavioral/description.yml extensions/behavioral/description.yml
+
+          # 5. Commit and push
+          git add extensions/behavioral/description.yml
+          git commit -m "Add behavioral extension v${{ needs.validate.outputs.version }}"
+          git push -u origin add-behavioral-extension
+
+          # 6. Create the pull request
+          gh pr create \
+            --repo duckdb/community-extensions \
+            --title "Add behavioral extension" \
+            --body "$(cat <<'PR_EOF'
+          ## Extension: behavioral
+
+          Behavioral analytics functions for DuckDB with complete ClickHouse parity.
+
+          **Functions:** sessionize, retention, window_funnel, sequence_match,
+          sequence_count, sequence_match_events, sequence_next_node
+
+          **Repository:** https://github.com/tomtom215/duckdb-behavioral
+          **Version:** ${{ needs.validate.outputs.version }}
+          **Language:** Rust
+          **Build:** cargo
+          **License:** MIT
+
+          ### What this extension provides
+
+          Seven behavioral analytics aggregate functions inspired by ClickHouse,
+          enabling conversion funnel analysis, cohort retention, session assignment,
+          and sequential pattern matching directly in DuckDB SQL.
+
+          All functions support up to 32 boolean event conditions. Pure Rust
+          implementation with zero unsafe code in business logic.
+
+          ### Testing
+
+          - 434 unit tests + 1 doc-test
+          - 27 E2E tests against real DuckDB v1.4.4
+          - 7 SQL integration test files in test/sql/
+          - Criterion.rs benchmarks up to 1 billion elements
+
+          ### Excluded platforms
+
+          wasm_mvp, wasm_eh, wasm_threads, windows_amd64_rtools,
+          windows_amd64_mingw, linux_amd64_musl
+          PR_EOF
+          )"
+          ```
+
+          #### What happens next
+
+          1. DuckDB's community CI will clone your repository at the pinned ref
+          2. It builds the extension for all non-excluded platforms
+          3. It runs the SQL integration tests from `test/sql/`
+          4. If all checks pass, a maintainer merges the PR
+          5. Users can then install via: `INSTALL behavioral FROM community;`
+
+          #### Updating after publication
+
+          To release updates after initial publication:
+          1. Push changes to your repository
+          2. Run this workflow again (dry_run=false) to pin the new ref
+          3. Open a new PR to `duckdb/community-extensions` updating the ref field
+
+          SUMMARY_EOF
+
+  # ── Dry run summary ────────────────────────────────────────────────────
+  dry-run-summary:
+    name: Dry Run Summary
+    needs: [validate, quality-gate, build-test]
+    if: ${{ always() && inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Generate dry run report
+        run: |
+          {
+            echo "### Community Extension Submission — Dry Run Report"
+            echo ""
+            echo "| Phase | Result |"
+            echo "|---|---|"
+            echo "| Validation | ${{ needs.validate.result }} |"
+            echo "| Quality Gate | ${{ needs.quality-gate.result }} |"
+            echo "| Build & Test | ${{ needs.build-test.result }} |"
+            echo ""
+            echo "| Detail | Value |"
+            echo "|---|---|"
+            echo "| Extension | ${{ env.EXTENSION_NAME }} |"
+            echo "| Version | ${{ needs.validate.outputs.version }} |"
+            echo "| Current HEAD | \`${{ needs.validate.outputs.current_sha }}\` |"
+            echo "| Pinned ref | \`${{ needs.validate.outputs.pinned_ref }}\` |"
+            echo "| Ref matches HEAD | ${{ needs.validate.outputs.ref_is_current }} |"
+            echo ""
+
+            if [ "${{ needs.validate.result }}" = "success" ] && \
+               [ "${{ needs.quality-gate.result }}" = "success" ] && \
+               [ "${{ needs.build-test.result }}" = "success" ]; then
+              echo "**All checks passed.** Ready to run with \`dry_run=false\` to pin ref and generate submission package."
+            else
+              echo "**Some checks failed.** Review the logs above before proceeding."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

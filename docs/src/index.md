@@ -133,7 +133,7 @@ worked example, see the [Getting Started](./getting-started.md) guide.
 ### Choosing the Right Function
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a'}}}%%
 flowchart TD
     Q{What do you want<br/>to analyze?}
     Q -->|"Break events<br/>into sessions"| S["sessionize"]
@@ -145,15 +145,15 @@ flowchart TD
     SM -->|"When did each<br/>step happen?"| SME["sequence_match_events"]
     Q -->|"What happened<br/>next/before?"| SNN["sequence_next_node"]
 
-    style Q fill:#f8f9fa,stroke:#495057,stroke-width:2px,color:#000000
-    style S fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style R fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style WF fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
-    style SM fill:#f8f9fa,stroke:#495057,stroke-width:2px,color:#000000
-    style SEQ fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
-    style SC fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
-    style SME fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
-    style SNN fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
+    style Q fill:#ffffff,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style S fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style R fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style WF fill:#f0f0f0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SM fill:#ffffff,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SEQ fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SC fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SME fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SNN fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
 ```
 
 Seven functions covering the full spectrum of behavioral analytics:
@@ -219,8 +219,8 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 411 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
-| **Performance** | Fourteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
+| **Testing Rigor** | 434 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
+| **Performance** | Fifteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | Raw DuckDB C API integration via custom entry point. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
 | **CI/CD** | 13 CI jobs, 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |

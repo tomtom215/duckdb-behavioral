@@ -34,18 +34,22 @@ add_header_hash() {
     tmp=$(mktemp)
     # Preserve shebang if present
     if head -1 "$file" | grep -q '^#!'; then
-        head -1 "$file" > "$tmp"
-        echo "# SPDX-License-Identifier: MIT" >> "$tmp"
-        echo "# Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL})" >> "$tmp"
-        tail -n +2 "$file" >> "$tmp"
+        {
+            head -1 "$file"
+            echo "# SPDX-License-Identifier: MIT"
+            echo "# Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL})"
+            tail -n +2 "$file"
+        } > "$tmp"
     else
-        echo "# SPDX-License-Identifier: MIT" > "$tmp"
-        echo "# Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL})" >> "$tmp"
-        # Add blank line separator if file doesn't start with blank line or comment
-        if head -1 "$file" | grep -qvE '^(#|$)'; then
-            echo "" >> "$tmp"
-        fi
-        cat "$file" >> "$tmp"
+        {
+            echo "# SPDX-License-Identifier: MIT"
+            echo "# Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL})"
+            # Add blank line separator if file doesn't start with blank line or comment
+            if head -1 "$file" | grep -qvE '^(#|$)'; then
+                echo ""
+            fi
+            cat "$file"
+        } > "$tmp"
     fi
     cp "$tmp" "$file"
     rm "$tmp"
@@ -88,14 +92,18 @@ add_header_html() {
     tmp=$(mktemp)
     # Preserve DOCTYPE/html tag if present on line 1
     if head -1 "$file" | grep -qi '<!doctype\|<html'; then
-        head -1 "$file" > "$tmp"
-        echo "<!-- SPDX-License-Identifier: MIT -->" >> "$tmp"
-        echo "<!-- Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL}) -->" >> "$tmp"
-        tail -n +2 "$file" >> "$tmp"
+        {
+            head -1 "$file"
+            echo "<!-- SPDX-License-Identifier: MIT -->"
+            echo "<!-- Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL}) -->"
+            tail -n +2 "$file"
+        } > "$tmp"
     else
-        echo "<!-- SPDX-License-Identifier: MIT -->" > "$tmp"
-        echo "<!-- Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL}) -->" >> "$tmp"
-        cat "$file" >> "$tmp"
+        {
+            echo "<!-- SPDX-License-Identifier: MIT -->"
+            echo "<!-- Copyright (c) ${YEAR} ${COPYRIGHT_HOLDER} (${REPO_URL}) -->"
+            cat "$file"
+        } > "$tmp"
     fi
     cp "$tmp" "$file"
     rm "$tmp"

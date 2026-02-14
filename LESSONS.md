@@ -93,7 +93,7 @@ Accumulated from past development sessions. Consult before beginning any work.
 
 49. **E2E testing against real DuckDB is non-negotiable**: Unit tests alone missed
     3 critical bugs: SEGFAULT on load, 6 functions failing to register, and
-    `window_funnel` returning wrong results. All 411 unit tests passed while the
+    `window_funnel` returning wrong results. All 434 unit tests passed while the
     extension was completely broken in production. Unit tests validate business
     logic in isolation; E2E tests validate the FFI boundary, DuckDB's data chunk
     format, state lifecycle management, and the extension loading mechanism. Both
