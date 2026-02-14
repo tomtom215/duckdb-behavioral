@@ -133,6 +133,7 @@ worked example, see the [Getting Started](./getting-started.md) guide.
 ### Choosing the Right Function
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000'}}}%%
 flowchart TD
     Q{What do you want<br/>to analyze?}
     Q -->|"Break events<br/>into sessions"| S["sessionize"]
@@ -144,13 +145,15 @@ flowchart TD
     SM -->|"When did each<br/>step happen?"| SME["sequence_match_events"]
     Q -->|"What happened<br/>next/before?"| SNN["sequence_next_node"]
 
-    style S fill:#c8e6c9,stroke:#2e7d32,color:#1a1a1a
-    style R fill:#bbdefb,stroke:#1565c0,color:#1a1a1a
-    style WF fill:#ffe0b2,stroke:#e65100,color:#1a1a1a
-    style SEQ fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
-    style SC fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
-    style SME fill:#ffcdd2,stroke:#c62828,color:#1a1a1a
-    style SNN fill:#e1bee7,stroke:#6a1b9a,color:#1a1a1a
+    style Q fill:#f8f9fa,stroke:#495057,stroke-width:2px,color:#000000
+    style S fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
+    style R fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
+    style WF fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
+    style SM fill:#f8f9fa,stroke:#495057,stroke-width:2px,color:#000000
+    style SEQ fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style SC fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style SME fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style SNN fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
 ```
 
 Seven functions covering the full spectrum of behavioral analytics:

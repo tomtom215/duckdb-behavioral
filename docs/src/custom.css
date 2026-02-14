@@ -103,120 +103,167 @@ blockquote {
 /* ── Mermaid Diagram Contrast Fix ──────────────────────────────────────
  * Forces high-contrast text and borders on all Mermaid diagram elements.
  * Ensures readability in both light (default) and dark (navy/coal) themes.
- * Without these overrides, Mermaid's default pastel fills produce
- * unreadable text — especially in dark mode.
+ *
+ * Mermaid renders labels inside <foreignObject> HTML elements within SVG,
+ * so we must target both SVG <text> (via fill) and HTML <div>/<span>
+ * (via color) to guarantee coverage across all rendering paths.
+ *
+ * The %%{init: {'theme': 'base', ...}}%% directives in each diagram
+ * control mermaid's internal rendering. These CSS rules serve as a
+ * defense-in-depth layer ensuring readability regardless of theme.
  */
 
-/* Force all mermaid text to be dark (readable against pastel fills) */
-.mermaid text,
+/* ── SVG text elements ─────────────────────────────────────────────── */
+.mermaid text {
+    fill: #000000 !important;
+}
+
+/* ── HTML labels inside foreignObject (mermaid's primary label path) ─ */
+.mermaid foreignObject div,
+.mermaid foreignObject span,
+.mermaid foreignObject p,
 .mermaid .nodeLabel,
 .mermaid .edgeLabel,
 .mermaid .label,
 .mermaid .cluster-label,
-.mermaid span {
-    color: #1a1a1a !important;
-    fill: #1a1a1a !important;
+.mermaid .edgeLabel span,
+.mermaid .edgeLabel p {
+    color: #000000 !important;
+    fill: #000000 !important;
 }
 
-/* Ensure node borders are visible */
+/* ── Node shapes: visible borders ──────────────────────────────────── */
 .mermaid .node rect,
 .mermaid .node circle,
 .mermaid .node polygon,
-.mermaid .node path {
-    stroke: #444 !important;
+.mermaid .node path,
+.mermaid .node .label-container {
+    stroke: #495057 !important;
     stroke-width: 2px !important;
 }
 
-/* Subgraph/cluster labels and borders */
+/* ── Subgraph/cluster labels and borders ───────────────────────────── */
 .mermaid .cluster rect {
-    stroke: #666 !important;
+    stroke: #495057 !important;
     stroke-width: 2px !important;
     rx: 4px !important;
     ry: 4px !important;
 }
 
 .mermaid .cluster text,
-.mermaid .cluster span {
-    fill: #1a1a1a !important;
-    color: #1a1a1a !important;
+.mermaid .cluster span,
+.mermaid .cluster foreignObject div {
+    fill: #000000 !important;
+    color: #000000 !important;
     font-weight: 600 !important;
 }
 
-/* Edge/arrow lines */
-.mermaid .edgePath path {
-    stroke: #555 !important;
+/* ── Edge/arrow lines ──────────────────────────────────────────────── */
+.mermaid .edgePath path,
+.mermaid .flowchart-link {
+    stroke: #495057 !important;
     stroke-width: 2px !important;
 }
 
-/* Arrow markers */
+/* ── Arrow markers ─────────────────────────────────────────────────── */
 .mermaid marker path {
-    fill: #555 !important;
+    fill: #495057 !important;
 }
 
-/* Edge labels background for readability */
-.mermaid .edgeLabel rect {
-    fill: #fff !important;
-    opacity: 0.9 !important;
+/* ── Edge labels: white background for readability ─────────────────── */
+.mermaid .edgeLabel rect,
+.mermaid .edgeLabel .label-container {
+    fill: #ffffff !important;
+    opacity: 0.95 !important;
 }
 
-/* State diagram specifics */
-.mermaid .statediagram-state rect {
-    stroke: #444 !important;
+/* ── State diagram specifics ───────────────────────────────────────── */
+.mermaid .statediagram-state rect,
+.mermaid .stateGroup rect {
+    stroke: #495057 !important;
     stroke-width: 2px !important;
 }
 
-.mermaid .statediagram-state .state-title {
-    fill: #1a1a1a !important;
+.mermaid .statediagram-state .state-title,
+.mermaid .stateGroup text {
+    fill: #000000 !important;
     font-weight: 600 !important;
 }
 
-/* Decision diamond (rhombus) text */
-.mermaid .node .label {
-    color: #1a1a1a !important;
+/* State diagram transition labels */
+.mermaid .transition text,
+.mermaid .stateLabel text {
+    fill: #000000 !important;
 }
 
-/* Note boxes in state diagrams */
+/* ── Decision diamond (rhombus) text ───────────────────────────────── */
+.mermaid .node .label {
+    color: #000000 !important;
+}
+
+/* ── Note boxes in state diagrams ──────────────────────────────────── */
 .mermaid .note {
     fill: #fff9c4 !important;
     stroke: #c8a415 !important;
 }
 
-.mermaid .note text {
-    fill: #333 !important;
+.mermaid .note text,
+.mermaid .note foreignObject div {
+    fill: #000000 !important;
+    color: #000000 !important;
 }
 
-/* ── Dark theme overrides ──────────────────────────────────────────────
- * In mdBook's navy and coal themes, override mermaid background fills
- * to use lighter, more saturated colors with guaranteed contrast.
- */
+/* ── Dark theme (navy/coal) overrides ──────────────────────────────── */
+
+/* SVG text */
 .navy .mermaid text,
+.coal .mermaid text {
+    fill: #000000 !important;
+}
+
+/* HTML labels inside foreignObject */
+.navy .mermaid foreignObject div,
+.navy .mermaid foreignObject span,
 .navy .mermaid .nodeLabel,
 .navy .mermaid .edgeLabel,
 .navy .mermaid .label,
-.navy .mermaid span,
-.coal .mermaid text,
+.navy .mermaid .cluster-label,
+.coal .mermaid foreignObject div,
+.coal .mermaid foreignObject span,
 .coal .mermaid .nodeLabel,
 .coal .mermaid .edgeLabel,
 .coal .mermaid .label,
-.coal .mermaid span {
-    color: #1a1a1a !important;
-    fill: #1a1a1a !important;
+.coal .mermaid .cluster-label {
+    color: #000000 !important;
+    fill: #000000 !important;
 }
 
+/* Edges and arrows: slightly lighter for dark backgrounds */
 .navy .mermaid .edgePath path,
-.coal .mermaid .edgePath path {
-    stroke: #888 !important;
+.navy .mermaid .flowchart-link,
+.coal .mermaid .edgePath path,
+.coal .mermaid .flowchart-link {
+    stroke: #6c757d !important;
 }
 
 .navy .mermaid marker path,
 .coal .mermaid marker path {
-    fill: #888 !important;
+    fill: #6c757d !important;
 }
 
+/* Edge label backgrounds: light gray for dark themes */
 .navy .mermaid .edgeLabel rect,
-.coal .mermaid .edgeLabel rect {
-    fill: #e8e8e8 !important;
+.navy .mermaid .edgeLabel .label-container,
+.coal .mermaid .edgeLabel rect,
+.coal .mermaid .edgeLabel .label-container {
+    fill: #e9ecef !important;
     opacity: 0.95 !important;
+}
+
+/* Cluster/subgraph borders: lighter for dark themes */
+.navy .mermaid .cluster rect,
+.coal .mermaid .cluster rect {
+    stroke: #6c757d !important;
 }
 
 /* ── Mobile responsiveness ───────────────────────────────────────────

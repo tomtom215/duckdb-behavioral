@@ -18,6 +18,12 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
+    ignore:
+      # dtolnay/rust-toolchain uses branch refs (e.g., @stable, @1.80) that
+      # correspond to Rust versions, not action versions. Dependabot
+      # misidentifies these as outdated action versions and proposes
+      # upgrades to nonexistent Rust releases (e.g., @1.100).
+      - dependency-name: "dtolnay/rust-toolchain"
 
   # Keep Rust (Cargo) dependencies up to date.
   - package-ecosystem: "cargo"

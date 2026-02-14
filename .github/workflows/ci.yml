@@ -226,10 +226,18 @@ jobs:
             echo "### Test Results (${{ matrix.os }})"
             echo ""
             if [ -f target/nextest/ci/junit.xml ]; then
-              TOTAL=$(grep -oP 'tests="\K[0-9]+' target/nextest/ci/junit.xml 2>/dev/null || grep -o 'tests="[0-9]*"' target/nextest/ci/junit.xml | head -1 | tr -dc '0-9')
-              echo "✅ ${TOTAL} tests passed on ${{ matrix.os }}."
+              # Extract test count portably (works on both Linux and macOS)
+              TOTAL=$(grep -o 'tests="[0-9]*"' target/nextest/ci/junit.xml | head -1 | tr -dc '0-9')
+              FAILURES=$(grep -o 'failures="[0-9]*"' target/nextest/ci/junit.xml | head -1 | tr -dc '0-9')
+              if [ -z "$TOTAL" ]; then
+                echo "JUnit XML found but could not parse test counts."
+              elif [ "${FAILURES:-0}" = "0" ]; then
+                echo "✅ ${TOTAL} tests passed on ${{ matrix.os }}."
+              else
+                echo "❌ ${FAILURES} failures out of ${TOTAL} tests on ${{ matrix.os }}."
+              fi
             else
-              echo "⚠️ JUnit XML not found."
+              echo "JUnit XML not found at target/nextest/ci/junit.xml."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -242,6 +250,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@1.80
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: msrv-1.80
       - name: Check MSRV compilation
         id: msrv-check
         run: cargo check --all-targets
@@ -352,6 +362,7 @@ jobs:
       - name: Generate coverage report
         run: cargo tarpaulin --out xml --out html --skip-clean 2>&1 | tee coverage-output.txt
       - name: Upload to Codecov
+        if: always()
         uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
         with:
           files: cobertura.xml
@@ -372,11 +383,31 @@ jobs:
           {
             echo "### Code Coverage"
             echo ""
-            COVERAGE=$(grep -oP '\d+\.\d+% coverage' coverage-output.txt | tail -1 || echo "unknown")
-            if [ "$COVERAGE" != "unknown" ]; then
-              echo "Line coverage: **${COVERAGE}**"
+            if [ -f coverage-output.txt ]; then
+              # Try Perl regex first (Linux), fall back to extended regex
+              COVERAGE=$(grep -oP '\d+\.\d+% coverage' coverage-output.txt 2>/dev/null | tail -1 || \
+                         grep -oE '[0-9]+\.[0-9]+% coverage' coverage-output.txt 2>/dev/null | tail -1 || \
+                         echo "")
+              if [ -n "$COVERAGE" ]; then
+                echo "Line coverage: **${COVERAGE}**"
+              else
+                echo "Coverage report generated but percentage not parsed."
+                echo ""
+                echo "<details><summary>Raw output (last 10 lines)</summary>"
+                echo ""
+                echo '```'
+                tail -10 coverage-output.txt
+                echo '```'
+                echo "</details>"
+              fi
             else
-              echo "⚠️ Coverage data not available. Check logs for details."
+              echo "Coverage output not captured. Check job logs for details."
+            fi
+            echo ""
+            if [ -f cobertura.xml ]; then
+              echo "Artifacts: cobertura.xml, tarpaulin-report.html"
+            else
+              echo "No coverage artifacts produced."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

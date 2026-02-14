@@ -207,6 +207,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          key: release-test-${{ matrix.platform }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -237,11 +239,20 @@ jobs:
 
       - name: Collect release artifacts
         run: |
+          set -euo pipefail
           mkdir -p release
           find artifacts -name '*.tar.gz' -exec cp {} release/ \;
+
+          # Validate at least one artifact was collected
+          ARTIFACT_COUNT=$(find release -name '*.tar.gz' | wc -l)
+          if [ "$ARTIFACT_COUNT" -eq 0 ]; then
+            echo "::error::No release artifacts found. All platform builds may have failed."
+            exit 1
+          fi
+
           cd release
           sha256sum *.tar.gz > SHA256SUMS.txt
-          echo "=== Release artifacts ==="
+          echo "=== Release artifacts ($ARTIFACT_COUNT files) ==="
           cat SHA256SUMS.txt
 
       - name: Determine release type
