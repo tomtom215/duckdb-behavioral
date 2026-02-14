@@ -118,7 +118,7 @@ The pattern engine (`src/pattern/`) compiles pattern strings into a structured
 AST and executes them via an NFA.
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a'}}}%%
 flowchart LR
     SQL["SQL Pattern String<br/>'(?1).*(?t<=3600)(?2)'"]
     PARSE["Recursive Descent<br/>Parser"]
@@ -135,14 +135,14 @@ flowchart LR
     WC --> RES
     NFA --> RES
 
-    style SQL fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style PARSE fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style CP fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
-    style CLASS fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
-    style ADJ fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style WC fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style NFA fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
-    style RES fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
+    style SQL fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style PARSE fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style CP fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style CLASS fill:#ffffff,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style ADJ fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style WC fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style NFA fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style RES fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
 ```
 
 ### Parser
@@ -183,7 +183,7 @@ DuckDB's segment tree windowing calls `combine` O(n log n) times. The combine
 implementation is the dominant cost for event-collecting functions.
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'clusterBkg': '#f8f9fa', 'clusterBorder': '#495057'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a', 'clusterBkg': '#f5f5f5', 'clusterBorder': '#333333'}}}%%
 flowchart TB
     subgraph "DuckDB Segment Tree"
         R["Root State"]
@@ -207,16 +207,16 @@ flowchart TB
         SORT -->|"scan / match"| OUT["Result"]
     end
 
-    style R fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style L1 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style L2 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style L3 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style L4 fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style T fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
-    style S fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
-    style M fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style SORT fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
-    style OUT fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
+    style R fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style L1 fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style L2 fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style L3 fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style L4 fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style T fill:#f0f0f0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style S fill:#f0f0f0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style M fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SORT fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style OUT fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
 ```
 
 | Function | Combine Strategy | Complexity |

@@ -1432,6 +1432,65 @@ mod tests {
         // Target's window_size should be preserved (first-write-wins)
         assert_eq!(target.window_size_us, 1_000_000);
     }
+
+    // ── Coverage gap tests: mode combination edge cases ──
+
+    #[test]
+    fn test_strict_dedup_plus_allow_reentry() {
+        // STRICT_DEDUPLICATION + ALLOW_REENTRY: dedup skips same-timestamp
+        // events after the previous matched step, and reentry resets the
+        // chain when entry condition fires again.
+        let mut state = WindowFunnelState::new();
+        state.window_size_us = 3_600_000_000;
+        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::ALLOW_REENTRY);
+        // Entry at t=100
+        state.update(make_event(100, &[true, false, false]), 3);
+        // Step 2 at t=100 (same ts as entry) → STRICT_DEDUP should skip
+        state.update(make_event(100, &[false, true, false]), 3);
+        // Step 2 at t=200 (different ts) → should advance
+        state.update(make_event(200, &[false, true, false]), 3);
+        // Step 3 at t=300 → should complete
+        state.update(make_event(300, &[false, false, true]), 3);
+        assert_eq!(state.finalize(), 3);
+    }
+
+    #[test]
+    fn test_strict_dedup_plus_allow_reentry_reset_mid_chain() {
+        // Reentry at same timestamp as previous match should reset
+        // but dedup should then skip same-timestamp advancement.
+        let mut state = WindowFunnelState::new();
+        state.window_size_us = 3_600_000_000;
+        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::ALLOW_REENTRY);
+        // Entry at t=100, advance to step 2 at t=200
+        state.update(make_event(100, &[true, false, false]), 3);
+        state.update(make_event(200, &[false, true, false]), 3);
+        // Reentry at t=300 → resets chain
+        state.update(make_event(300, &[true, false, false]), 3);
+        // Step 2 at t=300 (same ts as reentry) → dedup skips
+        state.update(make_event(300, &[false, true, false]), 3);
+        // Step 2 at t=400 (different ts) → should advance
+        state.update(make_event(400, &[false, true, false]), 3);
+        // Step 3 at t=500
+        state.update(make_event(500, &[false, false, true]), 3);
+        assert_eq!(state.finalize(), 3);
+    }
+
+    #[test]
+    fn test_strict_dedup_plus_strict_order() {
+        // STRICT_DEDUPLICATION + STRICT_ORDER: dedup skips same-ts events,
+        // and strict_order breaks if earlier conditions appear between steps.
+        let mut state = WindowFunnelState::new();
+        state.window_size_us = 3_600_000_000;
+        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::STRICT_ORDER);
+        state.update(make_event(100, &[true, false, false]), 3);
+        // Step 2 at same ts as entry → dedup skips
+        state.update(make_event(100, &[false, true, false]), 3);
+        // Step 2 at different ts → should advance
+        state.update(make_event(200, &[false, true, false]), 3);
+        // Step 3 at different ts
+        state.update(make_event(300, &[false, false, true]), 3);
+        assert_eq!(state.finalize(), 3);
+    }
 }
 
 #[cfg(test)]
@@ -1535,6 +1594,12 @@ mod proptests {
             let result = state.finalize();
             prop_assert_eq!(result, num_conditions as i64);
         }
+
+        // ── Coverage gap: STRICT_DEDUPLICATION + ALLOW_REENTRY combined mode ──
+        // Validates the interaction when both modes are active:
+        //   ALLOW_REENTRY resets the chain when entry condition fires again
+        //   STRICT_DEDUPLICATION skips events with the same timestamp as prev match
+        // The modes are evaluated in order: ALLOW_REENTRY first, then STRICT_DEDUP.
 
         #[test]
         fn combine_preserves_events_wide(

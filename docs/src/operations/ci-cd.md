@@ -13,7 +13,7 @@ ensure code quality across multiple dimensions.
 | Job | Purpose | Tool |
 |-----|---------|------|
 | **check** | Verify compilation | `cargo check --all-targets` |
-| **test** | Run 411 unit tests + 1 doc-test | `cargo test` |
+| **test** | Run 434 unit tests + 1 doc-test | `cargo test` |
 | **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
 | **fmt** | Formatting verification | `cargo fmt --check` |
 | **doc** | Documentation builds without warnings | `cargo doc` with `-Dwarnings` |

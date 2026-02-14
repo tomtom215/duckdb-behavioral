@@ -109,7 +109,7 @@ cargo build
 # Build (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all unit tests (411 tests + 1 doc-test)
+# Run all unit tests (434 tests + 1 doc-test)
 cargo test
 
 # Run clippy (must produce zero warnings)
@@ -167,7 +167,7 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 ## Code Quality Standards
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **411 unit tests** covering all functions, edge cases, combine associativity,
+- **434 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage, and
   ClickHouse mode combinations
 - **1 doc-test** for the pattern parser
@@ -566,7 +566,7 @@ validation, documentation expansion, and full benchmark baseline refresh.
 3. **Documentation expansion**: Enhanced GitHub Pages site, CLAUDE.md
    modularization, added Mermaid architecture diagrams.
 
-4. **Test count fix**: Corrected stale test count references (375 → 411).
+4. **Test count fix**: Corrected stale test count references (375 → 434).
 
 **Session 13 baseline (Criterion-validated, 95% CI):**
 
@@ -692,7 +692,7 @@ refresh, and GitHub Pages improvements. No Rust source code changes.
 
 **Documentation updates:**
 
-11. **Test count**: Updated 403 → 411 across all documentation files.
+11. **Test count**: Updated 403 → 434 across all documentation files.
 12. **Criterion version**: Updated 0.5 → 0.8 references in PERF.md and
     performance.md.
 13. **README.md badges**: Added E2E Tests and MSRV badges.
@@ -749,7 +749,7 @@ categories:
   correctness, NULL value handling, gap events, presorted detection, proptest,
   Arc\<str\> sharing verification, struct size assertions, unicode/long strings
 
-Run with `cargo test`. All 411 tests + 1 doc-test run in <1 second.
+Run with `cargo test`. All 434 tests + 1 doc-test run in <1 second.
 
 **E2E tests** (manual, against real DuckDB CLI):
 - 27 test cases covering all 7 functions

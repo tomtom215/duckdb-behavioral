@@ -39,5 +39,5 @@ docs:
     - **sequence_next_node**: Find the next event value after a pattern match
 
     All functions support up to 32 boolean event conditions. Pure Rust implementation
-    with zero unsafe code in business logic. Benchmarked at 826 Melem/s (sessionize)
-    and 105 Melem/s (sequence_match) on commodity hardware.
+    with zero unsafe code in business logic. Benchmarked at 830 Melem/s (sessionize)
+    and 95 Melem/s (sequence_match) on commodity hardware.

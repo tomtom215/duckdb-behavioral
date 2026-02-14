@@ -25,7 +25,7 @@ programming). In the interest of full transparency and academic rigor, the
 following safeguards ensure that AI assistance does not compromise correctness,
 reproducibility, or trustworthiness:
 
-- **411 unit tests + 1 doc-test** covering all functions, edge cases, combine
+- **434 unit tests + 1 doc-test** covering all functions, edge cases, combine
   associativity, property-based testing (proptest), and mutation-testing-guided
   coverage. All tests run in under 1 second via `cargo test`.
 - **27 end-to-end SQL tests** against a real DuckDB v1.4.4 instance validating
@@ -302,7 +302,7 @@ cargo build --release
 
 ## Performance
 
-Fourteen sessions of measured, Criterion-validated optimizations and feature work:
+Fifteen sessions of measured, Criterion-validated optimizations and feature work:
 
 **Session 1 — Event Bitmask**: Bitmask replaces `Vec<bool>` per event,
 eliminating heap allocation and enabling `Copy` semantics (5-13x speedup).
@@ -357,6 +357,10 @@ release validation, expanded documentation, refreshed all benchmark baselines.
 safety, defensive FFI (no-panic entry point, `*const u8` boolean reading, null
 byte handling), 16 new E2E tests, pinned GitHub Actions to commit SHAs.
 
+**Session 15 — Enterprise Quality Standards**: Dependency consolidation
+(Criterion 0.5 to 0.8.2, rand 0.8 to 0.9.2), GitHub Pages mermaid contrast
+fixes, documentation polish, and full benchmark baseline refresh.
+
 **Headline numbers (Criterion 0.8.2, 95% CI):**
 
 | Function | Scale | Wall Clock | Throughput |
@@ -395,7 +399,7 @@ repository. Every item must be verified with zero exceptions.
   pinned to a commit compatible with DuckDB v1.4.4.
 - [x] **Step 2: Verify the Makefile build chain locally** — `make configure &&
   make release && make test_release` passes all 7 SQL test files.
-- [x] **Step 3: Verify all unit tests pass** — `cargo test` (411 + 1 doc-test),
+- [x] **Step 3: Verify all unit tests pass** — `cargo test` (434 + 1 doc-test),
   `cargo clippy --all-targets` (zero warnings), `cargo fmt -- --check` (clean).
 
 ### Remaining Steps
@@ -494,7 +498,7 @@ for the full SemVer rules applied to SQL function signatures.
 ## Development
 
 ```bash
-# Run tests (411 unit tests + 1 doc-test)
+# Run tests (434 unit tests + 1 doc-test)
 cargo test
 
 # Run clippy (zero warnings required)

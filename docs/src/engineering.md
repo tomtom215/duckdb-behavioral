@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 411 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 434 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -37,7 +37,7 @@ The codebase enforces a strict separation between business logic and FFI
 integration:
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'mainBkg': '#f8f9fa', 'clusterBkg': '#f8f9fa', 'clusterBorder': '#495057'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a', 'mainBkg': '#ffffff', 'clusterBkg': '#f5f5f5', 'clusterBorder': '#333333'}}}%%
 graph TB
     subgraph "DuckDB Process"
         DDB[DuckDB Engine]
@@ -89,25 +89,25 @@ graph TB
     SQ --> EV
     SN --> EV
 
-    style EP fill:#e2d9f3,stroke:#6f42c1,stroke-width:2px,color:#000000
-    style DDB fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style SEG fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style REG fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
-    style FS fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
-    style FR fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
-    style FW fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
-    style FQ fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
-    style FE fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
-    style FN fill:#ffe5b4,stroke:#e65100,stroke-width:2px,color:#000000
-    style SS fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style SR fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style SW fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style SQ fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style SN fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style PP fill:#e8f5e9,stroke:#198754,stroke-width:2px,color:#000000
-    style PE fill:#e8f5e9,stroke:#198754,stroke-width:2px,color:#000000
-    style EV fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
-    style TS fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
+    style EP fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style DDB fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SEG fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style REG fill:#f0f0f0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FS fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FR fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FW fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FQ fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FE fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FN fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SS fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SR fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SW fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SQ fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style SN fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style PP fill:#ffffff,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style PE fill:#ffffff,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style EV fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style TS fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
 ```
 
 - **Business logic** (`src/*.rs`, `src/common/`, `src/pattern/`): Pure safe
@@ -131,7 +131,7 @@ graph TB
 This architecture enables:
 
 - **Independent unit testing**: Business logic tests run in < 1 second with no
-  DuckDB instance. All 411 tests exercise Rust structs directly.
+  DuckDB instance. All 434 tests exercise Rust structs directly.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
   is decoupled from the database.
@@ -146,22 +146,22 @@ This architecture enables:
 ### The Test Pyramid
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'clusterBkg': '#f8f9fa', 'clusterBorder': '#495057'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a', 'clusterBkg': '#f5f5f5', 'clusterBorder': '#333333'}}}%%
 graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
         L2["E2E Tests (27)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
-        L1["Unit Tests (411)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
+        L1["Unit Tests (434)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
     end
 
-    style L1 fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style L2 fill:#fff9c4,stroke:#c8a415,stroke-width:2px,color:#000000
-    style L3 fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style L2 fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style L3 fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
 ```
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (411 tests)**
+**Level 1: Unit Tests (434 tests)**
 
 Organized by category within each module:
 
@@ -181,7 +181,7 @@ Organized by category within each module:
 
 Integration tests against a real DuckDB CLI instance that validate the complete
 chain: extension loading, function registration, SQL execution, and result
-correctness. These tests caught three critical bugs that all 411 unit tests
+correctness. These tests caught three critical bugs that all 434 unit tests
 missed:
 
 1. A segmentation fault on extension load (incorrect pointer arithmetic)
@@ -228,7 +228,7 @@ Every performance claim in this project is backed by:
 
 ### Optimization History
 
-Fourteen sessions of measured optimization, each following a documented protocol:
+Fifteen sessions of measured optimization, each following a documented protocol:
 
 1. Establish baseline with 3 Criterion runs
 2. Implement one optimization per commit
@@ -314,7 +314,7 @@ registration. This project uses the raw C API (`libduckdb-sys`) directly,
 implementing five callback functions per aggregate:
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#cfe2ff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#0d6efd', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000', 'noteBkgColor': '#fff9c4', 'noteTextColor': '#000000', 'noteBorderColor': '#c8a415', 'labelTextColor': '#000000', 'transitionColor': '#495057'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f5f5f5', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#e8e8e8', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a', 'noteBkgColor': '#e8e8e8', 'noteTextColor': '#1a1a1a', 'noteBorderColor': '#333333', 'labelTextColor': '#1a1a1a', 'transitionColor': '#333333'}}}%%
 stateDiagram-v2
     [*] --> state_size: DuckDB queries state byte size
 
@@ -358,7 +358,7 @@ The sequence functions use a custom NFA (Nondeterministic Finite Automaton)
 pattern engine:
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f8f9fa', 'primaryTextColor': '#000000', 'primaryBorderColor': '#495057', 'lineColor': '#495057', 'secondaryColor': '#e9ecef', 'tertiaryColor': '#dee2e6', 'textColor': '#000000'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a'}}}%%
 flowchart LR
     SQL["Pattern String<br/>'(?1).*(?t<=3600)(?2)'"] --> PARSE["Recursive Descent<br/>Parser"]
     PARSE --> STEPS["CompiledPattern<br/>Condition(1), AnyEvents,<br/>TimeConstraint(<=, 3600),<br/>Condition(2)"]
@@ -367,13 +367,13 @@ flowchart LR
     CLASS -->|"Wildcard-separated"| FAST2["O(n) Linear<br/>Scan"]
     CLASS -->|"Time constraints<br/>or mixed"| NFA["NFA<br/>Backtracking"]
 
-    style SQL fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#000000
-    style PARSE fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style STEPS fill:#fff3cd,stroke:#e65100,stroke-width:2px,color:#000000
-    style CLASS fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
-    style FAST1 fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style FAST2 fill:#d1e7dd,stroke:#198754,stroke-width:2px,color:#000000
-    style NFA fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#000000
+    style SQL fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style PARSE fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style STEPS fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style CLASS fill:#ffffff,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FAST1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FAST2 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style NFA fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
 ```
 
 - A **recursive descent parser** that compiles pattern strings (e.g.,
@@ -399,7 +399,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 411 |
+| Unit tests | 434 |
 | Doc-tests | 1 |
 | E2E tests | 27 |
 | Property-based tests | 26 (proptest) |

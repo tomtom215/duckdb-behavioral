@@ -1372,6 +1372,96 @@ mod tests {
         assert_eq!(combined.num_steps, 4);
         assert_eq!(combined.events.len(), 1);
     }
+
+    // ── Coverage gap: direction × base edge cases ──
+
+    #[test]
+    fn test_backward_tail_single_match_with_previous() {
+        // Backward + Tail with a single matching sequence where the event
+        // before the match should be returned.
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Backward);
+        state.base = Some(Base::Tail);
+        state.num_steps = 1;
+        state.update(make_event(1, "A", false, &[false]));
+        state.update(make_event(2, "B", true, &[true])); // base + event1
+        state.update(make_event(3, "C", false, &[false]));
+        // Backward from tail: last base_condition is B at pos 1
+        // event1 matches at B, backward → event before B = A
+        assert_eq!(state.finalize(), Some("A".to_string()));
+    }
+
+    #[test]
+    fn test_backward_tail_match_at_start_no_previous() {
+        // Backward + Tail: match at first position, no previous event.
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Backward);
+        state.base = Some(Base::Tail);
+        state.num_steps = 1;
+        state.update(make_event(1, "A", true, &[true])); // base + event1 at pos 0
+        state.update(make_event(2, "B", false, &[false]));
+        // Backward from tail: last base is A at pos 0, no event before → None
+        assert_eq!(state.finalize(), None);
+    }
+
+    #[test]
+    fn test_no_base_condition_events_returns_none() {
+        // No events have base_condition=true → no match possible.
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Forward);
+        state.base = Some(Base::FirstMatch);
+        state.num_steps = 1;
+        state.update(make_event(1, "A", false, &[true]));
+        state.update(make_event(2, "B", false, &[true]));
+        // base_condition is false for all events
+        assert_eq!(state.finalize(), None);
+    }
+
+    #[test]
+    fn test_backward_last_match_unsorted_input() {
+        // Unsorted events should be sorted before matching.
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Backward);
+        state.base = Some(Base::LastMatch);
+        state.num_steps = 1;
+        // Insert out of order
+        state.update(make_event(3, "C", false, &[false]));
+        state.update(make_event(1, "A", true, &[true])); // base + event1
+        state.update(make_event(2, "B", false, &[false]));
+        // After sort: A(1) → B(2) → C(3)
+        // LastMatch backward: last base at pos 0 (A), event1 at pos 0
+        // backward → event before pos 0 = None
+        assert_eq!(state.finalize(), None);
+    }
+
+    #[test]
+    fn test_forward_head_two_step_match_at_end() {
+        // Forward + Head: match completes at last event, no next event.
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Forward);
+        state.base = Some(Base::Head);
+        state.num_steps = 2;
+        state.update(make_event(1, "A", true, &[true, false])); // base + event1
+        state.update(make_event(2, "B", false, &[false, true])); // event2 (last)
+                                                                 // Match completes at B (pos 1), no next event → None
+        assert_eq!(state.finalize(), None);
+    }
+
+    #[test]
+    fn test_backward_head_multi_base_conditions() {
+        // Multiple base_condition events: Head uses the first one.
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Backward);
+        state.base = Some(Base::Head);
+        state.num_steps = 1;
+        state.update(make_event(1, "A", false, &[false]));
+        state.update(make_event(2, "B", true, &[true])); // first base
+        state.update(make_event(3, "C", true, &[true])); // second base
+        state.update(make_event(4, "D", false, &[false]));
+        // Head backward: first base at B (pos 1), event1 at pos 1
+        // backward → event before pos 1 = A
+        assert_eq!(state.finalize(), Some("A".to_string()));
+    }
 }
 
 #[cfg(test)]
