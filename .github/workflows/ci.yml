@@ -34,11 +34,12 @@ jobs:
         with:
           components: rustfmt
       - name: Check formatting
+        id: fmt-check
         run: cargo fmt --all -- --check
       - name: Summary
         if: always()
         run: |
-          if [ $? -eq 0 ]; then
+          if [ "${{ steps.fmt-check.outcome }}" = "success" ]; then
             echo "### ✅ Format Check Passed" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### ❌ Format Check Failed" >> "$GITHUB_STEP_SUMMARY"
@@ -87,10 +88,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - name: Compile check (all targets)
+        id: cargo-check
         run: cargo check --all-targets
       - name: Summary
         if: always()
-        run: echo "### ✅ Compilation check passed" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          if [ "${{ steps.cargo-check.outcome }}" = "success" ]; then
+            echo "### ✅ Compilation check passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Compilation check failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   doc:
     name: Documentation
@@ -103,10 +110,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - name: Build documentation
+        id: cargo-doc
         run: cargo doc --no-deps --document-private-items
       - name: Summary
         if: always()
-        run: echo "### ✅ Documentation builds without warnings" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          if [ "${{ steps.cargo-doc.outcome }}" = "success" ]; then
+            echo "### ✅ Documentation builds without warnings" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Documentation build failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # ── Test suite (structured output via cargo-nextest) ──────────────────
   test:
@@ -230,10 +243,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.80
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - name: Check MSRV compilation
+        id: msrv-check
         run: cargo check --all-targets
       - name: Summary
         if: always()
-        run: echo "### ✅ MSRV 1.80 compilation verified" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          if [ "${{ steps.msrv-check.outcome }}" = "success" ]; then
+            echo "### ✅ MSRV 1.80 compilation verified" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ MSRV 1.80 compilation failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # ── Benchmark compilation ────────────────────────────────────────────
   bench-compile:
@@ -245,10 +264,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - name: Compile benchmarks (no run)
+        id: bench-check
         run: cargo bench --no-run
       - name: Summary
         if: always()
-        run: echo "### ✅ All 7 benchmark suites compile" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          if [ "${{ steps.bench-check.outcome }}" = "success" ]; then
+            echo "### ✅ All 7 benchmark suites compile" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Benchmark compilation failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # ── Supply chain audit ───────────────────────────────────────────────
   deny:
@@ -257,22 +282,29 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+      - name: Run cargo deny
+        id: deny-check
+        uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
         with:
           command: check advisories bans licenses sources
       - name: Summary
         if: always()
         run: |
-          {
-            echo "### Supply Chain Audit"
-            echo ""
-            echo "| Check | Status |"
-            echo "|-------|--------|"
-            echo "| Advisories | ✅ |"
-            echo "| Bans | ✅ |"
-            echo "| Licenses | ✅ |"
-            echo "| Sources | ✅ |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.deny-check.outcome }}" = "success" ]; then
+            {
+              echo "### Supply Chain Audit"
+              echo ""
+              echo "| Check | Status |"
+              echo "|-------|--------|"
+              echo "| Advisories | ✅ |"
+              echo "| Bans | ✅ |"
+              echo "| Licenses | ✅ |"
+              echo "| Sources | ✅ |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Supply Chain Audit Failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Review cargo-deny output above for details." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # ── SemVer compatibility ─────────────────────────────────────────────
   semver:
