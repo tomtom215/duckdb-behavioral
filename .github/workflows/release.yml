@@ -16,11 +16,10 @@ name: Release
 #
 # The release process:
 #   1. Update version in Cargo.toml and description.yml
-#   2. Update description.yml ref to the commit SHA that will be tagged:
-#        sed -i "s/  ref: .*/  ref: $(git rev-parse HEAD)/" description.yml
-#   3. Commit: "chore: bump version to X.Y.Z"
-#   4. Tag: git tag vX.Y.Z && git push origin vX.Y.Z
-#   5. This workflow validates versions + ref, builds, tests, and publishes
+#   2. Commit: "chore: bump version to X.Y.Z"
+#   3. Tag: git tag vX.Y.Z && git push origin vX.Y.Z
+#   4. This workflow validates, builds, tests, publishes, and auto-updates
+#      description.yml ref to the tagged commit SHA on main
 
 on:
   push:
@@ -99,21 +98,6 @@ jobs:
             exit 1
           fi
           echo "description.yml version match confirmed: $DESC_VERSION"
-
-      - name: Verify description.yml ref matches tagged commit
-        run: |
-          DESC_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
-          TAG_SHA="${{ github.sha }}"
-
-          if [ "$DESC_REF" != "$TAG_SHA" ]; then
-            echo "ERROR: description.yml ref ($DESC_REF) does not match tagged commit ($TAG_SHA)"
-            echo ""
-            echo "Before tagging a release, update description.yml:"
-            echo "  sed -i \"s/  ref: .*/  ref: \$(git rev-parse HEAD)/\" description.yml"
-            echo "  git add description.yml && git commit -m 'chore: update description.yml ref'"
-            exit 1
-          fi
-          echo "description.yml ref match confirmed: $DESC_REF"
 
   build:
     name: Build (${{ matrix.platform }})
@@ -316,3 +300,38 @@ jobs:
             `sessionize`, `retention`, `window_funnel`, `sequence_match`, `sequence_count`, `sequence_match_events`, `sequence_next_node`
 
             See [documentation](https://tomtom215.github.io/duckdb-behavioral/) for full usage.
+
+  # After a successful release, update description.yml ref on main to point
+  # to the tagged commit. This resolves the chicken-and-egg problem: the ref
+  # cannot be set before the commit exists, so we update it after the release.
+  # The updated description.yml is what gets submitted to DuckDB community-extensions.
+  update-description-ref:
+    name: Update description.yml ref
+    needs: [validate, release]
+    runs-on: ubuntu-latest
+    # Only run for tag pushes on main (not workflow_dispatch or pre-releases)
+    if: github.event_name == 'push' && !contains(needs.validate.outputs.semver, '-')
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update description.yml ref to tagged commit
+        run: |
+          TAGGED_SHA="${{ github.sha }}"
+          CURRENT_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
+
+          if [ "$CURRENT_REF" = "$TAGGED_SHA" ]; then
+            echo "description.yml ref already matches tagged commit ($TAGGED_SHA)"
+            exit 0
+          fi
+
+          echo "Updating description.yml ref: $CURRENT_REF -> $TAGGED_SHA"
+          sed -i "s|  ref: .*|  ref: $TAGGED_SHA|" description.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add description.yml
+          git commit -m "chore: update description.yml ref to ${{ needs.validate.outputs.version }} ($TAGGED_SHA)"
+          git push origin main
