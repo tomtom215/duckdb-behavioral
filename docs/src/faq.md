@@ -620,14 +620,6 @@ and requires the native DuckDB runtime. It cannot be loaded in DuckDB-WASM
 (browser) or through the DuckDB HTTP API without a native DuckDB server process
 backing the connection.
 
-### Does the extension work with DuckDB MotherDuck?
-
-MotherDuck supports a curated set of extensions. The extension is now listed in
-the [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
-repository. Whether MotherDuck supports loading community extensions depends on
-MotherDuck's extension allowlist policy, which is managed independently by
-MotherDuck. The extension works with any local or self-hosted DuckDB instance.
-
 ## Performance
 
 ### How fast is the extension?
