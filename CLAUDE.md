@@ -374,7 +374,7 @@ function, achieving COMPLETE feature parity.
 
 1. **`sequence_next_node` function** (PARITY-3): Implemented `sequenceNextNode`
    with full direction (forward/backward) and base (head/tail/first_match/last_match)
-   support. Uses a dedicated `NextNodeEvent` struct with per-event `String` storage
+   support. Uses a dedicated `NextNodeEvent` struct with per-event `Arc<str>` storage
    (separate from the `Copy` `Event` struct). Simple sequential matching algorithm.
 
 2. **New FFI module** (`src/ffi/sequence_next_node.rs`): 32 function set overloads

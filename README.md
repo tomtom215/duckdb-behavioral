@@ -56,20 +56,13 @@ documentation — not on AI output being assumed correct.
 
 - [Quick Start](#quick-start)
 - [Functions](#functions)
-  - [sessionize](#sessionizetimestamp-interval---bigint)
-  - [retention](#retentioncond1-cond2----boolean)
-  - [window\_funnel](#window_funnelinterval-timestamp-cond1-cond2----integer)
-  - [sequence\_match](#sequence_matchpattern-timestamp-cond1-cond2----boolean)
-  - [sequence\_count](#sequence_countpattern-timestamp-cond1-cond2----bigint)
-  - [sequence\_match\_events](#sequence_match_eventspattern-timestamp-cond1-cond2----listtimestamp)
-  - [sequence\_next\_node](#sequence_next_nodedirection-base-timestamp-event_column-cond1-cond2----varchar)
-  - [Pattern Syntax](#pattern-syntax)
-  - [Window Funnel Modes](#window-funnel-modes)
-- [Building](#building)
-- [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Performance](#performance)
 - [Community Extension](#community-extension)
+- [Quality](#quality)
+- [ClickHouse Parity Status](#clickhouse-parity-status)
+- [Building](#building)
 - [Development](#development)
+- [Documentation](#documentation)
 - [Requirements](#requirements)
 - [License](#license)
 
@@ -112,264 +105,24 @@ GROUP BY user_id;
 
 ## Functions
 
-### `sessionize(timestamp, interval) -> bigint`
+| Function | Signature | Returns | Description |
+|---|---|---|---|
+| `sessionize` | `(TIMESTAMP, INTERVAL)` | `BIGINT` | Window function assigning session IDs based on inactivity gaps |
+| `retention` | `(BOOLEAN, BOOLEAN, ...)` | `BOOLEAN[]` | Cohort retention analysis |
+| `window_funnel` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `INTEGER` | Conversion funnel step tracking with [6 combinable modes](https://tomtom215.github.io/duckdb-behavioral/functions/window-funnel.html) |
+| `sequence_match` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BOOLEAN` | NFA-based [pattern matching](https://tomtom215.github.io/duckdb-behavioral/functions/sequence-match.html) over event sequences |
+| `sequence_count` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BIGINT` | Count non-overlapping pattern matches |
+| `sequence_match_events` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `LIST(TIMESTAMP)` | Return matched condition timestamps |
+| `sequence_next_node` | `(VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, ...)` | `VARCHAR` | Next event value after pattern match |
 
-Window function that assigns monotonically increasing session IDs. A new session
-starts when the gap between consecutive events exceeds the threshold.
-
-```sql
-SELECT user_id, event_time,
-  sessionize(event_time, INTERVAL '30 minutes') OVER (
-    PARTITION BY user_id ORDER BY event_time
-  ) as session_id
-FROM events;
-```
-
-### `retention(cond1, cond2 [, ...]) -> boolean[]`
-
-Aggregate function for cohort retention analysis. Returns an array where element `i`
-is true if both the anchor condition (cond1) and condition `i` were satisfied.
-
-```sql
-SELECT cohort_month,
-  retention(
-    activity_date = cohort_month,
-    activity_date = cohort_month + INTERVAL '1 month',
-    activity_date = cohort_month + INTERVAL '2 months'
-  ) as retained
-FROM user_activity
-GROUP BY user_id, cohort_month;
-```
-
-### `window_funnel(interval[, mode], timestamp, cond1, cond2 [, ...]) -> integer`
-
-Searches for the longest chain of sequential conditions within a time window.
-Returns the maximum funnel step reached (0 to N). An optional mode string
-parameter controls matching behavior (see [Window Funnel Modes](#window-funnel-modes)).
-
-```sql
--- Default mode
-SELECT user_id,
-  window_funnel(INTERVAL '1 hour', event_time,
-    event_type = 'page_view',
-    event_type = 'add_to_cart',
-    event_type = 'checkout',
-    event_type = 'purchase'
-  ) as furthest_step
-FROM events
-GROUP BY user_id;
-
--- With mode string
-SELECT user_id,
-  window_funnel(INTERVAL '1 hour', 'strict_increase, strict_once', event_time,
-    event_type = 'page_view',
-    event_type = 'add_to_cart',
-    event_type = 'purchase'
-  ) as furthest_step
-FROM events
-GROUP BY user_id;
-```
-
-### `sequence_match(pattern, timestamp, cond1, cond2 [, ...]) -> boolean`
-
-Checks whether a sequence of events matches a pattern. Uses a mini-regex syntax
-over condition references.
-
-```sql
-SELECT user_id,
-  sequence_match('(?1).*(?2)', event_time,
-    event_type = 'view',
-    event_type = 'purchase'
-  ) as converted
-FROM events
-GROUP BY user_id;
-```
-
-### `sequence_count(pattern, timestamp, cond1, cond2 [, ...]) -> bigint`
-
-Counts the number of non-overlapping occurrences of a pattern in the event stream.
-
-```sql
-SELECT user_id,
-  sequence_count('(?1)(?2)', event_time,
-    event_type = 'view',
-    event_type = 'purchase'
-  ) as conversion_count
-FROM events
-GROUP BY user_id;
-```
-
-### `sequence_match_events(pattern, timestamp, cond1, cond2 [, ...]) -> list(timestamp)`
-
-Returns the timestamps of each matched `(?N)` step in the pattern as a list.
-Returns an empty list if no match is found.
-
-```sql
-SELECT user_id,
-  sequence_match_events('(?1).*(?2)', event_time,
-    event_type = 'view',
-    event_type = 'purchase'
-  ) as match_timestamps
-FROM events
-GROUP BY user_id;
--- Returns e.g. [2024-01-01 10:00:00, 2024-01-01 11:30:00]
-```
-
-### `sequence_next_node(direction, base, timestamp, event_column, cond1, cond2 [, ...]) -> varchar`
-
-Returns the value of the next (or previous) event after a matched sequence pattern.
-Supports forward/backward direction and four base modes for controlling which match
-point to use.
-
-```sql
--- What page do users visit after viewing product then adding to cart?
-SELECT
-  sequence_next_node('forward', 'first_match', event_time, page_name,
-    event_type = 'view',
-    event_type = 'add_to_cart'
-  ) as next_page
-FROM events
-GROUP BY user_id;
-
--- What was the last page before a purchase?
-SELECT
-  sequence_next_node('backward', 'last_match', event_time, page_name,
-    event_type = 'checkout',
-    event_type = 'purchase'
-  ) as previous_page
-FROM events
-GROUP BY user_id;
-```
-
-**Direction**: `'forward'` (next event after match) or `'backward'` (previous event before match).
-
-**Base modes**: `'head'`, `'tail'`, `'first_match'`, `'last_match'` — controls which occurrence
-of the pattern match to anchor from.
-
-### Pattern Syntax
-
-| Pattern | Description |
-|---------|-------------|
-| `(?N)` | Match event where condition N (1-indexed) is true |
-| `.` | Match exactly one event (any conditions) |
-| `.*` | Match zero or more events (any conditions) |
-| `(?t>=N)` | Time constraint: at least N seconds since previous match |
-| `(?t<=N)` | Time constraint: at most N seconds since previous match |
-| `(?t>N)` | Time constraint: more than N seconds |
-| `(?t<N)` | Time constraint: less than N seconds |
-| `(?t==N)` | Time constraint: exactly N seconds |
-| `(?t!=N)` | Time constraint: not exactly N seconds |
-
-### Window Funnel Modes
-
-The `window_funnel` function supports combinable modes matching ClickHouse semantics:
-
-| Mode | Description |
-|------|-------------|
-| `strict` | Only events that satisfy condition for step N+1 can follow step N |
-| `strict_order` | Events for earlier conditions cannot appear between matched steps |
-| `strict_deduplication` | Skip events with the same timestamp as the previous matched step |
-| `strict_increase` | Require strictly increasing timestamps between matched steps |
-| `strict_once` | Each event can advance the funnel by at most one step |
-| `allow_reentry` | Reset the funnel chain when condition 1 fires again after step 1 |
-
-Modes are independently combinable via a comma-separated string parameter:
-
-```sql
--- Combine strict_increase and strict_once
-window_funnel(INTERVAL '1 hour', 'strict_increase, strict_once', ts, c1, c2, c3)
-```
-
-## ClickHouse Parity Status
-
-**COMPLETE** — All ClickHouse behavioral analytics functions are implemented.
-
-| Function | Status | Session |
-|---|---|---|
-| `sessionize` | Complete | 1 |
-| `retention` | Complete | 1 |
-| `window_funnel` (6 modes) | Complete | 1, 5, 6 |
-| `sequence_match` | Complete | 1 |
-| `sequence_count` | Complete | 1 |
-| `sequence_match_events` | Complete | 5 |
-| `sequence_next_node` | Complete | 8 |
-| 32-condition support | Complete | 6 |
-
-## Building
-
-**Prerequisites**: Rust 1.80+ (MSRV), a C compiler (for DuckDB sys bindings)
-
-```bash
-# Build the extension (release mode)
-cargo build --release
-
-# The loadable extension will be at:
-# target/release/libbehavioral.so   (Linux)
-# target/release/libbehavioral.dylib (macOS)
-```
+All functions support **2 to 32 boolean conditions**, matching ClickHouse's limit.
+Detailed documentation, examples, and edge case behavior for each function:
+[Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)
 
 ## Performance
 
-Fifteen sessions of measured, Criterion-validated optimizations and feature work:
-
-**Session 1 — Event Bitmask**: Bitmask replaces `Vec<bool>` per event,
-eliminating heap allocation and enabling `Copy` semantics (5-13x speedup).
-
-**Session 2 — In-Place Combine**: O(N²) merge-allocate replaced with O(N)
-in-place extend, plus pdqsort and pattern clone elimination (up to **2,436x**).
-
-**Session 3 — NFA Lazy Matching**: Fixed `.*` exploration order in NFA executor,
-yielding **1,961x** speedup for `sequence_match` at 1M events.
-
-**Session 4 — Billion-Row Benchmarks**: Expanded to 100M/1B elements.
-**1 billion sessionize events processed in 1.18 seconds** (848 Melem/s).
-
-**Session 5 — ClickHouse Feature Parity**: Combinable `FunnelMode` bitflags,
-three new modes (`strict_increase`, `strict_once`, `allow_reentry`), and
-`sequence_match_events` function returning matched condition timestamps.
-
-**Session 6 — Mode FFI + 32-Condition Support**: Exposed funnel modes via SQL
-VARCHAR parameter, expanded condition support from 8 to 32 (matching ClickHouse),
-and added presorted detection to skip O(n log n) sort for ordered input.
-
-**Session 7 — Benchmark Validation + Negative Results**: Validated all benchmark
-baselines with 3 runs. Tested radix sort (4.3x slower — reverted), branchless
-sessionize (~5-10% slower — reverted). Documented that current algorithms are
-well-optimized. Added 15 tests.
-
-**Session 8 — sequenceNextNode + Complete Parity**: Implemented `sequence_next_node`
-with full direction/base support, achieving COMPLETE ClickHouse behavioral analytics
-feature parity. Added 42 tests and new benchmarks.
-
-**Session 9 — Rc\<str\> Optimization**: Replaced `String` with `Arc<str>` in
-`sequence_next_node` for O(1) clone via reference counting (2.1-5.8x improvement).
-Added realistic cardinality benchmarks and community extension infrastructure.
-
-**Session 10 — E2E Validation + Custom C Entry Point**: Discovered and fixed 3
-critical bugs that 375 passing unit tests (at the time; now 434) missed: SEGFAULT on load, silent function
-registration failures, and incorrect combine propagation. Replaced fragile connection
-extraction with a custom C entry point. 11 E2E tests against real DuckDB.
-
-**Session 11 — NFA Fast Paths + Git Mining Demo**: Pattern classification dispatches
-common shapes to specialized O(n) scans (39-61% improvement for `sequence_count`).
-Added 21 combine propagation tests, 7 fast-path tests, and git mining SQL examples.
-
-**Session 12 — Community Extension Readiness**: Added `sequence_match_events`
-benchmark, fixed library name for community extension, fixed `sequence_next_node`
-NULL handling, corrected SQL tests, and expanded GitHub Pages documentation.
-
-**Session 13 — CI/CD Hardening + Benchmark Refresh**: Added E2E workflow, SemVer
-release validation, expanded documentation, refreshed all benchmark baselines.
-
-**Session 14 — Production Readiness Hardening**: `Arc<str>` for `Send+Sync`
-safety, defensive FFI (no-panic entry point, `*const u8` boolean reading, null
-byte handling), 16 new E2E tests, pinned GitHub Actions to commit SHAs.
-
-**Session 15 — Enterprise Quality Standards**: Dependency consolidation
-(Criterion 0.5 to 0.8.2, rand 0.8 to 0.9.2), GitHub Pages mermaid contrast
-fixes, documentation polish, and full benchmark baseline refresh.
-
-**Headline numbers (Criterion 0.8.2, 95% CI):**
+All measurements below are Criterion.rs 0.8.2 with 95% confidence intervals,
+validated across multiple runs on commodity hardware.
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
@@ -381,8 +134,34 @@ fixes, documentation polish, and full benchmark baseline refresh.
 | `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
 | `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
 
-All measurements: Criterion.rs 0.8.2, 95% confidence intervals. Full methodology, optimization history, and baseline
-records: [`PERF.md`](PERF.md).
+**Key design choices:**
+
+- **16-byte `Copy` events** with `u32` bitmask conditions — four events per cache
+  line, zero heap allocation per event
+- **O(1) combine** for `sessionize` and `retention` via boundary tracking and
+  bitmask OR
+- **In-place combine** for event-collecting functions — O(N) amortized instead
+  of O(N^2) from repeated allocation
+- **NFA fast paths** — common pattern shapes dispatch to specialized O(n) linear
+  scans instead of full NFA backtracking
+- **Presorted detection** — O(n) check skips O(n log n) sort when events arrive
+  in timestamp order
+
+**Optimization highlights:**
+
+| Optimization | Speedup | Technique |
+|---|---|---|
+| Event bitmask | 5–13x | `Vec<bool>` replaced with `u32` bitmask, enabling `Copy` semantics |
+| In-place combine | up to 2,436x | O(N) amortized extend instead of O(N^2) merge-allocate |
+| NFA lazy matching | 1,961x at 1M events | Swapped exploration order so `.*` tries advancing before consuming |
+| `Arc<str>` values | 2.1–5.8x | Reference-counted strings for O(1) clone in `sequence_next_node` |
+| NFA fast paths | 39–61% | Pattern classification dispatches common shapes to O(n) linear scans |
+
+Five attempted optimizations were measured, found to be regressions, and reverted.
+All negative results are documented in [`PERF.md`](PERF.md).
+
+Full methodology, per-session optimization history with confidence intervals, and
+reproducible benchmark instructions: [`PERF.md`](PERF.md).
 
 ## Community Extension
 
@@ -419,51 +198,77 @@ field in `extensions/behavioral/description.yml`. When DuckDB releases a new
 version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 `extension-ci-tools` submodule.
 
-## Versioning
+## Quality
 
-This project follows [Semantic Versioning](https://semver.org/). See
-the [versioning policy](https://tomtom215.github.io/duckdb-behavioral/operations/security.html#versioning)
-for the full SemVer rules applied to SQL function signatures.
+| Metric | Value |
+|---|---|
+| Unit tests | 434 + 1 doc-test |
+| E2E tests | 27 (against real DuckDB CLI) |
+| Property-based tests | 26 (proptest) |
+| Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
+| Clippy warnings | 0 (pedantic + nursery + cargo lint groups) |
+| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
+| Benchmark files | 7 (Criterion.rs, up to 1 billion elements) |
+| Release platforms | 4 (Linux x86_64/ARM64, macOS x86_64/ARM64) |
 
-**Release process:**
+CI runs on every push and PR: 6 workflows across `.github/workflows/` including
+E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
+4-platform release builds with provenance attestation.
 
-1. Update version in `Cargo.toml` and `description.yml`
-2. Commit: `git commit -m "chore: bump version to X.Y.Z"`
-3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
-4. The release workflow validates SemVer, builds for 4 platforms, and publishes
+## ClickHouse Parity Status
 
-## CI/CD
+**COMPLETE** — All ClickHouse behavioral analytics functions are implemented.
 
-| Workflow | Trigger | Jobs |
-|----------|---------|------|
-| **CI** | Push/PR to main | 13 jobs: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build |
-| **E2E** | Push/PR to main | Builds extension, tests all 7 functions against real DuckDB, load tests 100K events |
-| **Release** | Tag push `v*` | SemVer validation, 4-platform build, SQL tests, provenance attestation, GitHub Release |
-| **Community Submission** | Manual dispatch | Validate, quality gate, build & test, pin ref, generate submission package |
-| **Pages** | Push to main | Deploys mdBook documentation to GitHub Pages |
+| Function | Status |
+|---|---|
+| `sessionize` | Complete |
+| `retention` | Complete |
+| `window_funnel` (6 modes) | Complete |
+| `sequence_match` | Complete |
+| `sequence_count` | Complete |
+| `sequence_match_events` | Complete |
+| `sequence_next_node` | Complete |
+| 32-condition support | Complete |
+
+## Building
+
+**Prerequisites**: Rust 1.80+ (MSRV), a C compiler (for DuckDB sys bindings)
+
+```bash
+# Build the extension (release mode)
+cargo build --release
+
+# The loadable extension will be at:
+# target/release/libbehavioral.so   (Linux)
+# target/release/libbehavioral.dylib (macOS)
+```
 
 ## Development
 
 ```bash
-# Run tests (434 unit tests + 1 doc-test)
-cargo test
-
-# Run clippy (zero warnings required)
-cargo clippy --all-targets
-
-# Format
-cargo fmt
-
-# Run benchmarks
-cargo bench
+cargo test                  # 434 unit tests + 1 doc-test
+cargo clippy --all-targets  # Zero warnings required
+cargo fmt                   # Format
+cargo bench                 # Criterion.rs benchmarks
 
 # Build extension via community Makefile
 git submodule update --init
 make configure && make release && make test_release
-
-# Build documentation
-cargo doc --no-deps --open
 ```
+
+This project follows [Semantic Versioning](https://semver.org/).
+See the [versioning policy](https://tomtom215.github.io/duckdb-behavioral/operations/security.html#versioning)
+for the full SemVer rules applied to SQL function signatures.
+
+## Documentation
+
+- **[Getting Started](https://tomtom215.github.io/duckdb-behavioral/getting-started.html)** — installation, loading, troubleshooting
+- **[Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)** — detailed docs for all 7 functions
+- **[Use Cases](https://tomtom215.github.io/duckdb-behavioral/use-cases.html)** — 5 complete real-world examples with sample data
+- **[Engineering Overview](https://tomtom215.github.io/duckdb-behavioral/engineering.html)** — architecture, testing philosophy, design trade-offs
+- **[Performance](https://tomtom215.github.io/duckdb-behavioral/internals/performance.html)** — benchmarks, optimization history, methodology
+- **[ClickHouse Compatibility](https://tomtom215.github.io/duckdb-behavioral/internals/clickhouse-compatibility.html)** — syntax mapping, semantic parity
+- **[Contributing](https://tomtom215.github.io/duckdb-behavioral/contributing.html)** — development setup, testing, PR process
 
 ## Requirements
 

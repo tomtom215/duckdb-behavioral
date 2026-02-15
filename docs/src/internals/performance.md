@@ -141,7 +141,7 @@ These are documented to prevent redundant investigation in future sessions:
 
 Implemented `sequence_next_node` with full direction (forward/backward) and
 base (head/tail/first_match/last_match) support. Uses a dedicated
-`NextNodeEvent` struct with per-event `String` storage (separate from the
+`NextNodeEvent` struct with per-event string storage (separate from the
 `Copy` `Event` struct). Simple sequential matching algorithm.
 
 Added a dedicated benchmark (`benches/sequence_next_node_bench.rs`) measuring

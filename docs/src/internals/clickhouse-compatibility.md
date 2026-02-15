@@ -97,10 +97,10 @@ The `direction` parameter (`'forward'` / `'backward'`) controls scan direction.
 The `base` parameter (`'head'` / `'tail'` / `'first_match'` / `'last_match'`)
 controls which starting point to use.
 
-Uses a dedicated `NextNodeEvent` struct with per-event `String` storage
+Uses a dedicated `NextNodeEvent` struct with per-event `Arc<str>` storage
 (separate from the `Copy` `Event` struct used by other functions).
 
-## Remaining Gaps
+## Feature Parity
 
-All ClickHouse behavioral analytics functions are now implemented. There are no
+All ClickHouse behavioral analytics functions are implemented. There are no
 remaining feature gaps.
