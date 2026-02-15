@@ -49,18 +49,6 @@ jobs:
       - name: Build book
         run: mdbook build docs
 
-      - name: Copy demo to book output
-        run: |
-          if [ ! -d docs/book ]; then
-            echo "::error::docs/book directory not found — mdbook build may have failed."
-            exit 1
-          fi
-          if [ -f demo/index.html ]; then
-            cp demo/index.html docs/book/demo.html
-          else
-            echo "::warning::demo/index.html not found, skipping demo page."
-          fi
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:

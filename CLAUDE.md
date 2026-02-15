@@ -499,7 +499,10 @@ developer experience (demo, SQL examples, combine test coverage).
    in published academic research with citations.
 
 7. **Interactive HTML demo** (`demo/index.html`): Tabbed interface showcasing
-   all 7 functions with SQL examples and pre-computed results.
+   all 7 functions with SQL examples and pre-computed results. *(Removed in
+   Session 16: static mock with hardcoded results did not meet project standards —
+   DuckDB-WASM is not feasible for Rust extensions due to Emscripten toolchain
+   incompatibility.)*
 
 Test count increased from 375 to 403 (+28 tests).
 
