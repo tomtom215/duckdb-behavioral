@@ -354,9 +354,9 @@
 <!-- Install -->
 <div class="panel" id="install">
 <div class="install">
-  <h3>Quick Start</h3>
-<pre class="sql"><span class="cm">-- Install and load</span>
-<span class="kw">INSTALL</span> behavioral;
+  <h3>Quick Start (Community Extension)</h3>
+<pre class="sql"><span class="cm">-- Install from DuckDB Community Extensions</span>
+<span class="kw">INSTALL</span> behavioral <span class="kw">FROM</span> community;
 <span class="kw">LOAD</span> behavioral;
 
 <span class="cm">-- Try it out</span>
@@ -366,11 +366,11 @@
 </div>
 
 <div class="install" style="margin-top:16px">
-  <h3>Manual Installation</h3>
+  <h3>Build from Source</h3>
 <pre class="sql"><span class="cm">-- Build from source</span>
 cargo build --release
 
-<span class="cm">-- Load unsigned extension</span>
+<span class="cm">-- Load locally-built extension (requires -unsigned)</span>
 duckdb -unsigned
 <span class="kw">LOAD</span> <span class="str">'target/release/libbehavioral.so'</span>;</pre>
 </div>
