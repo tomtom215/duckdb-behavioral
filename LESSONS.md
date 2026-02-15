@@ -99,8 +99,8 @@ Accumulated from past development sessions. Consult before beginning any work.
     format, state lifecycle management, and the extension loading mechanism. Both
     test levels are mandatory — never ship without E2E validation.
 
-56. **Unit tests and E2E tests serve fundamentally different purposes**: 375 unit
-    tests validated business logic: combine associativity, mode parsing, NFA pattern
+56. **Unit tests and E2E tests serve fundamentally different purposes**: The 375 unit
+    tests at the time (now 434) validated business logic: combine associativity, mode parsing, NFA pattern
     matching, edge cases. But they operate on Rust structs in isolation — they never
     exercise the FFI boundary, DuckDB's data chunk format, DuckDB's aggregate state
     lifecycle (init→update→combine→finalize→destroy), or extension loading. All 3

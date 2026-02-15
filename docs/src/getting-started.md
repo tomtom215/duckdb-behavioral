@@ -57,19 +57,20 @@ python3 extension-ci-tools/scripts/append_extension_metadata.py \
 > **Platform note:** Replace `linux_amd64` with your platform identifier
 > (`linux_arm64`, `osx_amd64`, `osx_arm64`) and `.so` with `.dylib` on macOS.
 
-### Option 2: Community Extension (Coming Soon)
+### Option 2: Community Extension (Pending Review)
 
-A submission to the [DuckDB Community Extensions](https://community-extensions.duckdb.org/)
-registry is in progress. Once accepted, installation will be a single command:
+The extension has been
+[submitted](https://github.com/duckdb/community-extensions/pull/1306) to the
+[DuckDB Community Extensions](https://community-extensions.duckdb.org/) registry.
+Once the PR is reviewed and merged, installation becomes a single command:
 
 ```sql
 INSTALL behavioral FROM community;
 LOAD behavioral;
 ```
 
-No build tools or compilation required. Check the
-[project repository](https://github.com/tomtom215/duckdb-behavioral) for the
-latest status.
+No build tools or compilation required. Track the review status on the
+[submission PR](https://github.com/duckdb/community-extensions/pull/1306).
 
 ---
 

@@ -605,9 +605,11 @@ backing the connection.
 
 ### Does the extension work with DuckDB MotherDuck?
 
-MotherDuck supports a curated set of extensions. Since `duckdb-behavioral` is not
-yet part of the official DuckDB extension repository, it cannot be loaded in
-MotherDuck. You can use it with any local or self-hosted DuckDB instance.
+MotherDuck supports a curated set of extensions. The extension has been
+[submitted](https://github.com/duckdb/community-extensions/pull/1306) to the
+DuckDB Community Extensions registry and is pending review. Until it is accepted
+and published, it cannot be loaded in MotherDuck. You can use it with any local
+or self-hosted DuckDB instance today by building from source.
 
 ## Performance
 
