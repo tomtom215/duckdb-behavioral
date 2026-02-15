@@ -10,6 +10,8 @@ authors = ["Tom F <tomtom215@users.noreply.github.com>"]
 description = "Behavioral analytics functions for DuckDB: sessionize, retention, funnels, sequence matching"
 license = "MIT"
 repository = "https://github.com/tomtom215/duckdb-behavioral"
+homepage = "https://tomtom215.github.io/duckdb-behavioral"
+documentation = "https://tomtom215.github.io/duckdb-behavioral"
 keywords = ["duckdb", "analytics", "funnel", "retention", "behavioral"]
 categories = ["database", "science"]
 
