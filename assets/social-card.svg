@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFDE7"/>
+      <stop offset="100%" stop-color="#FFF8E1"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect x="16" y="16" width="480" height="480" rx="48" fill="url(#bg-grad)" stroke="#FFC107" stroke-width="3"/>
+
+  <!-- Subtle curved path connecting footprints (behind everything) -->
+  <path d="M 185 190 C 215 225, 235 250, 265 280
+           C 295 310, 330 335, 370 360
+           C 390 372, 410 382, 430 390"
+        stroke="#D5D5D5" stroke-width="1.5" stroke-dasharray="5,4" fill="none" opacity="0.5"/>
+
+  <!-- Footprint 1 (nearest duck, largest and boldest) -->
+  <g transform="translate(188, 195) rotate(-20) scale(1.2)" opacity="0.92">
+    <!-- Webbing between toes -->
+    <path d="M -9 -4 L 0 -20 L 9 -4 Z" fill="#FF9800" opacity="0.3"/>
+    <!-- Center toe -->
+    <ellipse cx="0" cy="-13" rx="3.5" ry="11" fill="#FF9800"/>
+    <!-- Left toe -->
+    <ellipse cx="-8" cy="-8" rx="3" ry="10" fill="#FF9800" transform="rotate(28, -8, -8)"/>
+    <!-- Right toe -->
+    <ellipse cx="8" cy="-8" rx="3" ry="10" fill="#FF9800" transform="rotate(-28, 8, -8)"/>
+    <!-- Pad -->
+    <ellipse cx="0" cy="7" rx="7" ry="9" fill="#FF9800"/>
+  </g>
+
+  <!-- Footprint 2 (offset left, slight mirror for walking gait) -->
+  <g transform="translate(230, 245) rotate(-5) scale(-1.12, 1.12)" opacity="0.82">
+    <path d="M -9 -4 L 0 -20 L 9 -4 Z" fill="#FF9800" opacity="0.3"/>
+    <ellipse cx="0" cy="-13" rx="3.5" ry="11" fill="#FF9800"/>
+    <ellipse cx="-8" cy="-8" rx="3" ry="10" fill="#FF9800" transform="rotate(28, -8, -8)"/>
+    <ellipse cx="8" cy="-8" rx="3" ry="10" fill="#FF9800" transform="rotate(-28, 8, -8)"/>
+    <ellipse cx="0" cy="7" rx="7" ry="9" fill="#FF9800"/>
+  </g>
+
+  <!-- Footprint 3 -->
+  <g transform="translate(280, 290) rotate(8) scale(1.05)" opacity="0.72">
+    <path d="M -9 -4 L 0 -20 L 9 -4 Z" fill="#FF9800" opacity="0.3"/>
+    <ellipse cx="0" cy="-13" rx="3.5" ry="11" fill="#FF9800"/>
+    <ellipse cx="-8" cy="-8" rx="3" ry="10" fill="#FF9800" transform="rotate(28, -8, -8)"/>
+    <ellipse cx="8" cy="-8" rx="3" ry="10" fill="#FF9800" transform="rotate(-28, 8, -8)"/>
+    <ellipse cx="0" cy="7" rx="7" ry="9" fill="#FF9800"/>
+  </g>
+
+  <!-- Footprint 4 (offset left, mirrored) -->
+  <g transform="translate(335, 330) rotate(18) scale(-0.95, 0.95)" opacity="0.58">
+    <path d="M -9 -4 L 0 -20 L 9 -4 Z" fill="#F57C00" opacity="0.3"/>
+    <ellipse cx="0" cy="-13" rx="3.5" ry="11" fill="#F57C00"/>
+    <ellipse cx="-8" cy="-8" rx="3" ry="10" fill="#F57C00" transform="rotate(28, -8, -8)"/>
+    <ellipse cx="8" cy="-8" rx="3" ry="10" fill="#F57C00" transform="rotate(-28, 8, -8)"/>
+    <ellipse cx="0" cy="7" rx="7" ry="9" fill="#F57C00"/>
+  </g>
+
+  <!-- Footprint 5 -->
+  <g transform="translate(382, 360) rotate(22) scale(0.85)" opacity="0.42">
+    <path d="M -9 -4 L 0 -20 L 9 -4 Z" fill="#F57C00" opacity="0.3"/>
+    <ellipse cx="0" cy="-13" rx="3.5" ry="11" fill="#F57C00"/>
+    <ellipse cx="-8" cy="-8" rx="3" ry="10" fill="#F57C00" transform="rotate(28, -8, -8)"/>
+    <ellipse cx="8" cy="-8" rx="3" ry="10" fill="#F57C00" transform="rotate(-28, 8, -8)"/>
+    <ellipse cx="0" cy="7" rx="7" ry="9" fill="#F57C00"/>
+  </g>
+
+  <!-- Footprint 6 (faintest, smallest) -->
+  <g transform="translate(425, 385) rotate(30) scale(-0.75, 0.75)" opacity="0.25">
+    <path d="M -9 -4 L 0 -20 L 9 -4 Z" fill="#F57C00" opacity="0.3"/>
+    <ellipse cx="0" cy="-13" rx="3.5" ry="11" fill="#F57C00"/>
+    <ellipse cx="-8" cy="-8" rx="3" ry="10" fill="#F57C00" transform="rotate(28, -8, -8)"/>
+    <ellipse cx="8" cy="-8" rx="3" ry="10" fill="#F57C00" transform="rotate(-28, 8, -8)"/>
+    <ellipse cx="0" cy="7" rx="7" ry="9" fill="#F57C00"/>
+  </g>
+
+  <!-- Pattern notation pill -->
+  <g transform="translate(164, 420)">
+    <rect x="0" y="0" width="280" height="42" rx="21" fill="#2D2D2D" opacity="0.92"/>
+    <text x="140" y="28" font-family="'SF Mono', 'Consolas', monospace" font-size="16" fill="#FFC107" text-anchor="middle" font-weight="500">(?1).*(?2).*(?3)</text>
+  </g>
+
+  <!-- Duck silhouette (flat fill, rendered last for clean layering) -->
+  <g transform="translate(60, 50)" filter="url(#shadow)">
+    <!-- Body -->
+    <ellipse cx="45" cy="110" rx="55" ry="35" fill="#2D2D2D"/>
+    <!-- Head (overlaps body, flat fill creates seamless neck) -->
+    <circle cx="70" cy="60" r="50" fill="#2D2D2D"/>
+    <!-- Tail feathers (smooth curves) -->
+    <path d="M 0 100 C -10 88, -18 72, -22 58
+             C -12 72, -4 84, 2 94
+             C -8 80, -16 62, -22 45
+             C -10 65, 0 85, 2 92 Z" fill="#2D2D2D"/>
+    <!-- Upper bill (curved) -->
+    <path d="M 110 52 C 125 46, 145 46, 152 52
+             C 152 58, 148 62, 142 64 L 110 62 Z" fill="#FF9800"/>
+    <!-- Lower bill -->
+    <path d="M 110 62 L 140 63 C 144 68, 142 74, 137 76
+             L 110 70 Z" fill="#E65100"/>
+    <!-- Eye -->
+    <circle cx="90" cy="48" r="9" fill="white"/>
+    <circle cx="93" cy="46" r="5" fill="#1a1a1a"/>
+    <circle cx="95" cy="44" r="2" fill="white"/>
+  </g>
+
+  <!-- Title -->
+  <text x="256" y="486" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#2D2D2D" text-anchor="middle" letter-spacing="2">BEHAVIORAL</text>
+</svg>

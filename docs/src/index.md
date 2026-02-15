@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/banner.svg" alt="duckdb-behavioral" width="560">
+</p>
+
 # duckdb-behavioral
 
 **Behavioral analytics for DuckDB -- session analysis, conversion funnels,
