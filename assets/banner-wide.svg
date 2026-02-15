@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 200" width="800" height="312">
+  <defs>
+    <linearGradient id="signal-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFC107"/>
+      <stop offset="50%" stop-color="#FF9800"/>
+      <stop offset="100%" stop-color="#F57C00"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="200" rx="16" fill="#FAFAFA"/>
+
+  <!-- Duck (compact, flat fill for seamless silhouette) -->
+  <g transform="translate(20, 28)">
+    <!-- Body -->
+    <ellipse cx="55" cy="88" rx="48" ry="32" fill="#2D2D2D"/>
+    <!-- Head (overlaps body, flat fill merges seamlessly) -->
+    <circle cx="95" cy="55" r="30" fill="#2D2D2D"/>
+    <!-- Tail feathers (smooth curves) -->
+    <path d="M 14 75 C 5 64, -1 50, -4 40
+             C 4 52, 9 63, 13 71
+             C 3 56, -3 40, -6 28
+             C 3 46, 10 62, 14 72 Z" fill="#2D2D2D"/>
+    <!-- Upper bill (curved) -->
+    <path d="M 118 50 C 130 46, 140 47, 144 51
+             C 144 55, 142 58, 138 59 L 118 56 Z" fill="#FF9800"/>
+    <!-- Lower bill -->
+    <path d="M 118 56 L 136 56 C 138 60, 137 63, 134 64
+             L 118 60 Z" fill="#E65100"/>
+    <!-- Eye -->
+    <circle cx="107" cy="46" r="6" fill="white"/>
+    <circle cx="109" cy="44" r="3.5" fill="#1a1a1a"/>
+    <circle cx="110.5" cy="43" r="1.2" fill="white"/>
+  </g>
+
+  <!-- Analytics signal -->
+  <g transform="translate(155, 0)">
+    <!-- Baseline -->
+    <line x1="0" y1="100" x2="350" y2="100" stroke="#E8E8E8" stroke-width="1" stroke-dasharray="4,4"/>
+
+    <!-- Smooth signal path (quadratic bezier curves for rounded peaks) -->
+    <path d="M 0 100 L 20 100
+             Q 40 40, 58 100
+             L 72 100
+             Q 92 -16, 112 100
+             Q 117 120, 122 100
+             L 142 100
+             Q 165 -44, 188 100
+             Q 199 16, 210 100
+             L 228 100
+             Q 248 10, 268 100
+             L 278 100
+             Q 298 -30, 318 100
+             Q 330 24, 342 100
+             L 350 100"
+          stroke="url(#signal-grad)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Event dots (graduated sizes by peak importance) -->
+    <circle cx="39" cy="70" r="4.5" fill="#FFC107" stroke="white" stroke-width="1.5"/>
+    <circle cx="92" cy="42" r="5" fill="#FF9800" stroke="white" stroke-width="1.5"/>
+    <circle cx="165" cy="28" r="6" fill="#FF9800" stroke="white" stroke-width="2"/>
+    <circle cx="199" cy="58" r="4.5" fill="#F57C00" stroke="white" stroke-width="1.5"/>
+    <circle cx="248" cy="55" r="5" fill="#FFC107" stroke="white" stroke-width="1.5"/>
+    <circle cx="298" cy="35" r="6" fill="#FF9800" stroke="white" stroke-width="2"/>
+    <circle cx="330" cy="62" r="4.5" fill="#F57C00" stroke="white" stroke-width="1.5"/>
+
+    <!-- Event labels on major peaks -->
+    <text x="165" y="16" font-family="'SF Mono', 'Consolas', monospace" font-size="9" fill="#E65100" text-anchor="middle" font-weight="600">(?1)</text>
+    <text x="298" y="23" font-family="'SF Mono', 'Consolas', monospace" font-size="9" fill="#E65100" text-anchor="middle" font-weight="600">(?2)</text>
+  </g>
+
+  <!-- Title -->
+  <text x="256" y="168" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="28" font-weight="700" fill="#2D2D2D" text-anchor="middle" letter-spacing="3">BEHAVIORAL</text>
+  <text x="256" y="190" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12" font-weight="400" fill="#757575" text-anchor="middle" letter-spacing="5">FOR DUCKDB</text>
+</svg>

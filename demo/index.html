@@ -6,6 +6,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DuckDB Behavioral Analytics - Interactive Demo</title>
+<link rel="icon" type="image/svg+xml" href="../assets/logo-64.svg">
+<meta name="description" content="Interactive demo of duckdb-behavioral: ClickHouse-compatible behavioral analytics functions for DuckDB.">
+<meta property="og:title" content="DuckDB Behavioral Analytics">
+<meta property="og:description" content="Session analysis, conversion funnels, retention cohorts, and event sequence pattern matching for DuckDB.">
+<meta property="og:type" content="website">
 <style>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -104,8 +109,13 @@
 <body>
 <div class="container">
 
-<h1><span>behavioral</span> DuckDB Extension</h1>
-<p class="subtitle">ClickHouse-compatible behavioral analytics functions for DuckDB</p>
+<div style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px;">
+  <img src="../assets/logo-64.svg" alt="" width="48" height="48">
+  <div>
+    <h1><span>behavioral</span> DuckDB Extension</h1>
+    <p class="subtitle" style="margin-bottom: 0;">ClickHouse-compatible behavioral analytics functions for DuckDB</p>
+  </div>
+</div>
 
 <div class="note">
   This extension provides 7 aggregate functions for user behavior analysis:

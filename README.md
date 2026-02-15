@@ -1,16 +1,23 @@
-# duckdb-behavioral
+<p align="center">
+  <img src="assets/banner.svg" alt="duckdb-behavioral" width="600">
+</p>
 
-Behavioral analytics functions for [DuckDB](https://duckdb.org/), inspired by
-[ClickHouse](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions).
+<p align="center">
+  <strong>Behavioral analytics functions for DuckDB, inspired by ClickHouse.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.80-blue.svg" alt="MSRV: 1.80"></a>
+</p>
 
 Provides `sessionize`, `retention`, `window_funnel`, `sequence_match`,
 `sequence_count`, `sequence_match_events`, and `sequence_next_node` as a loadable
-DuckDB extension written in Rust. **Complete ClickHouse behavioral analytics parity.**
-
-[![CI](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg)](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml)
-[![E2E Tests](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg)](https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![MSRV: 1.80](https://img.shields.io/badge/MSRV-1.80-blue.svg)](https://www.rust-lang.org)
+[DuckDB](https://duckdb.org/) extension written in Rust. **Complete
+[ClickHouse](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions)
+behavioral analytics parity.**
 
 > **Personal Project Disclaimer**: This is a personal project developed on my own
 > time. It is not affiliated with, endorsed by, or related to my employer or
