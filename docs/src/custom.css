@@ -21,17 +21,39 @@ code {
 }
 
 /* ── Table styling ────────────────────────────────────────────────────
- * Tables use a horizontal scroll wrapper on narrow viewports to prevent
- * layout overflow. Performance tables with many columns remain readable
- * without truncating content or breaking the page layout.
+ * Tables use two layers of overflow handling:
+ *
+ * 1. CSS fallback: display:block + overflow-x:auto on the <table>
+ *    itself. Works without JavaScript but can cause minor rendering
+ *    quirks in some browsers.
+ *
+ * 2. JS-enhanced: theme-toggle.js wraps each table in a .table-wrapper
+ *    <div> with overflow-x:auto. The table reverts to display:table
+ *    for proper column layout. This is the primary path.
  */
 table {
     width: 100%;
     border-collapse: collapse;
     margin: 1em 0;
+    /* CSS-only fallback for horizontal scroll */
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+}
+
+/* JS-enhanced: when wrapped in .table-wrapper, restore natural layout */
+.table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 1em 0;
+}
+
+.table-wrapper table {
+    display: table;
+    width: auto;
+    min-width: 100%;
+    margin: 0;
+    overflow-x: visible;
 }
 
 table thead th {
@@ -60,6 +82,36 @@ table td code {
 table td:first-child,
 table th:first-child {
     white-space: nowrap;
+}
+
+/* ── Visible scrollbars for overflow containers ───────────────────────
+ * iOS Safari and mobile Chrome hide scrollbars by default. Users see
+ * content "cut off" with no indication that they can scroll. These
+ * rules force a persistent thin scrollbar on WebKit/Blink browsers.
+ */
+table::-webkit-scrollbar,
+.table-wrapper::-webkit-scrollbar,
+.mermaid::-webkit-scrollbar {
+    height: 6px;
+}
+
+table::-webkit-scrollbar-track,
+.table-wrapper::-webkit-scrollbar-track,
+.mermaid::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+table::-webkit-scrollbar-thumb,
+.table-wrapper::-webkit-scrollbar-thumb,
+.mermaid::-webkit-scrollbar-thumb {
+    background-color: rgba(128, 128, 128, 0.3);
+    border-radius: 3px;
+}
+
+table::-webkit-scrollbar-thumb:hover,
+.table-wrapper::-webkit-scrollbar-thumb:hover,
+.mermaid::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(128, 128, 128, 0.5);
 }
 
 /* Sidebar refinements */
@@ -263,15 +315,33 @@ blockquote {
     stroke: #666666 !important;
 }
 
+/* ── Mermaid diagram responsive layout ─────────────────────────────── */
+.mermaid {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+}
+
+/* Desktop: scale diagrams to fit container width */
+.mermaid svg {
+    max-width: 100%;
+    height: auto;
+}
+
 /* ── Mobile responsiveness ───────────────────────────────────────────
  * Ensures the documentation renders correctly on phones and tablets.
- * Tables scroll horizontally, code blocks don't overflow, and content
- * has appropriate padding at narrow viewport widths.
+ * Tables scroll horizontally via .table-wrapper (JS) or display:block
+ * (CSS fallback). Diagrams scroll instead of squishing on narrow
+ * viewports. Content has appropriate padding at narrow widths.
  */
 
-/* Prevent content overflow on narrow screens */
+/* Prevent content overflow on narrow screens — but allow child scroll
+ * containers (tables, mermaid diagrams) to handle their own overflow.
+ * Using overflow-x:clip instead of overflow-x:hidden so that child
+ * elements with overflow-x:auto still create proper scroll viewports.
+ */
 .content main {
-    overflow-x: hidden;
+    overflow-x: clip;
     word-wrap: break-word;
     overflow-wrap: break-word;
 }
@@ -369,6 +439,19 @@ blockquote {
     pre {
         max-width: calc(100vw - 40px);
     }
+
+    /* ── Mermaid diagrams: scroll instead of squish ──────────────────
+     * On narrow viewports, forcing max-width:100% squishes SVGs until
+     * text becomes unreadable and subgraph titles get clipped (e.g.,
+     * "Complementary Test Levels" truncated). Removing the constraint
+     * preserves readability — the .mermaid container's overflow-x:auto
+     * provides horizontal scrolling instead.
+     */
+    .mermaid svg {
+        max-width: none !important;
+        min-width: 500px;
+        height: auto !important;
+    }
 }
 
 @media screen and (max-width: 480px) {
@@ -385,5 +468,57 @@ blockquote {
 
     code {
         font-size: 0.85em;
+    }
+
+    /* Slightly narrower minimum for very small phones */
+    .mermaid svg {
+        min-width: 400px;
+    }
+}
+
+/* ── Print styles ────────────────────────────────────────────────────
+ * When actually printing (Cmd+P / Ctrl+P), tables and diagrams should
+ * show full content without scroll containers. Navigation elements
+ * are hidden. Font sizes reduced to fit more content per page.
+ */
+@media print {
+    /* Hide navigation chrome */
+    #sidebar,
+    #menu-bar,
+    .nav-wrapper,
+    .nav-chapters,
+    .right-buttons,
+    .left-buttons {
+        display: none !important;
+    }
+
+    /* Full-width content */
+    .content main {
+        max-width: none;
+        overflow-x: visible;
+    }
+
+    /* Tables: show all columns, no scroll container */
+    table,
+    .table-wrapper table {
+        display: table;
+        width: auto;
+        overflow-x: visible;
+        font-size: 9pt;
+    }
+
+    .table-wrapper {
+        overflow-x: visible;
+    }
+
+    /* Diagrams: scale to fit page width */
+    .mermaid svg {
+        max-width: 100% !important;
+        height: auto !important;
+    }
+
+    /* Avoid page breaks inside tables and diagrams */
+    table, .mermaid {
+        page-break-inside: avoid;
     }
 }

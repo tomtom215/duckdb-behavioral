@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Pages theme switcher: replaced fragile programmatic click on hidden
   mdBook theme list with direct localStorage and class manipulation, preventing
   breakage across mdBook versions
+- iOS Safari theme toggle: added touch-action:manipulation for fast taps and
+  300ms debounce to prevent double-fire from touch + click events
+- Tables cut off on mobile: added JS table wrappers (display:table inside
+  scrollable div), visible WebKit scrollbar styling, changed parent overflow
+  from hidden to clip so child scroll containers work properly
+- Mermaid diagrams squished on narrow viewports: removed max-width:100% on
+  SVGs below 768px so diagrams scroll horizontally instead of scaling down
+  until text becomes unreadable and subgraph titles get clipped
+- Print button: overridden to call window.print() on current page instead of
+  navigating to print.html, preventing print dialog from re-triggering on
+  page refresh
+- Added @media print styles for proper table/diagram rendering when printing
 
 ## [0.2.0] - 2026-02-14
 

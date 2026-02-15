@@ -1,22 +1,21 @@
-// Light/Dark theme toggle for mdBook
+// mdBook toolbar and content customization
 //
-// Replaces mdBook's multi-theme dropdown (Coal/Navy/Ayu/Rust/Light) with
-// a single-click toggle between "light" and "navy" (dark) themes. Uses
-// the universally recognized sun/moon icon convention:
-//   - Moon icon in light mode  → "click to switch to dark"
-//   - Sun icon in dark mode    → "click to switch to light"
+// 1. Theme toggle: replaces multi-theme dropdown with light/dark toggle
+// 2. Print override: calls window.print() instead of navigating to print.html
+// 3. Table wrapping: wraps tables in scrollable containers for mobile
 //
-// Self-contained: sets localStorage and the <html> class directly rather
-// than delegating to mdBook's internal theme list handlers. This avoids
-// breakage when mdBook's DOM structure or event wiring changes between
-// versions.
+// Self-contained: sets localStorage and <html> class directly. Does not
+// depend on mdBook's internal theme list handlers or DOM structure.
 
 (function () {
     'use strict';
 
+    // ── Theme toggle ───────────────────────────────────────────────────
+
     var LIGHT = 'light';
     var DARK = 'navy';
     var ALL_THEMES = ['light', 'rust', 'coal', 'navy', 'ayu'];
+    var lastToggle = 0;
 
     function getCurrentTheme() {
         try {
@@ -31,13 +30,10 @@
     }
 
     function setTheme(theme) {
-        // Persist selection
         try {
             localStorage.setItem('mdbook-theme', theme);
-        } catch (e) { /* localStorage unavailable */ }
+        } catch (e) { /* localStorage unavailable (private browsing) */ }
 
-        // mdBook scopes all theme CSS to a class on <html>.
-        // Remove every known theme class, then apply the target.
         ALL_THEMES.forEach(function (t) {
             document.documentElement.classList.remove(t);
         });
@@ -55,7 +51,7 @@
         btn.setAttribute('aria-checked', String(dark));
     }
 
-    function init() {
+    function setupThemeToggle() {
         var original = document.getElementById('theme-toggle');
         if (!original) return;
 
@@ -77,9 +73,18 @@
         btn.removeAttribute('aria-controls');
         btn.setAttribute('role', 'switch');
 
+        // iOS Safari: eliminate 300ms tap delay
+        btn.style.touchAction = 'manipulation';
+        btn.style.webkitTapHighlightColor = 'transparent';
+
         btn.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
+
+            // Debounce: prevent double-fire from touch + click on mobile
+            var now = Date.now();
+            if (now - lastToggle < 300) return;
+            lastToggle = now;
 
             setTheme(isDark() ? LIGHT : DARK);
             updateButton(btn);
@@ -95,6 +100,56 @@
             attributes: true,
             attributeFilter: ['class']
         });
+    }
+
+    // ── Print button override ──────────────────────────────────────────
+    // mdBook's print button navigates to print.html, which auto-calls
+    // window.print(). Canceling then refreshing re-triggers the dialog.
+    // Override: call window.print() on the current page, no navigation.
+
+    function setupPrintOverride() {
+        var icon = document.getElementById('print-button');
+        if (!icon) return;
+
+        var link = icon.closest ? icon.closest('a') : icon.parentElement;
+        if (!link || link.tagName !== 'A') return;
+
+        link.addEventListener('click', function (e) {
+            e.preventDefault();
+            window.print();
+        });
+
+        // Update accessibility to reflect new behavior
+        link.setAttribute('title', 'Print this page');
+        link.setAttribute('aria-label', 'Print this page');
+    }
+
+    // ── Table wrappers ─────────────────────────────────────────────────
+    // Wrap tables in scrollable containers. This is more reliable than
+    // display:block on <table> because it preserves natural table layout
+    // while containing overflow in a dedicated scroll viewport.
+
+    function wrapTables() {
+        var tables = document.querySelectorAll('.content table');
+        for (var i = 0; i < tables.length; i++) {
+            var table = tables[i];
+            // Skip if already wrapped
+            if (table.parentElement &&
+                table.parentElement.classList.contains('table-wrapper')) continue;
+
+            var wrapper = document.createElement('div');
+            wrapper.className = 'table-wrapper';
+            table.parentNode.insertBefore(wrapper, table);
+            wrapper.appendChild(table);
+        }
+    }
+
+    // ── Initialization ─────────────────────────────────────────────────
+
+    function init() {
+        setupThemeToggle();
+        setupPrintOverride();
+        wrapTables();
     }
 
     if (document.readyState === 'loading') {
