@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: tomtom215/duckdb-behavioral
-  ref: d0a7a13751fda8547d478dd14a1d86e261c27575
+  ref: 0372752254ec1bf9791013db5e595588f396d14d
 
 docs:
   hello_world: |
