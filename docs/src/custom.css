@@ -101,13 +101,21 @@ blockquote {
 }
 
 /* ── Theme toggle ────────────────────────────────────────────────────
- * Hide mdBook's multi-theme dropdown. A custom JS toggle (theme-toggle.js)
- * switches between light and navy (dark) themes with a sun/moon icon,
- * matching the industry-standard light/dark toggle pattern used by
- * GitHub, VS Code, and most modern documentation sites.
+ * Hide mdBook's multi-theme dropdown entirely. A custom JS toggle
+ * (theme-toggle.js) switches between light and navy (dark) themes
+ * with a sun/moon icon, matching the industry-standard light/dark
+ * toggle pattern used by GitHub, VS Code, and most documentation sites.
  */
 #theme-list {
     display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+/* Prevent the theme popup from flashing on page load */
+.theme-popup {
+    display: none !important;
+    visibility: hidden !important;
 }
 
 /* ── Mermaid Diagram Styling ─────────────────────────────────────────

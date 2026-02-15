@@ -68,12 +68,20 @@ documentation — not on AI output being assumed correct.
 - [Building](#building)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Performance](#performance)
-- [Community Extension Submission Roadmap](#community-extension-submission-roadmap)
+- [Community Extension Submission](#community-extension-submission)
 - [Development](#development)
 - [Requirements](#requirements)
 - [License](#license)
 
 ## Quick Start
+
+```sql
+-- Community extension (once published, pending review)
+INSTALL behavioral FROM community;
+LOAD behavioral;
+```
+
+Or build from source:
 
 ```bash
 # Build the extension
@@ -378,23 +386,19 @@ records: [`PERF.md`](PERF.md).
 
 ## Community Extension Submission
 
-This extension is designed for the
+This extension has been
+[submitted](https://github.com/duckdb/community-extensions/pull/1306) to the
 [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
-repository. All submission infrastructure is in place: `description.yml`,
-`Makefile`, `extension-ci-tools` submodule, SQLLogicTest tests, and a dedicated
-CI workflow.
+repository and is pending review. Once accepted, installation becomes:
 
-### Submission Process
-
-```bash
-# 1. Validate readiness (dry run)
-gh workflow run community-submission.yml -f dry_run=true
-
-# 2. Pin ref and generate submission package
-gh workflow run community-submission.yml -f dry_run=false
-
-# 3. Follow the commands in the workflow summary to open the PR
+```sql
+INSTALL behavioral FROM community;
+LOAD behavioral;
 ```
+
+Until published, build from source using the instructions in [Building](#building).
+
+### Submission Infrastructure
 
 The [`community-submission.yml`](.github/workflows/community-submission.yml)
 workflow automates the full pre-submission pipeline in 5 phases:
@@ -406,10 +410,6 @@ workflow automates the full pre-submission pipeline in 5 phases:
 | Build & Test | `make configure && make release && make test_release` |
 | Pin Ref | Updates `description.yml` ref to the validated commit SHA |
 | Submission Package | Uploads artifact, generates step-by-step PR commands |
-
-After the workflow completes, the only manual step is opening a PR to
-`duckdb/community-extensions` that adds `extensions/behavioral/description.yml`.
-The community CI handles all platform builds, test execution, and binary signing.
 
 ### Post-Publication Updates
 

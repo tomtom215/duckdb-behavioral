@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Submitted to [DuckDB Community Extensions](https://github.com/duckdb/community-extensions/pull/1306)
+  registry (pending review)
+
+### Fixed
+
+- GitHub Pages theme switcher: replaced fragile programmatic click on hidden
+  mdBook theme list with direct localStorage and class manipulation, preventing
+  breakage across mdBook versions
+
 ## [0.2.0] - 2026-02-14
 
 ### Added
