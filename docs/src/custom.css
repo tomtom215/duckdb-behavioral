@@ -100,6 +100,16 @@ blockquote {
     background-color: var(--quote-bg);
 }
 
+/* ── Theme toggle ────────────────────────────────────────────────────
+ * Hide mdBook's multi-theme dropdown. A custom JS toggle (theme-toggle.js)
+ * switches between light and navy (dark) themes with a sun/moon icon,
+ * matching the industry-standard light/dark toggle pattern used by
+ * GitHub, VS Code, and most modern documentation sites.
+ */
+#theme-list {
+    display: none !important;
+}
+
 /* ── Mermaid Diagram Styling ─────────────────────────────────────────
  * All diagrams use a grayscale palette (#ffffff, #f5f5f5, #e8e8e8,
  * #d9d9d9, #e0e0e0) with #333333 borders and #1a1a1a text. This
@@ -272,6 +282,48 @@ blockquote {
 }
 
 @media screen and (max-width: 768px) {
+    /* ── Mobile toolbar touch targets ────────────────────────────────
+     * Apple HIG requires 44×44pt minimum touch targets. WCAG 2.5.8
+     * (Target Size) recommends the same. mdBook's default icon buttons
+     * are ~30px wide — well below the threshold on mobile devices.
+     */
+
+    /* Left-side icon buttons (sidebar, theme, search) */
+    #menu-bar .icon-button {
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 10px;
+    }
+
+    /* Right-side link buttons (print, GitHub) */
+    #menu-bar .right-buttons a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0 10px;
+    }
+
+    /* Larger icons for mobile readability */
+    #menu-bar i {
+        font-size: 20px;
+    }
+
+    /* Title: allow shrinking so icons aren't squeezed off-screen */
+    .menu-title {
+        font-size: 0.9em;
+        flex-shrink: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* ── Content layout ─────────────────────────────────────────────── */
+
     /* Reduce padding on mobile */
     .content main {
         padding: 0 12px;

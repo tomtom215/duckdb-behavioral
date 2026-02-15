@@ -91,7 +91,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.1.0 --abi-type C_STRUCT \
+  -p linux_amd64 -dv v1.2.0 -ev v0.2.0 --abi-type C_STRUCT \
   -o /tmp/behavioral.duckdb_extension
 
 # Load and test
