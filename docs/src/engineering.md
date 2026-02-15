@@ -201,8 +201,8 @@ OR vs XOR on non-overlapping bitmasks).
 
 Unit tests validate algorithmic correctness in isolation. E2E tests validate
 the integration boundary. Neither alone is sufficient. The three bugs found
-in E2E testing (Session 10) were entirely in the FFI layer -- a domain that
-unit tests by definition cannot exercise.
+during E2E validation were entirely in the FFI layer -- a domain that unit
+tests by definition cannot exercise.
 
 ---
 
@@ -228,7 +228,7 @@ Every performance claim in this project is backed by:
 
 ### Optimization History
 
-Fifteen sessions of measured optimization, each following a documented protocol:
+Fifteen rounds of measured optimization, each following a documented protocol:
 
 1. Establish baseline with 3 Criterion runs
 2. Implement one optimization per commit

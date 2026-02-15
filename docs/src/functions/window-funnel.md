@@ -130,5 +130,7 @@ At benchmark scale, `window_funnel` processes **100 million events in 791 ms**
 
 ## See Also
 
+- [`sequence_match`](./sequence-match.md) -- NFA-based pattern matching for more flexible event sequences
+- [`sequence_count`](./sequence-count.md) -- count non-overlapping pattern occurrences
+- [`sequence_next_node`](./sequence-next-node.md) -- find what happens after a matched pattern
 - [ClickHouse Compatibility](../internals/clickhouse-compatibility.md) -- full compatibility matrix including all mode mappings
-- [`sequence_match`](./sequence-match.md) -- pattern matching with NFA for more flexible event sequences

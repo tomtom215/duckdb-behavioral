@@ -49,11 +49,11 @@ s = pattern steps.
 
 ## Optimization History
 
-Fourteen engineering sessions have produced the current performance profile. Each
+Fifteen engineering sessions have produced the current performance profile. Each
 optimization below was measured independently with before/after Criterion data
 and non-overlapping confidence intervals (except where noted as negative results).
 
-### Session 1: Event Bitmask
+### Event Bitmask Optimization
 
 Replaced `Vec<bool>` per event with a `u32` bitmask, eliminating per-event heap
 allocation and enabling `Copy` semantics. The `Event` struct shrank from 32+
@@ -65,7 +65,7 @@ bytes with heap allocation to 16 bytes with zero heap allocation.
 | `window_funnel` | 100,000 events | 2.35 ms | 188 us | 12.5x |
 | `sequence_match` | 10,000 events | 260 us | 28.0 us | 9.3x |
 
-### Session 2: In-Place Combine
+### In-Place Combine
 
 Replaced O(N^2) merge-allocate combine with O(N) in-place extend. Switched from
 stable sort (TimSort) to unstable sort (pdqsort). Eliminated redundant pattern
@@ -77,7 +77,7 @@ cloning.
 | `window_funnel_combine` | 1,000 states | 781 us | 3.03 us | 258x |
 | `window_funnel_combine` | 10,000 states | 75.3 ms | 30.9 us | 2,436x |
 
-### Session 3: NFA Lazy Matching
+### NFA Lazy Matching
 
 Fixed `.*` exploration order in the NFA executor. The NFA was using greedy
 matching (consume event first), causing O(n^2) backtracking. Switching to lazy
@@ -88,7 +88,7 @@ matching (advance pattern first) reduced complexity to O(n * pattern_len).
 | `sequence_match` | 100 events | 750 ns | 454 ns | 1.76x |
 | `sequence_match` | 1,000,000 events | 4.43 s | 2.31 ms | 1,961x |
 
-### Session 4: Billion-Row Benchmarks
+### Billion-Row Benchmarks
 
 Expanded benchmarks to 100M for event-collecting functions and 1B for O(1)-state
 functions. Validated that all functions scale as documented with no hidden
@@ -102,14 +102,14 @@ bottlenecks at extreme scale.
 | `sequence_match` | 100 million | 1.08 s | 92.7 Melem/s |
 | `sequence_count` | 100 million | 1.57 s | 63.5 Melem/s |
 
-### Session 5: ClickHouse Feature Parity
+### ClickHouse Feature Parity
 
 Architectural refactoring session. Implemented combinable `FunnelMode` bitflags,
 three new `window_funnel` modes (`strict_increase`, `strict_once`,
 `allow_reentry`), multi-step advancement per event, and the
 `sequence_match_events` function. No performance optimization targets.
 
-### Session 6: Presorted Detection
+### Presorted Detection + 32-Condition Support
 
 Added an O(n) `is_sorted` check before sorting. When events arrive in timestamp
 order (the common case for `ORDER BY` queries), the O(n log n) sort is skipped
@@ -119,10 +119,10 @@ Also expanded condition support from `u8` (8 conditions) to `u32` (32
 conditions). This was a zero-cost change: the `Event` struct remains 16 bytes
 due to alignment padding from the `i64` field.
 
-### Session 7: Negative Results
+### Negative Results
 
 Three optimization hypotheses were tested and all produced negative results.
-These are documented to prevent redundant investigation in future sessions:
+These are documented to prevent redundant investigation:
 
 - **LSD Radix Sort**: 8-bit radix, 8 passes. Measured 4.3x slower at 100M
   elements. The scatter pattern has poor cache locality for 16-byte structs.
@@ -137,7 +137,7 @@ These are documented to prevent redundant investigation in future sessions:
   bottleneck is `Vec<bool>` allocation in the test harness, not the bitmask
   update loop. No optimization possible without changing the benchmark structure.
 
-### Session 8: sequenceNextNode
+### sequence_next_node Implementation
 
 Implemented `sequence_next_node` with full direction (forward/backward) and
 base (head/tail/first_match/last_match) support. Uses a dedicated
@@ -149,7 +149,7 @@ update + finalize throughput and combine operations at multiple scales. No
 performance optimization targets — this session focused on feature
 completeness, achieving complete ClickHouse behavioral analytics parity.
 
-### Session 9: Rc\<str\> Optimization
+### Arc\<str\> Optimization
 
 Replaced `Option<String>` with `Option<Arc<str>>` in `NextNodeEvent`, reducing
 struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
@@ -168,7 +168,7 @@ struct size. `Arc::clone` (~1ns atomic increment) consistently beats
 Also added a realistic cardinality benchmark using a pool of 100 distinct
 `Arc<str>` values, showing 35% improvement over unique strings at 1M events.
 
-### Session 10: E2E Validation + Custom C Entry Point
+### E2E Validation + Custom C Entry Point
 
 Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time (now 434) missed:
 
@@ -189,7 +189,7 @@ Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time
 No performance optimization targets. 11 E2E tests added against real DuckDB
 v1.4.4 CLI.
 
-### Session 11: NFA Fast Paths
+### NFA Fast Paths
 
 Two Criterion-validated optimizations for the NFA pattern executor:
 
@@ -263,6 +263,6 @@ the data.
   including measured data and root cause analysis
 
 Full optimization history with raw Criterion data, confidence intervals, and
-session-by-session analysis is maintained in
+detailed analysis is maintained in
 [`PERF.md`](https://github.com/tomtom215/duckdb-behavioral/blob/main/PERF.md)
 in the repository.
