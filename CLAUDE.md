@@ -131,7 +131,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.1.0 --abi-type C_STRUCT \
+  -p linux_amd64 -dv v1.2.0 -ev v0.2.0 --abi-type C_STRUCT \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -162,7 +162,6 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   for `Connection::open_in_memory()`. Not linked into the release extension.
 - `criterion = "0.8"` with `html_reports` feature — Statistical benchmarking
 - `proptest = "1"` — Property-based testing
-- `rand = "0.9"` — Random data generation for benchmarks
 
 ## Code Quality Standards
 
