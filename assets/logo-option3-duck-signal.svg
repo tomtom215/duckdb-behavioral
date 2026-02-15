@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 200" width="512" height="200">
+  <defs>
+    <linearGradient id="signal-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFC107;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#FF9800;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F57C00;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="duck-fill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2D2D2D;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3D3D3D;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Subtle background -->
+  <rect width="512" height="200" rx="16" fill="#FAFAFA"/>
+
+  <!-- Duck icon (compact, left side) -->
+  <g transform="translate(20, 30)">
+    <!-- Body -->
+    <ellipse cx="55" cy="90" rx="48" ry="32" fill="url(#duck-fill)"/>
+    <!-- Head -->
+    <circle cx="95" cy="55" r="30" fill="url(#duck-fill)"/>
+    <!-- Neck -->
+    <path d="M 80 70 Q 85 80 78 90" stroke="url(#duck-fill)" stroke-width="22" fill="none" stroke-linecap="round"/>
+    <!-- Bill -->
+    <path d="M 116 50 L 142 43 Q 145 52 142 60 L 116 56 Z" fill="#FF9800"/>
+    <path d="M 116 53 L 140 52 Q 142 58 140 62 L 116 56 Z" fill="#E65100"/>
+    <!-- Eye -->
+    <circle cx="107" cy="46" r="6" fill="white"/>
+    <circle cx="109" cy="44" r="3.5" fill="#2D2D2D"/>
+    <circle cx="110.5" cy="43" r="1.2" fill="white"/>
+    <!-- Tail -->
+    <path d="M 12 78 L 2 65 L 14 74 L 0 58 L 16 72" fill="url(#duck-fill)" stroke="url(#duck-fill)" stroke-width="2" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Analytics signal / heartbeat line -->
+  <g transform="translate(160, 0)">
+    <!-- Baseline -->
+    <line x1="0" y1="100" x2="340" y2="100" stroke="#E0E0E0" stroke-width="1" stroke-dasharray="4,4"/>
+
+    <!-- Signal path - representing behavioral events/patterns -->
+    <path d="M 0 100
+             L 20 100
+             L 30 100
+             L 40 70
+             L 50 100
+             L 70 100
+             L 80 100
+             L 90 45
+             L 100 100
+             L 105 110
+             L 110 100
+             L 140 100
+             L 150 100
+             L 160 30
+             L 170 85
+             L 180 55
+             L 190 100
+             L 220 100
+             L 230 100
+             L 240 60
+             L 250 100
+             L 270 100
+             L 280 100
+             L 290 40
+             L 300 90
+             L 310 65
+             L 320 100
+             L 340 100"
+          stroke="url(#signal-grad)" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Event dots on peaks -->
+    <circle cx="40" cy="70" r="5" fill="#FFC107" stroke="white" stroke-width="2"/>
+    <circle cx="90" cy="45" r="5" fill="#FF9800" stroke="white" stroke-width="2"/>
+    <circle cx="160" cy="30" r="6" fill="#FF9800" stroke="white" stroke-width="2"/>
+    <circle cx="180" cy="55" r="5" fill="#F57C00" stroke="white" stroke-width="2"/>
+    <circle cx="240" cy="60" r="5" fill="#FFC107" stroke="white" stroke-width="2"/>
+    <circle cx="290" cy="40" r="6" fill="#FF9800" stroke="white" stroke-width="2"/>
+    <circle cx="310" cy="65" r="5" fill="#F57C00" stroke="white" stroke-width="2"/>
+
+    <!-- Event labels -->
+    <text x="160" y="20" font-family="'SF Mono', monospace" font-size="10" fill="#FF9800" text-anchor="middle">(?1)</text>
+    <text x="290" y="30" font-family="'SF Mono', monospace" font-size="10" fill="#FF9800" text-anchor="middle">(?2)</text>
+  </g>
+
+  <!-- Title text -->
+  <text x="256" y="170" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="30" font-weight="700" fill="#2D2D2D" text-anchor="middle" letter-spacing="3">BEHAVIORAL</text>
+  <text x="256" y="192" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="400" fill="#757575" text-anchor="middle" letter-spacing="5">FOR DUCKDB</text>
+</svg>

@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg-grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFFDE7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFF8E1;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded rectangle -->
+  <rect x="16" y="16" width="480" height="480" rx="48" fill="url(#bg-grad2)" stroke="#FFC107" stroke-width="4"/>
+
+  <!-- DuckDB-style duck head (top-left area) -->
+  <g transform="translate(60, 50)">
+    <!-- Head -->
+    <circle cx="70" cy="60" r="50" fill="#2D2D2D"/>
+    <!-- Bill -->
+    <path d="M 108 55 L 150 45 Q 155 58 150 70 L 108 65 Z" fill="#FF9800"/>
+    <path d="M 108 60 L 148 58 Q 150 65 148 70 L 108 65 Z" fill="#E65100"/>
+    <!-- Eye -->
+    <circle cx="90" cy="48" r="9" fill="white"/>
+    <circle cx="92" cy="46" r="5" fill="#2D2D2D"/>
+    <circle cx="94" cy="44" r="2" fill="white"/>
+    <!-- Body hint -->
+    <ellipse cx="45" cy="110" rx="55" ry="35" fill="#2D2D2D"/>
+    <!-- Neck -->
+    <path d="M 50 80 Q 55 100 45 110" stroke="#2D2D2D" stroke-width="35" fill="none" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sequence of duck footprints forming a path -->
+  <!-- Footprint 1 (near duck) -->
+  <g transform="translate(190, 180) rotate(-20)" opacity="0.9">
+    <ellipse cx="0" cy="-12" rx="4" ry="10" fill="#FF9800"/>
+    <ellipse cx="-10" cy="-8" rx="3.5" ry="9" fill="#FF9800" transform="rotate(25, -10, -8)"/>
+    <ellipse cx="10" cy="-8" rx="3.5" ry="9" fill="#FF9800" transform="rotate(-25, 10, -8)"/>
+    <ellipse cx="0" cy="8" rx="7" ry="9" fill="#FF9800"/>
+  </g>
+
+  <!-- Footprint 2 -->
+  <g transform="translate(240, 230) rotate(-10)" opacity="0.8">
+    <ellipse cx="0" cy="-12" rx="4" ry="10" fill="#FF9800"/>
+    <ellipse cx="-10" cy="-8" rx="3.5" ry="9" fill="#FF9800" transform="rotate(25, -10, -8)"/>
+    <ellipse cx="10" cy="-8" rx="3.5" ry="9" fill="#FF9800" transform="rotate(-25, 10, -8)"/>
+    <ellipse cx="0" cy="8" rx="7" ry="9" fill="#FF9800"/>
+  </g>
+
+  <!-- Footprint 3 -->
+  <g transform="translate(290, 275) rotate(5)" opacity="0.7">
+    <ellipse cx="0" cy="-12" rx="4" ry="10" fill="#FF9800"/>
+    <ellipse cx="-10" cy="-8" rx="3.5" ry="9" fill="#FF9800" transform="rotate(25, -10, -8)"/>
+    <ellipse cx="10" cy="-8" rx="3.5" ry="9" fill="#FF9800" transform="rotate(-25, 10, -8)"/>
+    <ellipse cx="0" cy="8" rx="7" ry="9" fill="#FF9800"/>
+  </g>
+
+  <!-- Footprint 4 -->
+  <g transform="translate(345, 310) rotate(15)" opacity="0.6">
+    <ellipse cx="0" cy="-12" rx="4" ry="10" fill="#F57C00"/>
+    <ellipse cx="-10" cy="-8" rx="3.5" ry="9" fill="#F57C00" transform="rotate(25, -10, -8)"/>
+    <ellipse cx="10" cy="-8" rx="3.5" ry="9" fill="#F57C00" transform="rotate(-25, 10, -8)"/>
+    <ellipse cx="0" cy="8" rx="7" ry="9" fill="#F57C00"/>
+  </g>
+
+  <!-- Footprint 5 (fading) -->
+  <g transform="translate(400, 340) rotate(25)" opacity="0.4">
+    <ellipse cx="0" cy="-12" rx="4" ry="10" fill="#F57C00"/>
+    <ellipse cx="-10" cy="-8" rx="3.5" ry="9" fill="#F57C00" transform="rotate(25, -10, -8)"/>
+    <ellipse cx="10" cy="-8" rx="3.5" ry="9" fill="#F57C00" transform="rotate(-25, 10, -8)"/>
+    <ellipse cx="0" cy="8" rx="7" ry="9" fill="#F57C00"/>
+  </g>
+
+  <!-- Dotted path connecting footprints -->
+  <path d="M 190 185 Q 215 210 240 235 Q 265 255 290 280 Q 320 300 345 315 Q 370 330 400 345"
+        stroke="#BDBDBD" stroke-width="2" stroke-dasharray="6,4" fill="none" opacity="0.5"/>
+
+  <!-- Pattern notation overlay (sequence syntax) -->
+  <g transform="translate(180, 380)">
+    <rect x="0" y="0" width="260" height="40" rx="20" fill="#2D2D2D" opacity="0.9"/>
+    <text x="130" y="27" font-family="'SF Mono', 'Fira Code', 'Consolas', monospace" font-size="16" fill="#FFC107" text-anchor="middle">(?1).*(?2).*(?3)</text>
+  </g>
+
+  <!-- Title -->
+  <text x="256" y="468" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#2D2D2D" text-anchor="middle" letter-spacing="2">BEHAVIORAL</text>
+</svg>

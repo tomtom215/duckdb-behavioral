@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="icon-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFC107;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF9800;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background (DuckDB yellow) -->
+  <rect width="256" height="256" rx="48" fill="url(#icon-bg)"/>
+
+  <!-- Duck silhouette (white, centered) -->
+  <g transform="translate(40, 35)">
+    <!-- Body -->
+    <ellipse cx="88" cy="120" rx="70" ry="45" fill="white"/>
+    <!-- Head -->
+    <circle cx="140" cy="70" r="38" fill="white"/>
+    <!-- Neck -->
+    <path d="M 118 88 Q 125 100 115 115" stroke="white" stroke-width="30" fill="none" stroke-linecap="round"/>
+    <!-- Bill -->
+    <path d="M 168 64 L 198 56 Q 202 66 198 76 L 168 72 Z" fill="#2D2D2D"/>
+    <path d="M 168 68 L 196 66 Q 198 73 196 78 L 168 72 Z" fill="#1a1a1a"/>
+    <!-- Eye -->
+    <circle cx="155" cy="60" r="7" fill="#2D2D2D"/>
+    <circle cx="157" cy="58" r="2.5" fill="white"/>
+    <!-- Tail -->
+    <path d="M 24 105 L 10 88 L 26 100 L 8 78 L 28 96" fill="white" stroke="white" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Small funnel bars at bottom -->
+  <g transform="translate(48, 185)">
+    <rect x="0" y="0" width="160" height="12" rx="3" fill="white" opacity="0.9"/>
+    <rect x="20" y="17" width="120" height="12" rx="3" fill="white" opacity="0.7"/>
+    <rect x="40" y="34" width="80" height="12" rx="3" fill="white" opacity="0.5"/>
+  </g>
+</svg>
