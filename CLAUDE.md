@@ -421,7 +421,7 @@ Test count increased from 366 to 375 (+9 tests).
 ### Session 10: E2E Validation + Custom C Entry Point
 
 Session focused on end-to-end validation against a real DuckDB instance. Discovered
-and fixed three critical bugs that 375 passing unit tests completely missed.
+and fixed three critical bugs that all 375 passing unit tests at the time completely missed.
 
 **Bugs discovered and fixed:**
 

@@ -346,7 +346,7 @@ feature parity. Added 42 tests and new benchmarks.
 Added realistic cardinality benchmarks and community extension infrastructure.
 
 **Session 10 — E2E Validation + Custom C Entry Point**: Discovered and fixed 3
-critical bugs that 375 passing unit tests missed: SEGFAULT on load, silent function
+critical bugs that 375 passing unit tests (at the time; now 434) missed: SEGFAULT on load, silent function
 registration failures, and incorrect combine propagation. Replaced fragile connection
 extraction with a custom C entry point. 11 E2E tests against real DuckDB.
 
