@@ -19,6 +19,7 @@ default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/tomtom215/duckdb-behavioral"
 additional-css = ["src/custom.css"]
+additional-js = ["src/theme-toggle.js"]
 no-section-label = false
 
 [output.html.fold]
