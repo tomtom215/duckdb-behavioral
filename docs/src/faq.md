@@ -4,10 +4,22 @@ Frequently asked questions about `duckdb-behavioral`.
 
 ## Loading the Extension
 
-### How do I load the extension?
+### How do I install the extension?
 
-Build the extension in release mode, then load it from the DuckDB CLI or any
-DuckDB client:
+The extension is available in the
+[DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
+repository. Install and load with:
+
+```sql
+INSTALL behavioral FROM community;
+LOAD behavioral;
+```
+
+No build tools, compilation, or `-unsigned` flag required.
+
+### Can I build from source instead?
+
+Yes. Build in release mode, then load from the DuckDB CLI or any DuckDB client:
 
 ```bash
 cargo build --release
@@ -21,8 +33,7 @@ LOAD 'target/release/libbehavioral.so';
 LOAD 'target/release/libbehavioral.dylib';
 ```
 
-You must pass the `-unsigned` flag when using the DuckDB CLI since this extension
-is not signed by the DuckDB Foundation:
+Locally-built extensions require the `-unsigned` flag:
 
 ```bash
 duckdb -unsigned -c "LOAD 'target/release/libbehavioral.so'; SELECT ..."
@@ -30,19 +41,22 @@ duckdb -unsigned -c "LOAD 'target/release/libbehavioral.so'; SELECT ..."
 
 ### The extension fails to load. What should I check?
 
-1. **DuckDB version mismatch**: The extension is built against DuckDB C API
-   version `v1.2.0` (used by DuckDB v1.4.4). Loading it into a different DuckDB
-   version will produce: `file was built for DuckDB C API version 'v1.2.0' but
-   we can only load extensions built for DuckDB C API '...'`.
+1. **DuckDB version mismatch**: The community extension is built for DuckDB
+   v1.4.4. If you are using a different DuckDB version, the extension may not
+   be available for that version yet. For locally-built extensions, the C API
+   version must match (currently `v1.2.0`).
 
-2. **Missing `-unsigned` flag**: DuckDB rejects unsigned extensions by default.
-   Use `duckdb -unsigned` or set `allow_unsigned_extensions=true`.
+2. **Missing `-unsigned` flag** (local builds only): DuckDB rejects unsigned
+   extensions by default. Use `duckdb -unsigned` or set
+   `allow_unsigned_extensions=true`. This does not apply when installing via
+   `INSTALL behavioral FROM community`.
 
-3. **Wrong file path**: Ensure the path points to the actual `.so` or `.dylib`
-   file produced by `cargo build --release`.
+3. **Wrong file path** (local builds only): Ensure the path points to the actual
+   `.so` or `.dylib` file produced by `cargo build --release`.
 
-4. **Platform mismatch**: An extension built on Linux cannot be loaded on macOS,
-   and vice versa. Build on the same platform where DuckDB is running.
+4. **Platform mismatch** (local builds only): An extension built on Linux cannot
+   be loaded on macOS, and vice versa. The community extension handles platform
+   selection automatically.
 
 ## Functions
 
@@ -480,14 +494,15 @@ ORDER BY steps;
 
 ### How do I use this extension with Python?
 
-Use the `duckdb` Python package. Load the extension after creating a connection:
+Use the `duckdb` Python package. Install and load the extension from the
+community repository:
 
 ```python
 import duckdb
 
 conn = duckdb.connect()
-conn.execute("SET allow_unsigned_extensions = true")
-conn.execute("LOAD 'target/release/libbehavioral.so'")
+conn.execute("INSTALL behavioral FROM community")
+conn.execute("LOAD behavioral")
 
 # Run behavioral queries and get results as a DataFrame
 df = conn.execute("""
@@ -531,30 +546,32 @@ Use the `duckdb-async` or `duckdb` npm package:
 
 ```javascript
 const duckdb = require('duckdb');
-const db = new duckdb.Database(':memory:', {
-    allow_unsigned_extensions: 'true'
-});
+const db = new duckdb.Database(':memory:');
 
-db.run("LOAD 'target/release/libbehavioral.so'", (err) => {
+db.run("INSTALL behavioral FROM community", (err) => {
     if (err) throw err;
+    db.run("LOAD behavioral", (err) => {
+        if (err) throw err;
 
-    db.all(`
-        SELECT user_id,
-          window_funnel(INTERVAL '1 hour', event_time,
-            event_type = 'view',
-            event_type = 'cart',
-            event_type = 'purchase') as steps
-        FROM read_parquet('events.parquet')
-        GROUP BY user_id
-    `, (err, rows) => {
-        console.log(rows);
+        db.all(`
+            SELECT user_id,
+              window_funnel(INTERVAL '1 hour', event_time,
+                event_type = 'view',
+                event_type = 'cart',
+                event_type = 'purchase') as steps
+            FROM read_parquet('events.parquet')
+            GROUP BY user_id
+        `, (err, rows) => {
+            console.log(rows);
+        });
     });
 });
 ```
 
 ### How do I use this extension with dbt?
 
-dbt-duckdb supports loading extensions. Add the extension to your `profiles.yml`:
+dbt-duckdb supports loading community extensions. Add the extension to your
+`profiles.yml`:
 
 ```yaml
 my_project:
@@ -564,8 +581,8 @@ my_project:
       type: duckdb
       path: ':memory:'
       extensions:
-        - path: /absolute/path/to/libbehavioral.so
-          unsigned: true
+        - name: behavioral
+          repo: community
 ```
 
 Then use the behavioral functions directly in your dbt models:
@@ -605,11 +622,11 @@ backing the connection.
 
 ### Does the extension work with DuckDB MotherDuck?
 
-MotherDuck supports a curated set of extensions. The extension has been
-[submitted](https://github.com/duckdb/community-extensions/pull/1306) to the
-DuckDB Community Extensions registry and is pending review. Until it is accepted
-and published, it cannot be loaded in MotherDuck. You can use it with any local
-or self-hosted DuckDB instance today by building from source.
+MotherDuck supports a curated set of extensions. The extension is now listed in
+the [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
+repository. Whether MotherDuck supports loading community extensions depends on
+MotherDuck's extension allowlist policy, which is managed independently by
+MotherDuck. The extension works with any local or self-hosted DuckDB instance.
 
 ## Performance
 

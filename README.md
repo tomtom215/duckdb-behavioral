@@ -68,7 +68,7 @@ documentation — not on AI output being assumed correct.
 - [Building](#building)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Performance](#performance)
-- [Community Extension Submission](#community-extension-submission)
+- [Community Extension](#community-extension)
 - [Development](#development)
 - [Requirements](#requirements)
 - [License](#license)
@@ -76,7 +76,7 @@ documentation — not on AI output being assumed correct.
 ## Quick Start
 
 ```sql
--- Community extension (once published, pending review)
+-- Install from the DuckDB Community Extensions repository
 INSTALL behavioral FROM community;
 LOAD behavioral;
 ```
@@ -87,7 +87,7 @@ Or build from source:
 # Build the extension
 cargo build --release
 
-# Load in DuckDB
+# Load in DuckDB (locally-built extensions require -unsigned)
 duckdb -unsigned -cmd "LOAD 'target/release/libbehavioral.so';"
 ```
 
@@ -384,21 +384,21 @@ fixes, documentation polish, and full benchmark baseline refresh.
 All measurements: Criterion.rs 0.8.2, 95% confidence intervals. Full methodology, optimization history, and baseline
 records: [`PERF.md`](PERF.md).
 
-## Community Extension Submission
+## Community Extension
 
-This extension has been
-[submitted](https://github.com/duckdb/community-extensions/pull/1306) to the
+This extension is listed in the
 [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
-repository and is pending review. Once accepted, installation becomes:
+repository ([PR #1306](https://github.com/duckdb/community-extensions/pull/1306),
+merged 2026-02-15). Install with:
 
 ```sql
 INSTALL behavioral FROM community;
 LOAD behavioral;
 ```
 
-Until published, build from source using the instructions in [Building](#building).
+No build tools, compilation, or `-unsigned` flag required.
 
-### Submission Infrastructure
+### Update Process
 
 The [`community-submission.yml`](.github/workflows/community-submission.yml)
 workflow automates the full pre-submission pipeline in 5 phases:
@@ -411,10 +411,11 @@ workflow automates the full pre-submission pipeline in 5 phases:
 | Pin Ref | Updates `description.yml` ref to the validated commit SHA |
 | Submission Package | Uploads artifact, generates step-by-step PR commands |
 
-### Post-Publication Updates
+### Updating the Published Extension
 
 Push changes to this repository, re-run the submission workflow to pin the new
-ref, then open a new PR updating the ref field. When DuckDB releases a new
+ref, then open a new PR against `duckdb/community-extensions` updating the ref
+field in `extensions/behavioral/description.yml`. When DuckDB releases a new
 version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 `extension-ci-tools` submodule.
 

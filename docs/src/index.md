@@ -105,16 +105,18 @@ ORDER BY user_count DESC;
 
 ## Quick Installation
 
-### Community Extension (Pending Review)
+### Community Extension
 
-The extension has been
-[submitted](https://github.com/duckdb/community-extensions/pull/1306) to the
-DuckDB Community Extensions registry. Once accepted:
+The extension is listed in the
+[DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
+repository:
 
 ```sql
 INSTALL behavioral FROM community;
 LOAD behavioral;
 ```
+
+No build tools, compilation, or `-unsigned` flag required.
 
 ### From Source
 

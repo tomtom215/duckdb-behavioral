@@ -8,10 +8,24 @@ finish.
 
 ## Installation
 
-### Option 1: Build from Source
+### Option 1: Community Extension (Recommended)
 
-Building from source gives you the latest version and works on any platform
-where Rust and DuckDB are available.
+The extension is listed in the
+[DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
+repository. Install with a single command:
+
+```sql
+INSTALL behavioral FROM community;
+LOAD behavioral;
+```
+
+No build tools, compilation, or `-unsigned` flag required. This works with any
+DuckDB client (CLI, Python, Node.js, Java, etc.).
+
+### Option 2: Build from Source
+
+Building from source gives you the latest development version and works on any
+platform where Rust and DuckDB are available.
 
 **Prerequisites:**
 
@@ -57,26 +71,29 @@ python3 extension-ci-tools/scripts/append_extension_metadata.py \
 > **Platform note:** Replace `linux_amd64` with your platform identifier
 > (`linux_arm64`, `osx_amd64`, `osx_arm64`) and `.so` with `.dylib` on macOS.
 
-### Option 2: Community Extension (Pending Review)
-
-The extension has been
-[submitted](https://github.com/duckdb/community-extensions/pull/1306) to the
-[DuckDB Community Extensions](https://community-extensions.duckdb.org/) registry.
-Once the PR is reviewed and merged, installation becomes a single command:
-
-```sql
-INSTALL behavioral FROM community;
-LOAD behavioral;
-```
-
-No build tools or compilation required. Track the review status on the
-[submission PR](https://github.com/duckdb/community-extensions/pull/1306).
-
 ---
 
 ## Loading the Extension
 
-### From the DuckDB CLI
+### From the Community Extension (Recommended)
+
+```sql
+-- No special flags needed
+INSTALL behavioral FROM community;
+LOAD behavioral;
+```
+
+This works in any DuckDB client:
+
+```python
+import duckdb
+
+conn = duckdb.connect()
+conn.execute("INSTALL behavioral FROM community")
+conn.execute("LOAD behavioral")
+```
+
+### From a Local Build
 
 ```bash
 # The -unsigned flag is required for locally-built extensions
@@ -89,15 +106,13 @@ Then inside the DuckDB prompt:
 LOAD '/tmp/behavioral.duckdb_extension';
 ```
 
-### One-liner
+#### One-liner
 
 ```bash
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT 'behavioral loaded';"
 ```
 
-### From a DuckDB Client Library
-
-Any DuckDB client (Python, Node.js, Java, etc.) can load the extension:
+#### From a DuckDB Client Library
 
 ```python
 import duckdb
@@ -287,7 +302,12 @@ extension against your DuckDB version (this requires updating the
 
 **"Extension ... is not signed!"**
 
-DuckDB rejects unsigned extensions by default. Use one of these approaches:
+This only applies to locally-built extensions. If you installed via
+`INSTALL behavioral FROM community`, the extension is already signed and
+this error should not occur.
+
+For locally-built extensions, DuckDB rejects unsigned extensions by default.
+Use one of these approaches:
 
 ```bash
 # CLI flag

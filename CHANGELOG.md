@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Submitted to [DuckDB Community Extensions](https://github.com/duckdb/community-extensions/pull/1306)
-  registry (pending review)
+- Listed in [DuckDB Community Extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/behavioral)
+  repository ([PR #1306](https://github.com/duckdb/community-extensions/pull/1306),
+  merged 2026-02-15). Install with `INSTALL behavioral FROM community; LOAD behavioral;`
+- Updated all documentation to reflect community extension availability as the
+  recommended installation method
 
 ### Fixed
 

@@ -90,9 +90,12 @@ release with SHA256 checksums and build provenance attestations.
 
 ### Community Submission (`community-submission.yml`)
 
-On-demand workflow for preparing and submitting the extension to the
+On-demand workflow for preparing updates to the extension listing in the
 [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
-repository. Triggered via `workflow_dispatch` with a `dry_run` toggle.
+repository. The extension was accepted via
+[PR #1306](https://github.com/duckdb/community-extensions/pull/1306) (merged
+2026-02-15). This workflow is used for subsequent version updates.
+Triggered via `workflow_dispatch` with a `dry_run` toggle.
 
 **Phases:**
 
@@ -115,8 +118,8 @@ gh workflow run community-submission.yml -f dry_run=false
 ```
 
 After a full run, the workflow summary contains the exact `gh` CLI commands to
-fork `duckdb/community-extensions`, create the submission branch, and open the
-PR — ensuring deterministic, repeatable submissions.
+create a branch in the `duckdb/community-extensions` fork, update the ref, and
+open a PR — ensuring deterministic, repeatable version updates.
 
 ### Pages (`pages.yml`)
 

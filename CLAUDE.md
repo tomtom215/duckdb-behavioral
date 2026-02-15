@@ -39,8 +39,10 @@ This file provides context for AI assistants working on this codebase.
 ## Project Overview
 
 `duckdb-behavioral` is a DuckDB loadable extension written in Rust that provides
-behavioral analytics functions inspired by ClickHouse. It compiles to a `.so`/`.dylib`
-that DuckDB loads at runtime via `LOAD 'behavioral'`.
+behavioral analytics functions inspired by ClickHouse. It is listed in the
+[DuckDB Community Extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/behavioral)
+repository and can be installed with `INSTALL behavioral FROM community; LOAD behavioral;`.
+It can also be built from source, producing a `.so`/`.dylib` that DuckDB loads at runtime.
 
 ## Architecture
 
@@ -102,11 +104,17 @@ src/
 
 ## Build & Test
 
+```sql
+-- Install from DuckDB Community Extensions (no build required)
+INSTALL behavioral FROM community;
+LOAD behavioral;
+```
+
 ```bash
-# Build (dev)
+# Build from source (dev)
 cargo build
 
-# Build (release, produces loadable .so/.dylib)
+# Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
 # Run all unit tests (434 tests + 1 doc-test)
