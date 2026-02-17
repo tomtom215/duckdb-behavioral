@@ -27,6 +27,7 @@ This file provides context for AI assistants working on this codebase.
   - [Session 13: CI/CD Hardening + Benchmark Refresh](#session-13-cicd-hardening--benchmark-refresh)
   - [Session 14: Production Readiness Hardening](#session-14-production-readiness-hardening)
   - [Session 15: Enterprise Quality Standards](#session-15-enterprise-quality-standards)
+  - [Session 16: ClickHouse Parity Audit + Documentation Hardening](#session-16-clickhouse-parity-audit--documentation-hardening)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Testing](#testing)
 - [CI/CD](#cicd)
@@ -90,8 +91,11 @@ src/
 4. **Combinable `FunnelMode` bitflags**: `window_funnel` modes are represented as a
    `u8` bitflag struct (`FunnelMode(u8)`) rather than a mutually exclusive enum. This
    enables ClickHouse-compatible mode combinations (e.g., `strict | strict_increase`).
-   Six modes are defined: `STRICT`, `STRICT_ORDER`, `STRICT_DEDUPLICATION`,
-   `STRICT_INCREASE`, `STRICT_ONCE`, `ALLOW_REENTRY`.
+   Five ClickHouse modes are defined: `STRICT` (accepts both `'strict'` and
+   `'strict_deduplication'` SQL strings, matching ClickHouse aliases), `STRICT_ORDER`,
+   `STRICT_INCREASE`, `STRICT_ONCE`, `ALLOW_REENTRY`. One extension mode is defined:
+   `STRICT_DEDUPLICATION` (SQL: `'timestamp_dedup'`), providing timestamp-based
+   deduplication not present in ClickHouse.
 
 5. **O(1) combine for sessionize**: The `SessionizeBoundaryState` tracks `first_ts`,
    `last_ts`, and `boundaries` count, enabling O(1) combine for DuckDB's segment
@@ -117,7 +121,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all unit tests (434 tests + 1 doc-test)
+# Run all unit tests (435 tests + 1 doc-test)
 cargo test
 
 # Run clippy (must produce zero warnings)
@@ -173,14 +177,54 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 
 ## Code Quality Standards
 
+### Mandatory Requirements
+
+Every session MUST meet these requirements before completion:
+
+1. **`cargo test`** — ALL tests pass. Zero failures. Zero ignored.
+2. **`cargo clippy --all-targets`** — Zero warnings.
+3. **`cargo fmt -- --check`** — Zero formatting violations.
+4. **`cargo doc --no-deps`** — Builds without errors or warnings.
+5. **Test count verified** — Actual test count matches documented count.
+6. **Documentation accurate** — All claims in CLAUDE.md, PERF.md, docs/ are
+   verifiable and match current code state.
+
+### Anti-Patterns (MUST NOT Do)
+
+- **Do NOT claim parity, coverage, or performance numbers without verification.**
+  Every number in this file MUST be reproduced by running the relevant command.
+- **Do NOT update test counts without running `cargo test` and counting output.**
+- **Do NOT claim "complete" parity without checking official ClickHouse docs.**
+- **Do NOT add session entries for work not actually completed and verified.**
+- **Do NOT overstate optimizations.** Negative results are valuable and MUST be
+  documented honestly with the same rigor as positive results.
+- **Do NOT guess function semantics.** When uncertain about ClickHouse behavior,
+  check the official documentation and/or source code. Document uncertainty.
+
+### Session Protocol
+
+Each development session MUST follow this protocol:
+
+1. **Read CLAUDE.md and LESSONS.md** before starting any work.
+2. **Run `cargo test && cargo clippy --all-targets && cargo fmt -- --check`**
+   at the start to establish baseline.
+3. **Document all changes** with verifiable before/after evidence.
+4. **Run the full validation suite** at the end of the session.
+5. **Update CLAUDE.md** with a session entry documenting all changes, test
+   counts, and any new lessons learned.
+6. **Verify every claim** — if CLAUDE.md says "435 tests", run `cargo test`
+   and confirm "435 passed" appears in the output.
+
+### Current Metrics
+
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **434 unit tests** covering all functions, edge cases, combine associativity,
+- **435 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage, and
   ClickHouse mode combinations
 - **1 doc-test** for the pattern parser
 - **27 E2E tests** against real DuckDB v1.4.4 CLI covering all 7 functions
   with multiple scenarios (basic, timeout, modes, GROUP BY, no-match, NULL
-  inputs, empty tables, all 6 funnel modes, 5+ conditions, all 8
+  inputs, empty tables, all funnel modes, 5+ conditions, all 8
   direction/base combinations)
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
@@ -280,9 +324,10 @@ feature completeness.
 
 1. **`FunnelMode` bitflags refactor**: Replaced mutually exclusive `enum FunnelMode`
    with `struct FunnelMode(u8)` bitflags, enabling ClickHouse-compatible mode
-   combinations. Six independent modes: `STRICT` (0x01), `STRICT_ORDER` (0x02),
-   `STRICT_DEDUPLICATION` (0x04), `STRICT_INCREASE` (0x08), `STRICT_ONCE` (0x10),
-   `ALLOW_REENTRY` (0x20).
+   combinations. Five ClickHouse modes: `STRICT` (0x01, also accepts
+   `'strict_deduplication'`), `STRICT_ORDER` (0x02), `STRICT_INCREASE` (0x08),
+   `STRICT_ONCE` (0x10), `ALLOW_REENTRY` (0x20). One extension mode:
+   `STRICT_DEDUPLICATION` (0x04, SQL: `'timestamp_dedup'`).
 
 2. **Three new `window_funnel` modes**:
    - `strict_increase`: Requires strictly increasing timestamps between steps
@@ -721,10 +766,100 @@ Performance is consistent with Session 14 baseline. Minor throughput
 differences reflect Criterion 0.8.2's updated statistical sampling and
 rand 0.9.2's different data generation — no Rust source code was changed.
 
+### Session 16: ClickHouse Parity Audit + Documentation Hardening
+
+Session focused on rigorous verification of ClickHouse parity claims against
+the [official ClickHouse documentation](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions),
+documentation accuracy improvements, and quality standards hardening.
+
+**ClickHouse parity audit findings:**
+
+1. **`strict_deduplication` mode mapping fix**: Discovered that ClickHouse's
+   `'strict'` and `'strict_deduplication'` are aliases for the same behavior
+   (chain breaks when previously-matched condition fires again). Our extension
+   previously mapped `'strict_deduplication'` to a different behavior
+   (timestamp-based dedup, 0x04) instead of the correct `STRICT` (0x01).
+   Fixed `parse_mode_str` so both SQL strings map to `STRICT`. The timestamp-
+   based dedup mode is now available as `'timestamp_dedup'` (extension mode).
+
+2. **Non-behavioral functions scoped out**: Verified that ClickHouse's
+   parametric functions page includes 4 non-behavioral functions (`histogram`,
+   `uniqUpTo`, `sumMapFiltered`, `sumMapFilteredWithOverflow`) that are
+   correctly out of scope for this extension.
+
+3. **`sessionize` confirmed as extension-only**: Verified that ClickHouse has
+   no built-in `sessionize` function (open feature request
+   [#45311](https://github.com/ClickHouse/ClickHouse/issues/45311)).
+
+4. **`strict` mode semantic nuance documented**: Identified that our `STRICT`
+   mode includes an additional `!event.condition(current_step)` guard not
+   present in ClickHouse's implementation. This only affects events satisfying
+   multiple conditions simultaneously.
+
+**Changes:**
+
+5. **`FunnelMode::parse_mode_str` fix** (`src/window_funnel.rs`): `'strict_deduplication'`
+   now maps to `STRICT` (0x01), matching ClickHouse. `'timestamp_dedup'` maps to
+   `STRICT_DEDUPLICATION` (0x04), the extension mode.
+
+6. **Documentation overhaul**: Updated `CLAUDE.md` ClickHouse Parity Status with
+   precise scope table, mode mapping details, extensions list, and known semantic
+   differences. Updated `clickhouse-compatibility.md` with non-behavioral function
+   scope table and semantic difference notes. Updated `window-funnel.md` and
+   `faq.md` mode tables. Updated SQL test comments.
+
+7. **Quality standards hardening**: Strengthened `CLAUDE.md` with mandatory
+   verification requirements, session protocol, and anti-pattern list.
+
+8. **1 new test** (435 → 435+1 = 435): `test_parse_modes_all_modes_including_extensions`
+   verifying extension mode parsing.
+
+Test count: 435 unit tests + 1 doc-test.
+
 ## ClickHouse Parity Status
 
-**COMPLETE** — All ClickHouse behavioral analytics functions are implemented
-as of Session 8. There are no remaining feature gaps.
+**COMPLETE** — All six ClickHouse behavioral parametric functions are
+implemented as of Session 8. Verified against the
+[ClickHouse parametric functions documentation](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions)
+in Session 16.
+
+### Scope
+
+The ClickHouse parametric functions page documents 10 functions. Six are
+behavioral analytics functions (all implemented). Four are general-purpose
+functions **not in scope** for this extension:
+
+| Category | Functions | Status |
+|---|---|---|
+| Behavioral | `retention`, `windowFunnel`, `sequenceMatch`, `sequenceCount`, `sequenceMatchEvents`, `sequenceNextNode` | All implemented |
+| General (out of scope) | `histogram`, `uniqUpTo`, `sumMapFiltered`, `sumMapFilteredWithOverflow` | Not behavioral analytics |
+
+### `windowFunnel` Mode Mapping
+
+In ClickHouse, `'strict'` and `'strict_deduplication'` are aliases for the
+same behavior. Our extension correctly maps both SQL strings to the same
+internal mode (`STRICT`, 0x01) as of Session 16. The extension also provides
+`'timestamp_dedup'` as a mode not present in ClickHouse.
+
+### Extensions Beyond ClickHouse
+
+- `sessionize`: Window function (no ClickHouse equivalent)
+- `sequence_match_events`: Returns matched timestamps as `LIST(TIMESTAMP)`
+- `'timestamp_dedup'` mode: Timestamp-based deduplication in `window_funnel`
+- `(?t!=N)` time constraint: Not-equal operator in sequence patterns
+- No experimental flags required (ClickHouse's `sequenceNextNode` requires
+  `SET allow_experimental_funnel_functions = 1`)
+
+### Known Semantic Differences
+
+1. **`strict` mode guard**: Our implementation adds a `!event.condition(current_step)`
+   guard — if an event matches both the previously-matched condition AND the
+   next target condition, we advance rather than break. ClickHouse may break
+   unconditionally. This only affects events satisfying multiple conditions
+   simultaneously (uncommon in typical funnel data).
+
+2. **Window parameter type**: ClickHouse uses integer seconds; we use DuckDB
+   `INTERVAL`. Functionally equivalent.
 
 ## Testing
 
@@ -756,7 +891,7 @@ categories:
   correctness, NULL value handling, gap events, presorted detection, proptest,
   Arc\<str\> sharing verification, struct size assertions, unicode/long strings
 
-Run with `cargo test`. All 434 tests + 1 doc-test run in <1 second.
+Run with `cargo test`. All 435 tests + 1 doc-test run in <1 second.
 
 **E2E tests** (manual, against real DuckDB CLI):
 - 27 test cases covering all 7 functions

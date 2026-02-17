@@ -92,12 +92,13 @@ Each mode adds an additional constraint on top of the default greedy scan.
 
 | Mode | Description |
 |---|---|
-| `strict` | If condition `i` fires, condition `i-1` must not fire again before condition `i+1`. Prevents backwards movement. |
+| `strict` | If the previously-matched condition fires again, the chain breaks. Prevents backwards movement. ClickHouse: `'strict'` or `'strict_deduplication'`. |
+| `strict_deduplication` | Alias for `strict` (matches ClickHouse, where both strings map to the same behavior). |
 | `strict_order` | Events must satisfy conditions in exact sequential order. No events matching earlier conditions are allowed between matched steps. |
-| `strict_deduplication` | Events with the same timestamp as the previously matched step are skipped for the next step. |
 | `strict_increase` | Requires strictly increasing timestamps between consecutive matched steps. Same-timestamp events cannot advance the funnel. |
 | `strict_once` | Each event can advance the funnel by at most one step, even if it satisfies multiple consecutive conditions. |
 | `allow_reentry` | If the entry condition fires again after step 1, the funnel resets from that new entry point. |
+| `timestamp_dedup` | _Extension mode._ Events with the same timestamp as the previously matched step are skipped. Not present in ClickHouse. |
 
 ### Mode Combinations
 
