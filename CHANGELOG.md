@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merged 2026-02-15). Install with `INSTALL behavioral FROM community; LOAD behavioral;`
 - Updated all documentation to reflect community extension availability as the
   recommended installation method
+- `'timestamp_dedup'` mode string for the extension-only timestamp-based
+  deduplication mode in `window_funnel`
+- Mandatory session protocol and anti-pattern list in CLAUDE.md
+- ClickHouse parity scope table and known semantic differences documentation
+
+### Changed
+
+- **`'strict_deduplication'` mode mapping**: Now correctly maps to `STRICT`
+  (0x01), matching ClickHouse where `'strict'` and `'strict_deduplication'`
+  are aliases. The timestamp-based dedup behavior is now available under
+  `'timestamp_dedup'`.
 
 ### Fixed
 

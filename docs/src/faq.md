@@ -143,16 +143,18 @@ and time constraints.
 
 ### What modes are available and how do they combine?
 
-Six modes are available, each adding an independent constraint:
+Five ClickHouse-compatible modes plus one extension mode are available, each
+adding an independent constraint:
 
 | Mode | Effect |
 |---|---|
-| `strict` | Condition for step N-1 must not refire before step N matches |
+| `strict` | Previously-matched condition must not refire before next step matches |
+| `strict_deduplication` | Alias for `strict` (matches ClickHouse semantics) |
 | `strict_order` | No earlier conditions may fire between matched steps |
-| `strict_deduplication` | Skip events with the same timestamp as the previous step |
 | `strict_increase` | Require strictly increasing timestamps between steps |
 | `strict_once` | Each event can advance the funnel by at most one step |
 | `allow_reentry` | Reset the funnel when condition 1 fires again |
+| `timestamp_dedup` | _Extension._ Skip events with the same timestamp as the previous step |
 
 Modes are independently combinable via a comma-separated string:
 

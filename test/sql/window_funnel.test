@@ -123,7 +123,7 @@ ORDER BY user_id;
 2	2
 3	1
 
-# strict_deduplication mode: same-timestamp events deduplicated
+# strict_deduplication mode (ClickHouse alias for strict): no backward movement
 query II
 SELECT user_id, window_funnel(
     INTERVAL '1 hour',

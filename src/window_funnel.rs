@@ -31,18 +31,20 @@
 //!
 //! - **Default** (0x00): Steps can be non-consecutive. Multiple entries into
 //!   step 1 are tried. The longest chain wins.
-//! - **Strict** (0x01): If condition `i` fires, condition `i-1` must not fire
-//!   again before condition `i+1`. Prevents backwards movement in the funnel.
-//! - **Strict Order** (0x02): Events must satisfy conditions in exact sequential
-//!   order with no irrelevant events matching earlier conditions in between.
-//! - **Strict Deduplication** (0x04): Events with identical timestamps are
-//!   counted only once per condition.
-//! - **Strict Increase** (0x08): Requires strictly increasing timestamps between
-//!   matched funnel steps. Same-timestamp events cannot advance the funnel.
-//! - **Strict Once** (0x10): Each event can advance the funnel by at most one
-//!   step, even if it satisfies multiple conditions.
-//! - **Allow Reentry** (0x20): If the entry condition fires again mid-chain,
-//!   the funnel resets from that new entry point.
+//! - **Strict** (0x01, SQL: `'strict'` or `'strict_deduplication'`): If the
+//!   previously-matched condition fires again before the next condition is
+//!   matched, the chain breaks. Matches `ClickHouse`'s `strict`/`strict_deduplication`.
+//! - **Strict Order** (0x02, SQL: `'strict_order'`): Events must satisfy
+//!   conditions in exact sequential order with no earlier conditions firing between steps.
+//! - **Timestamp Dedup** (0x04, SQL: `'timestamp_dedup'`): _Extension mode_.
+//!   Events with identical timestamps as the previously-matched step are skipped.
+//!   Not present in `ClickHouse`.
+//! - **Strict Increase** (0x08, SQL: `'strict_increase'`): Requires strictly
+//!   increasing timestamps between matched funnel steps.
+//! - **Strict Once** (0x10, SQL: `'strict_once'`): Each event can advance the
+//!   funnel by at most one step, even if it satisfies multiple conditions.
+//! - **Allow Reentry** (0x20, SQL: `'allow_reentry'`): If the entry condition
+//!   fires again mid-chain, the funnel resets from that new entry point.
 
 use crate::common::event::{sort_events, Event};
 
@@ -56,12 +58,12 @@ use crate::common::event::{sort_events, Event};
 /// # Bitmask Layout
 ///
 /// ```text
-/// Bit 0 (0x01): STRICT
-/// Bit 1 (0x02): STRICT_ORDER
-/// Bit 2 (0x04): STRICT_DEDUPLICATION
-/// Bit 3 (0x08): STRICT_INCREASE
-/// Bit 4 (0x10): STRICT_ONCE
-/// Bit 5 (0x20): ALLOW_REENTRY
+/// Bit 0 (0x01): STRICT             (ClickHouse: 'strict' / 'strict_deduplication')
+/// Bit 1 (0x02): STRICT_ORDER       (ClickHouse: 'strict_order')
+/// Bit 2 (0x04): STRICT_DEDUPLICATION (Extension: 'timestamp_dedup')
+/// Bit 3 (0x08): STRICT_INCREASE    (ClickHouse: 'strict_increase')
+/// Bit 4 (0x10): STRICT_ONCE        (ClickHouse: 'strict_once')
+/// Bit 5 (0x20): ALLOW_REENTRY      (ClickHouse: 'allow_reentry')
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FunnelMode(u8);
@@ -70,15 +72,25 @@ impl FunnelMode {
     /// Default mode: no constraints beyond the basic greedy scan.
     pub const DEFAULT: Self = Self(0);
 
-    /// If condition `i` fires, condition `i-1` must not fire again before
-    /// condition `i+1`. Prevents backwards movement.
+    /// If the previously-matched condition fires again before the next
+    /// condition is matched, the chain breaks. This prevents backwards
+    /// movement in the funnel. Corresponds to `ClickHouse`'s `'strict'` and
+    /// `'strict_deduplication'` modes (which are aliases in `ClickHouse`).
     pub const STRICT: Self = Self(0x01);
 
     /// Events must satisfy conditions in exact sequential order. No out-of-order
     /// conditions allowed between matched steps.
     pub const STRICT_ORDER: Self = Self(0x02);
 
-    /// Events with identical timestamps are deduplicated per condition.
+    /// **Extension mode** (not in `ClickHouse`). Events with identical
+    /// timestamps as the previously-matched step are skipped for the
+    /// next condition. Use SQL string `'timestamp_dedup'`.
+    ///
+    /// Note: In `ClickHouse`, the SQL string `'strict_deduplication'` is an
+    /// alias for `'strict'` (prevents backwards movement). Our extension
+    /// maps `'strict_deduplication'` to `STRICT` to match `ClickHouse`
+    /// semantics. This timestamp-based dedup mode is available via the
+    /// `'timestamp_dedup'` SQL string.
     pub const STRICT_DEDUPLICATION: Self = Self(0x04);
 
     /// Requires strictly increasing timestamps between matched funnel steps.
@@ -124,13 +136,19 @@ impl FunnelMode {
 
     /// Parses a mode string into a single flag bit.
     ///
+    /// `'strict'` and `'strict_deduplication'` both map to [`STRICT`](Self::STRICT),
+    /// matching `ClickHouse` semantics where they are aliases.
+    ///
+    /// `'timestamp_dedup'` maps to [`STRICT_DEDUPLICATION`](Self::STRICT_DEDUPLICATION),
+    /// an extension mode not present in `ClickHouse`.
+    ///
     /// Returns `None` for unrecognized mode strings.
     #[must_use]
     pub fn parse_mode_str(s: &str) -> Option<Self> {
         match s {
-            "strict" => Some(Self::STRICT),
+            "strict" | "strict_deduplication" => Some(Self::STRICT),
             "strict_order" => Some(Self::STRICT_ORDER),
-            "strict_deduplication" => Some(Self::STRICT_DEDUPLICATION),
+            "timestamp_dedup" => Some(Self::STRICT_DEDUPLICATION),
             "strict_increase" => Some(Self::STRICT_INCREASE),
             "strict_once" => Some(Self::STRICT_ONCE),
             "allow_reentry" => Some(Self::ALLOW_REENTRY),
@@ -173,7 +191,7 @@ impl std::fmt::Display for FunnelMode {
         let flags = [
             (Self::STRICT, "strict"),
             (Self::STRICT_ORDER, "strict_order"),
-            (Self::STRICT_DEDUPLICATION, "strict_deduplication"),
+            (Self::STRICT_DEDUPLICATION, "timestamp_dedup"),
             (Self::STRICT_INCREASE, "strict_increase"),
             (Self::STRICT_ONCE, "strict_once"),
             (Self::ALLOW_REENTRY, "allow_reentry"),
@@ -972,8 +990,14 @@ mod tests {
             FunnelMode::parse_mode_str("strict_order"),
             Some(FunnelMode::STRICT_ORDER)
         );
+        // strict_deduplication is a ClickHouse alias for strict
         assert_eq!(
             FunnelMode::parse_mode_str("strict_deduplication"),
+            Some(FunnelMode::STRICT)
+        );
+        // timestamp_dedup is our extension mode
+        assert_eq!(
+            FunnelMode::parse_mode_str("timestamp_dedup"),
             Some(FunnelMode::STRICT_DEDUPLICATION)
         );
         assert_eq!(
@@ -1054,9 +1078,25 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_modes_all_modes() {
+    fn test_parse_modes_all_clickhouse_modes() {
+        // ClickHouse-compatible modes: strict_deduplication is an alias for strict
         let mode = FunnelMode::parse_modes(
             "strict, strict_order, strict_deduplication, strict_increase, strict_once, allow_reentry",
+        )
+        .unwrap();
+        assert!(mode.has(FunnelMode::STRICT)); // both 'strict' and 'strict_deduplication' set this
+        assert!(mode.has(FunnelMode::STRICT_ORDER));
+        assert!(!mode.has(FunnelMode::STRICT_DEDUPLICATION)); // not set by ClickHouse mode names
+        assert!(mode.has(FunnelMode::STRICT_INCREASE));
+        assert!(mode.has(FunnelMode::STRICT_ONCE));
+        assert!(mode.has(FunnelMode::ALLOW_REENTRY));
+    }
+
+    #[test]
+    fn test_parse_modes_all_modes_including_extensions() {
+        // All modes including our extension mode
+        let mode = FunnelMode::parse_modes(
+            "strict, strict_order, timestamp_dedup, strict_increase, strict_once, allow_reentry",
         )
         .unwrap();
         assert!(mode.has(FunnelMode::STRICT));
