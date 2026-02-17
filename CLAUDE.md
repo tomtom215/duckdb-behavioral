@@ -783,9 +783,15 @@ documentation accuracy improvements, and quality standards hardening.
    based dedup mode is now available as `'timestamp_dedup'` (extension mode).
 
 2. **Non-behavioral functions scoped out**: Verified that ClickHouse's
-   parametric functions page includes 4 non-behavioral functions (`histogram`,
-   `uniqUpTo`, `sumMapFiltered`, `sumMapFilteredWithOverflow`) that are
-   correctly out of scope for this extension.
+   parametric functions page includes 4 non-behavioral functions that are
+   correctly out of scope: `histogram` (statistical distribution of numeric
+   values into frequency buckets), `uniqUpTo` (cardinality estimation with
+   a cap), `sumMapFiltered` (key-filtered summation over parallel arrays),
+   `sumMapFilteredWithOverflow` (same with overflow semantics). None of
+   these operate on event sequences, require timestamps, or model user
+   behavior. They share the parametric calling convention but not the
+   semantic domain. Full justification in
+   `docs/src/internals/clickhouse-compatibility.md`.
 
 3. **`sessionize` confirmed as extension-only**: Verified that ClickHouse has
    no built-in `sessionize` function (open feature request
@@ -825,14 +831,21 @@ in Session 16.
 
 ### Scope
 
-The ClickHouse parametric functions page documents 10 functions. Six are
-behavioral analytics functions (all implemented). Four are general-purpose
-functions **not in scope** for this extension:
+The ClickHouse [parametric functions page](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions)
+documents 10 functions. Six are behavioral analytics functions (all
+implemented). Four are general-purpose aggregate functions that share the
+parametric calling convention but do not operate on event sequences, do not
+require timestamps, and do not model user behavior:
 
 | Category | Functions | Status |
 |---|---|---|
 | Behavioral | `retention`, `windowFunnel`, `sequenceMatch`, `sequenceCount`, `sequenceMatchEvents`, `sequenceNextNode` | All implemented |
-| General (out of scope) | `histogram`, `uniqUpTo`, `sumMapFiltered`, `sumMapFilteredWithOverflow` | Not behavioral analytics |
+| Statistical distribution | `histogram(number_of_bins)(values)` — adaptive histogram over numeric values | Out of scope |
+| Cardinality estimation | `uniqUpTo(N)(x)` — count distinct values up to threshold N | Out of scope |
+| Map aggregation | `sumMapFiltered(keys)(keys, values)` — key-filtered summation over arrays | Out of scope |
+| Map aggregation variant | `sumMapFilteredWithOverflow(keys)(keys, values)` — same, preserves input type | Out of scope |
+
+Full per-function justification: [`docs/src/internals/clickhouse-compatibility.md`](docs/src/internals/clickhouse-compatibility.md)
 
 ### `windowFunnel` Mode Mapping
 

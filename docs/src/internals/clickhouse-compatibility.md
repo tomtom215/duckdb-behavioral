@@ -29,16 +29,32 @@ All six ClickHouse behavioral parametric functions are implemented:
 
 ### Non-Behavioral Parametric Functions (Out of Scope)
 
-ClickHouse's parametric functions page also documents four general-purpose
-functions that are **not** behavioral analytics functions and are therefore
-**not** in scope for this extension:
+ClickHouse's [parametric aggregate functions](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions)
+page documents 10 functions total. Six are behavioral analytics functions (all
+implemented above). The remaining four are general-purpose aggregate functions
+that share the parametric calling convention but operate on fundamentally
+different problem domains. They are **not** behavioral analytics functions and
+are therefore **not** in scope for this extension.
 
-| ClickHouse Function | Category | Notes |
-|---|---|---|
-| `histogram(number_of_bins)` | Statistics | Adaptive histogram, not behavioral |
-| `uniqUpTo(N)` | Counting | Distinct count up to limit, not behavioral |
-| `sumMapFiltered(keys_to_keep)` | Map aggregation | Filtered map sum, not behavioral |
-| `sumMapFilteredWithOverflow(keys_to_keep)` | Map aggregation | Same with overflow semantics |
+The distinction is precise: behavioral analytics functions analyze **sequences
+of user actions over time** — they require a timestamp, operate on ordered
+event streams, and answer questions about user journeys, funnels, retention,
+and patterns. The four excluded functions do not operate on event sequences,
+do not require timestamps, and do not model user behavior.
+
+| ClickHouse Function | Signature | Return Type | What It Does | Why Not Behavioral |
+|---|---|---|---|---|
+| `histogram(number_of_bins)(values)` | `(UInt)(Column)` | `Array(Tuple(Float64, Float64, Float64))` | Calculates an adaptive histogram over numeric values using a streaming parallel decision tree algorithm. Returns array of `(lower_bound, upper_bound, height)` tuples. | **Statistical distribution.** Aggregates continuous numeric values into frequency buckets. No timestamps, no event ordering, no user actions. Equivalent to numpy's `histogram` or SQL `WIDTH_BUCKET`. |
+| `uniqUpTo(N)(x)` | `(UInt8)(Column)` | `UInt64` | Counts distinct values up to threshold N (max 100). Returns exact count if ≤ N, returns N+1 if exceeded. | **Cardinality estimation.** Counts unique values with a cap. No timestamps, no sequences. Equivalent to `COUNT(DISTINCT x)` with a limit. |
+| `sumMapFiltered(keys_to_keep)(keys, values)` | `(Array)(Array, Array)` | `Tuple(Array, Array)` | Sums numeric values grouped by key, filtering to only the specified keys. Operates on parallel key/value arrays. | **Map aggregation.** Performs key-filtered summation over parallel arrays. No timestamps, no event ordering. Equivalent to a filtered `GROUP BY` with `SUM`. |
+| `sumMapFilteredWithOverflow(keys_to_keep)(keys, values)` | `(Array)(Array, Array)` | `Tuple(Array, Array)` | Identical to `sumMapFiltered` except it preserves the input data type for summation instead of promoting to avoid overflow. | **Map aggregation variant.** Same as above with different overflow semantics. |
+
+These four functions happen to share ClickHouse's parametric calling convention
+`function(params)(args)` with the behavioral functions, which is why they appear
+on the same documentation page. However, the parametric convention is a syntax
+pattern, not a semantic category. DuckDB does not use this convention at all
+(all parameters are flat), making the grouping irrelevant to our extension's
+scope.
 
 ## Syntax Differences
 
