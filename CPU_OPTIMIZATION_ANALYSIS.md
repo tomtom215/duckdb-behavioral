@@ -686,6 +686,924 @@ The main limitation is build complexity, which is a CI/CD concern, not a correct
 
 ---
 
+## Detailed Implementation Plans
+
+### Implementation Plan 1: PGO Builds
+
+**Goal:** Achieve 10-15% throughput improvement across all 7 functions with
+zero source code changes.
+
+#### Prerequisites
+
+```bash
+# Install cargo-pgo (automates the 3-step PGO workflow)
+cargo install cargo-pgo
+
+# Verify llvm-profdata is available (ships with rustup's llvm-tools)
+rustup component add llvm-tools-preview
+```
+
+#### Step 1: Establish Pre-PGO Baseline (30 min)
+
+Run the full benchmark suite 3 times and record results. This is critical —
+without a baseline, the PGO improvement cannot be validated.
+
+```bash
+# Run 3 times, save each result
+for i in 1 2 3; do
+  cargo bench -- --output-format=bencher 2>&1 | tee "baseline_run_${i}.txt"
+done
+```
+
+Record the Session 15 baseline numbers (from PERF.md Current Baseline)
+as the comparison target. Focus on these 7 headline numbers:
+
+| Function | Baseline (Session 15) | Target (10% improvement) |
+|---|---|---|
+| `sessionize_update` 1B | 1.20s / 830 Melem/s | 1.08s / 926 Melem/s |
+| `retention_combine` 100M | 274ms / 365 Melem/s | 247ms / 405 Melem/s |
+| `window_funnel` 100M | 791ms / 126 Melem/s | 712ms / 140 Melem/s |
+| `sequence_match` 100M | 1.05s / 95 Melem/s | 945ms / 106 Melem/s |
+| `sequence_count` 100M | 1.18s / 85 Melem/s | 1.06s / 94 Melem/s |
+| `sequence_match_events` 100M | 1.07s / 93 Melem/s | 963ms / 104 Melem/s |
+| `sequence_next_node` 10M | 546ms / 18 Melem/s | 491ms / 20 Melem/s |
+
+#### Step 2: Instrumented Build + Training (45 min)
+
+```bash
+# Step 2a: Build with profiling instrumentation
+# cargo-pgo handles RUSTFLAGS automatically
+cargo pgo build
+
+# Step 2b: Run the FULL benchmark suite as the training workload.
+# This is the most representative workload we have — it exercises
+# all 7 functions at multiple scales, all pattern shapes, all modes,
+# and both sorted and unsorted code paths.
+cargo pgo bench
+
+# The above generates .profraw files in the default PGO output directory.
+# cargo-pgo automatically sets -C profile-generate to a managed directory.
+```
+
+**Why benchmarks are the right training workload:**
+
+The benchmark suite (`benches/*.rs`) exercises:
+- `sessionize_update`: O(1) state update with gap detection branches
+- `retention_combine`: O(1) bitmask OR in tight loop
+- `window_funnel_finalize`: Greedy scan with all 6 mode branches
+- `sequence_match`: NFA execution with `.*` lazy matching
+- `sequence_count`: NFA execution with non-overlapping counting + reusable stack
+- `sequence_match_events`: NFA with timestamp collection
+- `sequence_next_node`: Sequential matching with `Arc<str>` cloning
+- `sort_events` / `sort_events_presorted`: Both sort and presorted-skip paths
+
+This covers every hot path, every branch, and both common and rare code paths.
+The multi-scale nature (100 to 100M events) ensures both small-input and
+large-input branch distributions are captured.
+
+#### Step 3: PGO-Optimized Build (15 min)
+
+```bash
+# cargo-pgo merges .profraw files and builds with -C profile-use automatically
+cargo pgo optimize build
+```
+
+This produces the PGO-optimized binary in `target/release/`.
+
+#### Step 4: Validate Improvement (30 min)
+
+```bash
+# Run benchmarks against the PGO-optimized build
+# cargo pgo optimize bench does this automatically
+cargo pgo optimize bench 2>&1 | tee "pgo_optimized_run_1.txt"
+
+# Run 2 more times for statistical confidence
+cargo pgo optimize bench 2>&1 | tee "pgo_optimized_run_2.txt"
+cargo pgo optimize bench 2>&1 | tee "pgo_optimized_run_3.txt"
+```
+
+**Acceptance criteria:** Improvement is accepted ONLY when:
+1. All 7 functions show improvement (no regressions)
+2. Confidence intervals do not overlap for at least 5 of 7 functions
+3. Mean improvement is >= 5% across the suite
+
+**If improvement < 5%:** Document as a negative result. PGO may not help
+because our code is already well-optimized with LTO + single codegen unit,
+and the branch patterns may be too data-dependent for static profile hints
+to help. This is a valid finding.
+
+#### Step 5: CI/CD Integration (if Step 4 passes)
+
+Add a PGO build job to `.github/workflows/release.yml`. The key insight
+is that the PGO profile can be generated during the build step itself
+using the benchmark suite.
+
+```yaml
+# New job in release.yml, replacing the existing build job
+build-pgo:
+  name: Build PGO (${{ matrix.platform }})
+  needs: validate
+  runs-on: ${{ matrix.os }}
+  strategy:
+    fail-fast: false
+    matrix:
+      include:
+        - os: ubuntu-latest
+          target: x86_64-unknown-linux-gnu
+          platform: linux_amd64
+          lib_ext: so
+
+  steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+        components: llvm-tools-preview
+
+    - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+    - name: Install cargo-pgo
+      run: cargo install cargo-pgo
+
+    # Phase 1: Instrumented build
+    - name: Build instrumented binary
+      run: cargo pgo build
+
+    # Phase 2: Training run (benchmarks as workload)
+    - name: Run training workload
+      run: cargo pgo bench
+
+    # Phase 3: PGO-optimized release build
+    - name: Build PGO-optimized release
+      run: cargo pgo optimize build -- --release
+
+    # Continue with existing packaging steps...
+    - name: Package extension
+      run: |
+        # Copy PGO-optimized binary
+        cp target/release/libbehavioral.so dist/
+```
+
+**Note on cross-compilation:** PGO profiles are NOT portable across
+architectures. The linux_arm64, osx_amd64, and osx_arm64 builds cannot
+use PGO unless they run training workloads on their respective
+architectures. For the initial implementation, apply PGO only to
+linux_amd64 (the most common deployment target). Other platforms continue
+to use standard release builds.
+
+#### Step 6: Makefile Integration (optional)
+
+Add PGO targets to the Makefile for developer convenience:
+
+```makefile
+# Add to existing Makefile
+.PHONY: pgo
+pgo: ## Build with Profile-Guided Optimization
+	@echo "Step 1/3: Building instrumented binary..."
+	cargo pgo build
+	@echo "Step 2/3: Running training workload..."
+	cargo pgo bench
+	@echo "Step 3/3: Building PGO-optimized release..."
+	cargo pgo optimize build -- --release
+	@echo "PGO build complete: target/release/libbehavioral.so"
+
+.PHONY: pgo-bench
+pgo-bench: pgo ## Build with PGO and run benchmarks
+	cargo pgo optimize bench
+```
+
+#### Rollback Plan
+
+PGO is purely a build-time optimization with zero source code changes.
+Rollback is trivial: remove the PGO build step and use the standard
+`cargo build --release`. The standard binary is always available as a
+fallback.
+
+---
+
+### Implementation Plan 2: Time-Constrained NFA Fast Path
+
+**Goal:** ~48% throughput improvement for `sequence_match`, `sequence_count`,
+and `sequence_match_events` when patterns use time constraints like
+`(?1).*(?t<=300)(?2)`.
+
+**Files to modify:**
+- `src/pattern/executor.rs` — add `PatternShape::TimedWildcard`, `fast_wildcard_timed`, update `classify_pattern`
+
+#### Step 1: Extend PatternShape Enum
+
+```rust
+// In src/pattern/executor.rs, modify the PatternShape enum (line 74)
+
+enum PatternShape {
+    /// All steps are `Condition` — adjacent matching required.
+    AdjacentConditions(Vec<usize>),
+    /// Conditions separated by `.*` — greedy forward scan.
+    WildcardSeparated(Vec<usize>),
+    /// Conditions separated by `.*` with time constraints between them.
+    /// Vec of (condition_idx, Option<(TimeOp, threshold_seconds)>).
+    /// The Option is the time constraint BEFORE this condition (None for the first).
+    TimedWildcardSeparated {
+        conditions: Vec<usize>,
+        /// Time constraints indexed by gap: constraints[i] applies between
+        /// conditions[i] and conditions[i+1]. None means no constraint for that gap.
+        constraints: Vec<Option<(TimeOp, i64)>>,
+    },
+    /// Requires full NFA (`.`, mixed shapes, complex structures).
+    Complex,
+}
+```
+
+#### Step 2: Update classify_pattern
+
+The key insight is detecting the pattern: `Condition, [AnyEvents, [TimeConstraint,] Condition]*`.
+That is: conditions separated by optional `.*` with optional time constraints
+between them.
+
+```rust
+// Replace the classify_pattern function (src/pattern/executor.rs, line 90)
+
+fn classify_pattern(pattern: &CompiledPattern) -> PatternShape {
+    let mut conditions = Vec::new();
+    let mut constraints: Vec<Option<(TimeOp, i64)>> = Vec::new();
+    let mut has_any_events = false;
+    let mut has_time_constraints = false;
+    let mut has_only_conditions = true;
+
+    // State machine for parsing the pattern step sequence.
+    // Valid sequences for TimedWildcardSeparated:
+    //   Condition [AnyEvents [TimeConstraint] Condition]*
+    //   Condition [AnyEvents Condition]*  (already handled by WildcardSeparated)
+    //   Condition [TimeConstraint Condition]*  (time constraint without wildcard)
+    let mut pending_time_constraint: Option<(TimeOp, i64)> = None;
+    let mut expect_condition_or_wildcard = false;
+    let mut after_wildcard = false;
+
+    for step in &pattern.steps {
+        match step {
+            PatternStep::Condition(idx) => {
+                if conditions.is_empty() {
+                    // First condition — no preceding constraint
+                    conditions.push(*idx);
+                } else {
+                    // Subsequent condition — record the constraint for this gap
+                    constraints.push(pending_time_constraint.take());
+                    conditions.push(*idx);
+                    after_wildcard = false;
+                }
+                expect_condition_or_wildcard = true;
+            }
+            PatternStep::AnyEvents => {
+                if !expect_condition_or_wildcard || after_wildcard {
+                    // .*.* or .* before any condition — complex
+                    // Actually, consecutive .* is semantically equivalent to .*
+                    // so we can just skip it. But for simplicity, if we see
+                    // unexpected structure, fall through to check below.
+                }
+                has_any_events = true;
+                has_only_conditions = false;
+                after_wildcard = true;
+            }
+            PatternStep::TimeConstraint(op, threshold) => {
+                has_time_constraints = true;
+                has_only_conditions = false;
+                if pending_time_constraint.is_some() {
+                    // Two time constraints in a row — complex pattern
+                    return PatternShape::Complex;
+                }
+                pending_time_constraint = Some((*op, *threshold));
+            }
+            PatternStep::OneEvent => {
+                // `.` (exactly one event) requires NFA
+                return PatternShape::Complex;
+            }
+        }
+    }
+
+    if conditions.is_empty() {
+        return PatternShape::Complex;
+    }
+
+    // If we ended with a pending time constraint but no final condition,
+    // the pattern is malformed for fast path (e.g., "(?1).*(?t<=5)")
+    if pending_time_constraint.is_some() {
+        return PatternShape::Complex;
+    }
+
+    if has_only_conditions {
+        return PatternShape::AdjacentConditions(conditions);
+    }
+
+    // Has time constraints — use the timed fast path
+    if has_time_constraints && has_any_events {
+        return PatternShape::TimedWildcardSeparated {
+            conditions,
+            constraints,
+        };
+    }
+
+    // Has wildcards but no time constraints — use existing wildcard fast path
+    if has_any_events {
+        return PatternShape::WildcardSeparated(conditions);
+    }
+
+    PatternShape::Complex
+}
+```
+
+#### Step 3: Implement fast_wildcard_timed
+
+```rust
+// Add after fast_wildcard function (src/pattern/executor.rs, after line 198)
+
+use crate::pattern::parser::TimeOp;
+
+/// Fast path for wildcard-separated patterns with time constraints.
+///
+/// Handles patterns like `(?1).*(?t<=300)(?2).*(?3)` — the most common
+/// behavioral analytics pattern shape. Single-pass O(n) scan with time
+/// constraint checking between matched conditions.
+///
+/// Time constraint semantics match the NFA: elapsed time is computed as
+/// `(current_event.timestamp_us - last_matched_event.timestamp_us) / MICROS_PER_SECOND`,
+/// using integer division (truncation towards zero), compared against the
+/// threshold using the specified operator.
+///
+/// When a time constraint fails, the scan resets: the current partial match
+/// is abandoned, and scanning continues from the event AFTER the failed
+/// constraint's anchor point. This matches the NFA's non-overlapping
+/// counting behavior.
+fn fast_wildcard_timed(
+    events: &[Event],
+    conditions: &[usize],
+    constraints: &[Option<(TimeOp, i64)>],
+    count_all: bool,
+) -> MatchResult {
+    let k = conditions.len();
+    let mut total = 0;
+    let mut step = 0;
+    let mut last_match_ts: Option<i64> = None;
+
+    for event in events {
+        // Before checking the condition at the current step, evaluate
+        // any time constraint that applies to the gap between the
+        // previous matched condition and this one.
+        if step > 0 {
+            if let Some(prev_ts) = last_match_ts {
+                // constraints[step-1] is the time constraint between
+                // conditions[step-1] and conditions[step]
+                if let Some(Some((op, threshold))) = constraints.get(step - 1) {
+                    let elapsed_us = event.timestamp_us - prev_ts;
+                    let elapsed_seconds = elapsed_us / MICROS_PER_SECOND;
+                    if !op.evaluate(elapsed_seconds, *threshold) {
+                        // Time constraint failed. Reset and try this event
+                        // as a potential new start of the pattern.
+                        step = 0;
+                        last_match_ts = None;
+                        // Fall through to check if this event matches condition[0]
+                    }
+                }
+            }
+        }
+
+        if event.condition(conditions[step]) {
+            last_match_ts = Some(event.timestamp_us);
+            step += 1;
+            if step >= k {
+                total += 1;
+                if !count_all {
+                    return MatchResult {
+                        matched: true,
+                        count: 1,
+                    };
+                }
+                step = 0;
+                last_match_ts = None;
+            }
+        }
+    }
+
+    MatchResult {
+        matched: total > 0,
+        count: total,
+    }
+}
+```
+
+#### Step 4: Wire into execute_pattern
+
+```rust
+// Update the match statement in execute_pattern (src/pattern/executor.rs, line 60)
+
+match classify_pattern(pattern) {
+    PatternShape::AdjacentConditions(ref conds) => {
+        return fast_adjacent(events, conds, count_all);
+    }
+    PatternShape::WildcardSeparated(ref conds) => {
+        return fast_wildcard(events, conds, count_all);
+    }
+    PatternShape::TimedWildcardSeparated {
+        ref conditions,
+        ref constraints,
+    } => {
+        return fast_wildcard_timed(events, conditions, constraints, count_all);
+    }
+    PatternShape::Complex => {} // Fall through to NFA
+}
+```
+
+#### Step 5: Add Tests (~20 tests)
+
+```rust
+// Add to the #[cfg(test)] mod tests block in executor.rs
+
+// --- Time-constrained wildcard fast path tests ---
+
+#[test]
+fn test_fast_timed_wildcard_basic_match() {
+    // Pattern: (?1).*(?t<=5)(?2) — condition 2 within 5 seconds of condition 1
+    let pattern = parse_pattern("(?1).*(?t<=5)(?2)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false]),
+        (3_000_000, &[false, true]), // 3 seconds, <= 5
+    ]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(result.matched);
+}
+
+#[test]
+fn test_fast_timed_wildcard_constraint_fails() {
+    let pattern = parse_pattern("(?1).*(?t<=2)(?2)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false]),
+        (5_000_000, &[false, true]), // 5 seconds, > 2
+    ]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(!result.matched);
+}
+
+#[test]
+fn test_fast_timed_wildcard_resets_on_failure() {
+    // First attempt fails time constraint, second attempt succeeds
+    let pattern = parse_pattern("(?1).*(?t<=2)(?2)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false]),           // start 1
+        (5_000_000, &[false, true]),   // too late for start 1
+        (10_000_000, &[true, false]),  // start 2
+        (11_000_000, &[false, true]),  // 1 second, <= 2, matches
+    ]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(result.matched);
+}
+
+#[test]
+fn test_fast_timed_wildcard_count_non_overlapping() {
+    let pattern = parse_pattern("(?1).*(?t<=5)(?2)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false]),
+        (1_000_000, &[false, true]),    // match 1
+        (10_000_000, &[true, false]),
+        (11_000_000, &[false, true]),   // match 2
+    ]);
+    let result = execute_pattern(&pattern, &events, true);
+    assert_eq!(result.count, 2);
+}
+
+#[test]
+fn test_fast_timed_wildcard_three_conditions() {
+    // (?1).*(?t<=10)(?2).*(?t<=5)(?3)
+    let pattern = parse_pattern("(?1).*(?t<=10)(?2).*(?t<=5)(?3)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false, false]),
+        (5_000_000, &[false, true, false]),   // 5s <= 10
+        (8_000_000, &[false, false, true]),   // 3s <= 5
+    ]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(result.matched);
+}
+
+#[test]
+fn test_fast_timed_wildcard_gap_events_between() {
+    // Gap events (no conditions) between the matched conditions
+    let pattern = parse_pattern("(?1).*(?t<=10)(?2)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false]),
+        (1_000_000, &[false, false]),   // gap
+        (2_000_000, &[false, false]),   // gap
+        (3_000_000, &[false, true]),    // 3s <= 10
+    ]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(result.matched);
+}
+
+#[test]
+fn test_fast_timed_wildcard_gte_operator() {
+    let pattern = parse_pattern("(?1).*(?t>=5)(?2)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false]),
+        (3_000_000, &[false, true]), // 3s < 5 → fail
+    ]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(!result.matched);
+
+    let events2 = make_events(&[
+        (0, &[true, false]),
+        (6_000_000, &[false, true]), // 6s >= 5 → match
+    ]);
+    let result2 = execute_pattern(&pattern, &events2, false);
+    assert!(result2.matched);
+}
+
+#[test]
+fn test_fast_timed_matches_nfa_result() {
+    // Verify fast path produces identical results to NFA for the same pattern.
+    // The NFA path is triggered by adding `.` which forces Complex classification.
+    // Compare: "(?1).*(?t<=5)(?2)" (fast path) vs manually computed expected result.
+    let pattern = parse_pattern("(?1).*(?t<=5)(?2)").unwrap();
+    let events = make_events(&[
+        (0, &[true, false]),
+        (1_000_000, &[false, false]),
+        (2_000_000, &[false, true]),    // 2s <= 5
+        (10_000_000, &[true, false]),
+        (20_000_000, &[false, true]),   // 10s > 5, but new start at 10M
+    ]);
+
+    let match_result = execute_pattern(&pattern, &events, false);
+    assert!(match_result.matched);
+
+    let count_result = execute_pattern(&pattern, &events, true);
+    assert_eq!(count_result.count, 1); // Only 1 non-overlapping: (0, 2M)
+    // The second attempt: start at 10M, check at 20M: 10s > 5 → fail
+}
+```
+
+#### Step 6: Benchmark Validation
+
+After implementing, run the benchmark with time-constrained patterns:
+
+```bash
+# Add a new benchmark case to benches/sequence_bench.rs
+# that uses a time-constrained pattern to measure fast path impact.
+# Then:
+cargo bench -- sequence_match
+cargo bench -- sequence_count
+```
+
+Compare the time-constrained pattern results against baseline. The fast
+path should show ~48% improvement for patterns like `(?1).*(?t<=300)(?2)`.
+
+#### Edge Cases to Handle
+
+1. **Time constraint at pattern start:** `(?t<=5)(?1)` — vacuously true
+   (no previous match). The fast path should treat this as no constraint.
+
+2. **Multiple time constraints in sequence:** `(?1)(?t<=5)(?t>=2)(?2)` —
+   classify as Complex, let NFA handle it. The fast path only supports one
+   time constraint per gap.
+
+3. **Time constraint without wildcard:** `(?1)(?t<=5)(?2)` — this is
+   adjacent with a time constraint. Could be a fast path, but semantically
+   the condition must be on the NEXT event (no events between). This is
+   better handled by NFA or a separate adjacent-timed fast path. For now,
+   classify as Complex.
+
+4. **Pattern with `.*` at beginning or end:** `.*(?1).*(?t<=5)(?2)` or
+   `(?1).*(?t<=5)(?2).*` — the leading/trailing `.*` can be ignored for
+   matching purposes. The fast path should handle these.
+
+---
+
+### Implementation Plan 3: Rayon Parallel Sort
+
+**Goal:** 2-4x speedup on the sort phase for unsorted event arrays >100K
+elements. Feature-gated to avoid adding a runtime dependency.
+
+**Files to modify:**
+- `Cargo.toml` — add optional rayon dependency
+- `src/common/event.rs` — conditional parallel sort in `sort_events`
+
+#### Step 1: Add Feature-Gated Dependency
+
+```toml
+# In Cargo.toml [dependencies] section
+[dependencies]
+libduckdb-sys = { version = "=1.4.4", features = ["loadable-extension"] }
+rayon = { version = "1.10", optional = true }
+
+[features]
+default = []
+parallel = ["rayon"]
+```
+
+#### Step 2: Modify sort_events
+
+```rust
+// In src/common/event.rs, replace sort_events (line 114)
+
+/// Sorts events by timestamp (ascending) using unstable sort.
+///
+/// Before sorting, performs an O(n) presorted check. If events are already
+/// in non-decreasing timestamp order, the sort is skipped entirely.
+///
+/// When the `parallel` feature is enabled and the input exceeds 100,000
+/// elements, Rayon's parallel pdqsort is used for multi-core speedup.
+/// Below this threshold, sequential pdqsort is faster due to lower overhead.
+pub fn sort_events(events: &mut [Event]) {
+    if events
+        .windows(2)
+        .all(|w| w[0].timestamp_us <= w[1].timestamp_us)
+    {
+        return;
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        // Threshold determined empirically: parallel sort overhead exceeds
+        // benefit below ~100K elements for 16-byte structs.
+        const PARALLEL_SORT_THRESHOLD: usize = 100_000;
+        if events.len() > PARALLEL_SORT_THRESHOLD {
+            use rayon::slice::ParallelSliceMut;
+            events.par_sort_unstable_by_key(|e| e.timestamp_us);
+            return;
+        }
+    }
+
+    events.sort_unstable_by_key(|e| e.timestamp_us);
+}
+```
+
+#### Step 3: Update sort_events_next_node Similarly
+
+The `sequence_next_node` module has its own sort function for `NextNodeEvent`.
+Apply the same pattern:
+
+```rust
+// In src/sequence_next_node.rs, the sort_events method
+
+fn sort_events(&mut self) {
+    if self.events.windows(2).all(|w| w[0].timestamp_us <= w[1].timestamp_us) {
+        return;
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        const PARALLEL_SORT_THRESHOLD: usize = 100_000;
+        if self.events.len() > PARALLEL_SORT_THRESHOLD {
+            use rayon::slice::ParallelSliceMut;
+            self.events.par_sort_unstable_by_key(|e| e.timestamp_us);
+            return;
+        }
+    }
+
+    self.events.sort_unstable_by_key(|e| e.timestamp_us);
+}
+```
+
+#### Step 4: Thread Pool Sizing (Mitigate DuckDB Contention)
+
+DuckDB runs its own thread pool for parallel query execution. Rayon's default
+thread pool uses all available cores. Running both simultaneously causes
+contention.
+
+Add a one-time Rayon thread pool initialization that limits parallelism:
+
+```rust
+// In src/lib.rs or a new src/common/parallel.rs
+
+#[cfg(feature = "parallel")]
+use std::sync::Once;
+
+#[cfg(feature = "parallel")]
+static RAYON_INIT: Once = Once::new();
+
+#[cfg(feature = "parallel")]
+pub(crate) fn init_rayon_pool() {
+    RAYON_INIT.call_once(|| {
+        // Use at most half the available cores, leaving room for DuckDB's
+        // own thread pool. Minimum 2 threads for any parallelism benefit.
+        let num_cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let rayon_threads = (num_cpus / 2).max(2);
+
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(rayon_threads)
+            .build_global()
+            .ok(); // Silently ignore if already initialized
+    });
+}
+```
+
+Call `init_rayon_pool()` at the top of `sort_events` when the parallel path
+is taken.
+
+#### Step 5: Benchmark Validation
+
+```bash
+# Build with parallel feature
+cargo build --release --features parallel
+
+# Run sort benchmarks (the sort_bench.rs already has 100M scale)
+cargo bench --features parallel -- sort_events
+
+# Compare against baseline (without parallel feature)
+cargo bench -- sort_events
+```
+
+**Key metrics to compare:**
+- `sort_events/100` through `sort_events/10000`: Should be identical (below threshold)
+- `sort_events/100000`: Should show improvement (at threshold)
+- `sort_events/1000000` through `sort_events/100000000`: Should show 2-4x improvement
+
+#### Step 6: Integration Test Under DuckDB Load
+
+This is critical. The parallel sort must not degrade DuckDB's concurrent
+query performance:
+
+```bash
+# Build extension with parallel feature
+cargo build --release --features parallel
+cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
+# ... (append metadata)
+
+# Run concurrent queries in DuckDB
+duckdb -unsigned -c "
+  LOAD '/tmp/behavioral.duckdb_extension';
+  -- Run multiple concurrent GROUP BY queries
+  -- Each GROUP triggers separate aggregate function instances
+  SELECT user_id % 1000 as bucket,
+    window_funnel(INTERVAL '1 hour', ts, c1, c2, c3)
+  FROM generate_series(1, 10000000) t(i),
+    (SELECT i as ts, i % 5 = 0 as c1, i % 7 = 0 as c2, i % 11 = 0 as c3,
+     i % 1000 as user_id)
+  GROUP BY bucket;
+"
+```
+
+Monitor system CPU utilization and wall-clock time. If DuckDB + Rayon
+together exceed system capacity, the parallel feature should remain
+opt-in only.
+
+#### Rollback Plan
+
+The feature is behind `--features parallel`. Default builds (without the
+feature flag) are completely unaffected. To roll back, simply don't pass
+`--features parallel`.
+
+---
+
+### Implementation Plan 4: Single-Condition NFA Fast Path
+
+**Goal:** Eliminate NFA overhead for trivial `(?1)` patterns. ~5% improvement
+for single-condition queries.
+
+**Files to modify:**
+- `src/pattern/executor.rs` — add `PatternShape::SingleCondition`, `fast_single`, update `classify_pattern`
+
+#### Step 1: Extend PatternShape
+
+```rust
+// Add to PatternShape enum (src/pattern/executor.rs, line 74)
+
+enum PatternShape {
+    /// Single condition — just check if any event has the condition.
+    SingleCondition(usize),
+    /// All steps are `Condition` — adjacent matching required.
+    AdjacentConditions(Vec<usize>),
+    /// Conditions separated by `.*` — greedy forward scan.
+    WildcardSeparated(Vec<usize>),
+    /// Requires full NFA.
+    Complex,
+}
+```
+
+#### Step 2: Add Classification
+
+```rust
+// In classify_pattern, add early return after conditions check (line 108)
+
+if conditions.len() == 1 && has_only_conditions {
+    return PatternShape::SingleCondition(conditions[0]);
+}
+
+if has_only_conditions {
+    return PatternShape::AdjacentConditions(conditions);
+}
+```
+
+#### Step 3: Implement fast_single
+
+```rust
+/// Fast path for single-condition patterns like `(?1)`.
+///
+/// Scans for the first event matching the condition. For count_all,
+/// counts all events matching the condition (each is an independent match).
+/// O(n) time, O(1) space.
+fn fast_single(events: &[Event], cond_idx: usize, count_all: bool) -> MatchResult {
+    if !count_all {
+        // Early return on first match
+        for event in events {
+            if event.condition(cond_idx) {
+                return MatchResult {
+                    matched: true,
+                    count: 1,
+                };
+            }
+        }
+        return MatchResult {
+            matched: false,
+            count: 0,
+        };
+    }
+
+    // Count all matching events
+    let count = events
+        .iter()
+        .filter(|e| e.condition(cond_idx))
+        .count();
+
+    MatchResult {
+        matched: count > 0,
+        count,
+    }
+}
+```
+
+#### Step 4: Wire into execute_pattern
+
+```rust
+// Add to the match statement in execute_pattern (line 60)
+
+match classify_pattern(pattern) {
+    PatternShape::SingleCondition(cond_idx) => {
+        return fast_single(events, cond_idx, count_all);
+    }
+    PatternShape::AdjacentConditions(ref conds) => {
+        return fast_adjacent(events, conds, count_all);
+    }
+    // ... rest unchanged
+}
+```
+
+#### Step 5: Add Tests (~5 tests)
+
+```rust
+#[test]
+fn test_fast_single_match() {
+    let pattern = parse_pattern("(?1)").unwrap();
+    let events = make_events(&[(100, &[true])]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(result.matched);
+    assert_eq!(result.count, 1);
+}
+
+#[test]
+fn test_fast_single_no_match() {
+    let pattern = parse_pattern("(?1)").unwrap();
+    let events = make_events(&[(100, &[false])]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(!result.matched);
+}
+
+#[test]
+fn test_fast_single_count_all() {
+    let pattern = parse_pattern("(?1)").unwrap();
+    let events = make_events(&[
+        (100, &[true]),
+        (200, &[false]),
+        (300, &[true]),
+        (400, &[true]),
+    ]);
+    let result = execute_pattern(&pattern, &events, true);
+    assert_eq!(result.count, 3);
+}
+
+#[test]
+fn test_fast_single_empty_events() {
+    let pattern = parse_pattern("(?1)").unwrap();
+    let result = execute_pattern(&pattern, &[], false);
+    assert!(!result.matched);
+}
+
+#[test]
+fn test_fast_single_condition_2() {
+    // Test with non-first condition index
+    let pattern = parse_pattern("(?2)").unwrap();
+    let events = make_events(&[(100, &[false, true])]);
+    let result = execute_pattern(&pattern, &events, false);
+    assert!(result.matched);
+}
+```
+
+This is the simplest of the four implementations — ~15 lines of production
+code, ~30 lines of tests, and zero risk.
+
+---
+
 ## References
 
 - [1] "Evaluating SIMD Compiler-Intrinsics for Database Systems," CEUR-WS Vol. 3462, ADMS Workshop. https://ceur-ws.org/Vol-3462/ADMS5.pdf
