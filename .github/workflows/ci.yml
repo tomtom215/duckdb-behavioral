@@ -132,7 +132,7 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131 # v2
+        uses: taiki-e/install-action@d6e286fa45544157a02d45a43742857ebbc25d12 # v2
         with:
           tool: cargo-nextest
 
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: test-results-linux
           path: target/nextest/ci/junit.xml
@@ -203,7 +203,7 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131 # v2
+        uses: taiki-e/install-action@d6e286fa45544157a02d45a43742857ebbc25d12 # v2
         with:
           tool: cargo-nextest
 
@@ -212,7 +212,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: test-results-${{ matrix.os }}
           path: target/nextest/ci/junit.xml
@@ -369,7 +369,7 @@ jobs:
           fail_ci_if_error: false
       - name: Upload coverage artifacts
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: coverage-report
           path: |
