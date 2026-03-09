@@ -236,10 +236,10 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 434 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
+| **Testing Rigor** | 453 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
 | **Performance** | Fifteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
-| **Database Internals** | Raw DuckDB C API integration via custom entry point. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
+| **Database Internals** | DuckDB C API integration via [quack-rs](https://github.com/tomtom215/quack-rs) SDK with safe builders, state management, and vector I/O. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
 | **CI/CD** | 13 CI jobs, 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
 | **Feature Completeness** | Complete ClickHouse behavioral analytics parity: 7 functions, 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
 
@@ -265,7 +265,7 @@ For a comprehensive technical overview, see the
 ## Requirements
 
 - **DuckDB 1.4.4** (C API version v1.2.0)
-- **Rust 1.80+** (MSRV) for building from source
+- **Rust 1.84.1+** (MSRV) for building from source
 - A C compiler for DuckDB system bindings
 
 ## Source Code

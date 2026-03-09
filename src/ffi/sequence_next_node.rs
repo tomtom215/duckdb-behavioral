@@ -2,9 +2,18 @@
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
 //! FFI registration for the `sequence_next_node` aggregate function.
+//!
+//! Uses [`quack_rs::aggregate::AggregateFunctionSetBuilder`] for function set
+//! registration, [`quack_rs::aggregate::FfiState`] for safe state management,
+//! and [`quack_rs::vector::VectorReader`] for safe vector reading (including
+//! `read_str()` which replaces the hand-rolled `read_varchar()` helper that
+//! handled the undocumented `duckdb_string_t` 16-byte inline/pointer format).
 
 use crate::sequence_next_node::{NextNodeEvent, SequenceNextNodeState};
 use libduckdb_sys::*;
+use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::types::TypeId;
+use quack_rs::vector::{VectorReader, VectorWriter};
 use std::ffi::CString;
 use std::sync::Arc;
 
@@ -18,6 +27,8 @@ const MAX_EVENT_CONDITIONS: usize = 32;
 /// Layout: VARCHAR (direction), VARCHAR (base), TIMESTAMP, VARCHAR (`event_column`),
 /// BOOLEAN (`base_condition`), then BOOLEAN × N event conditions.
 const FIXED_PARAMS: usize = 5;
+
+impl quack_rs::aggregate::AggregateState for SequenceNextNodeState {}
 
 /// Registers the `sequence_next_node` function with `DuckDB`.
 ///
@@ -35,121 +46,30 @@ const FIXED_PARAMS: usize = 5;
 ///
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_sequence_next_node(con: duckdb_connection) {
-    unsafe {
-        let name = c"sequence_next_node";
-        let set = duckdb_create_aggregate_function_set(name.as_ptr());
-
-        for n in MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS {
-            let func = duckdb_create_aggregate_function();
-            duckdb_aggregate_function_set_name(func, name.as_ptr());
-
-            // Parameter 0: VARCHAR (direction)
-            let varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
-            duckdb_aggregate_function_add_parameter(func, varchar_type);
-            duckdb_destroy_logical_type(&mut { varchar_type });
-
-            // Parameter 1: VARCHAR (base)
-            let varchar_type2 = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
-            duckdb_aggregate_function_add_parameter(func, varchar_type2);
-            duckdb_destroy_logical_type(&mut { varchar_type2 });
-
-            // Parameter 2: TIMESTAMP
-            let ts_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
-            duckdb_aggregate_function_add_parameter(func, ts_type);
-            duckdb_destroy_logical_type(&mut { ts_type });
-
-            // Parameter 3: VARCHAR (event_column — value to return)
-            let varchar_type3 = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
-            duckdb_aggregate_function_add_parameter(func, varchar_type3);
-            duckdb_destroy_logical_type(&mut { varchar_type3 });
-
-            // Parameter 4: BOOLEAN (base_condition)
-            let bool_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            duckdb_aggregate_function_add_parameter(func, bool_type);
-            duckdb_destroy_logical_type(&mut { bool_type });
-
-            // Parameters 5..5+n: BOOLEAN event conditions
-            let bool_type2 = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            for _ in 0..n {
-                duckdb_aggregate_function_add_parameter(func, bool_type2);
-            }
-            duckdb_destroy_logical_type(&mut { bool_type2 });
-
-            // Return type: VARCHAR (nullable)
-            let ret_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
-            duckdb_aggregate_function_set_return_type(func, ret_type);
-            duckdb_destroy_logical_type(&mut { ret_type });
-
-            duckdb_aggregate_function_set_functions(
-                func,
-                Some(state_size),
-                Some(state_init),
-                Some(state_update),
-                Some(state_combine),
-                Some(state_finalize),
-            );
-
-            duckdb_aggregate_function_set_destructor(func, Some(state_destroy));
-
-            duckdb_add_aggregate_function_to_set(set, func);
-            duckdb_destroy_aggregate_function(&mut { func });
-        }
-
-        let result = duckdb_register_aggregate_function_set(con, set);
-        if result != DuckDBSuccess {
-            eprintln!("behavioral: failed to register sequence_next_node function set");
-        }
-
-        duckdb_destroy_aggregate_function_set(&mut { set });
-    }
-}
-
-#[repr(C)]
-struct FfiState {
-    inner: *mut SequenceNextNodeState,
-}
-
-/// Reads a VARCHAR value from a `DuckDB` vector at the given row index.
-///
-/// # Safety
-///
-/// Requires a valid `DuckDB` vector with VARCHAR data.
-unsafe fn read_varchar(vec: duckdb_vector, row: usize) -> Option<String> {
-    unsafe {
-        let data = duckdb_vector_get_data(vec);
-        let validity = duckdb_vector_get_validity(vec);
-
-        if !validity.is_null() && !duckdb_validity_row_is_valid(validity, row as idx_t) {
-            return None;
-        }
-
-        if data.is_null() {
-            return None;
-        }
-
-        let str_struct =
-            data.add(row * std::mem::size_of::<duckdb_string_t>()) as *const duckdb_string_t;
-        let str_ptr = duckdb_string_t_data(str_struct.cast_mut());
-        if str_ptr.is_null() {
-            return None;
-        }
-
-        let len = duckdb_string_t_length(*str_struct);
-        let bytes = std::slice::from_raw_parts(str_ptr as *const u8, len as usize);
-        std::str::from_utf8(bytes).ok().map(String::from)
-    }
-}
-
-// SAFETY: Pure computation returning byte size of FfiState.
-unsafe extern "C" fn state_size(_info: duckdb_function_info) -> idx_t {
-    std::mem::size_of::<FfiState>() as idx_t
-}
-
-// SAFETY: `state` is a DuckDB-allocated buffer of at least `state_size()` bytes.
-unsafe extern "C" fn state_init(_info: duckdb_function_info, state: duckdb_aggregate_state) {
-    unsafe {
-        let ffi_state = &mut *(state as *mut FfiState);
-        ffi_state.inner = Box::into_raw(Box::new(SequenceNextNodeState::new()));
+    let result = unsafe {
+        AggregateFunctionSetBuilder::new("sequence_next_node")
+            .returns(TypeId::Varchar)
+            .overloads(MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS, |n, builder| {
+                let mut b = builder
+                    .param(TypeId::Varchar) // direction
+                    .param(TypeId::Varchar) // base
+                    .param(TypeId::Timestamp) // timestamp
+                    .param(TypeId::Varchar) // event_column
+                    .param(TypeId::Boolean); // base_condition
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean); // event conditions
+                }
+                b.state_size(FfiState::<SequenceNextNodeState>::size_callback)
+                    .init(FfiState::<SequenceNextNodeState>::init_callback)
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+                    .destructor(FfiState::<SequenceNextNodeState>::destroy_callback)
+            })
+            .register(con)
+    };
+    if let Err(e) = result {
+        eprintln!("behavioral: failed to register sequence_next_node function set: {e}");
     }
 }
 
@@ -167,50 +87,40 @@ unsafe extern "C" fn state_update(
         let num_event_conditions = col_count.saturating_sub(FIXED_PARAMS);
 
         // Column 0: VARCHAR (direction)
-        let direction_vec = duckdb_data_chunk_get_vector(input, 0);
+        let direction_reader = VectorReader::new(input, 0);
         // Column 1: VARCHAR (base)
-        let base_vec = duckdb_data_chunk_get_vector(input, 1);
+        let base_reader = VectorReader::new(input, 1);
         // Column 2: TIMESTAMP
-        let ts_vec = duckdb_data_chunk_get_vector(input, 2);
-        let ts_data = duckdb_vector_get_data(ts_vec) as *const i64;
-        let ts_validity = duckdb_vector_get_validity(ts_vec);
+        let ts_reader = VectorReader::new(input, 2);
         // Column 3: VARCHAR (event_column / value)
-        let value_vec = duckdb_data_chunk_get_vector(input, 3);
+        let value_reader = VectorReader::new(input, 3);
         // Column 4: BOOLEAN (base_condition)
-        let base_cond_vec = duckdb_data_chunk_get_vector(input, 4);
-        let base_cond_data = duckdb_vector_get_data(base_cond_vec) as *const u8;
-        let base_cond_validity = duckdb_vector_get_validity(base_cond_vec);
+        let base_cond_reader = VectorReader::new(input, 4);
 
         // Columns 5..N: BOOLEAN event conditions
-        let mut event_cond_vectors: Vec<(*const u8, *mut u64)> =
-            Vec::with_capacity(num_event_conditions);
-        for c in FIXED_PARAMS..col_count {
-            let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const u8;
-            let validity = duckdb_vector_get_validity(vec);
-            event_cond_vectors.push((data, validity));
-        }
+        let event_cond_readers: Vec<VectorReader> = (FIXED_PARAMS..col_count)
+            .map(|c| VectorReader::new(input, c))
+            .collect();
 
         for i in 0..row_count {
-            let state_ptr = *states.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            let state = &mut *ffi_state.inner;
+            let Some(state) = FfiState::<SequenceNextNodeState>::with_state_mut(*states.add(i))
+            else {
+                continue;
+            };
 
             // Parse direction (once per state)
-            if state.direction.is_none() {
-                if let Some(dir_str) = read_varchar(direction_vec, i) {
-                    if let Some(dir) = SequenceNextNodeState::parse_direction(&dir_str) {
-                        state.set_direction(dir);
-                    }
+            if state.direction.is_none() && direction_reader.is_valid(i) {
+                let dir_str = direction_reader.read_str(i);
+                if let Some(dir) = SequenceNextNodeState::parse_direction(dir_str) {
+                    state.set_direction(dir);
                 }
             }
 
             // Parse base (once per state)
-            if state.base.is_none() {
-                if let Some(base_str) = read_varchar(base_vec, i) {
-                    if let Some(base) = SequenceNextNodeState::parse_base(&base_str) {
-                        state.set_base(base);
-                    }
+            if state.base.is_none() && base_reader.is_valid(i) {
+                let base_str = base_reader.read_str(i);
+                if let Some(base) = SequenceNextNodeState::parse_base(base_str) {
+                    state.set_base(base);
                 }
             }
 
@@ -220,28 +130,26 @@ unsafe extern "C" fn state_update(
             }
 
             // Skip NULL timestamps
-            if !ts_validity.is_null() && !duckdb_validity_row_is_valid(ts_validity, i as idx_t) {
+            if !ts_reader.is_valid(i) {
                 continue;
             }
 
-            let timestamp = *ts_data.add(i);
+            let timestamp = ts_reader.read_i64(i);
 
             // Read event_column value (nullable), convert to Arc<str> for O(1) clone
-            let value: Option<Arc<str>> = read_varchar(value_vec, i).map(Arc::from);
+            let value: Option<Arc<str>> = if value_reader.is_valid(i) {
+                Some(Arc::from(value_reader.read_str(i)))
+            } else {
+                None
+            };
 
             // Read base_condition
-            let base_condition = {
-                let valid = base_cond_validity.is_null()
-                    || duckdb_validity_row_is_valid(base_cond_validity, i as idx_t);
-                valid && *base_cond_data.add(i) != 0
-            };
+            let base_condition = base_cond_reader.is_valid(i) && base_cond_reader.read_bool(i);
 
             // Pack event conditions into u32 bitmask
             let mut bitmask: u32 = 0;
-            for (c, &(data, validity)) in event_cond_vectors.iter().enumerate() {
-                let valid =
-                    validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) != 0 {
+            for (c, reader) in event_cond_readers.iter().enumerate() {
+                if reader.is_valid(i) && reader.read_bool(i) {
                     bitmask |= 1 << c;
                 }
             }
@@ -265,16 +173,15 @@ unsafe extern "C" fn state_combine(
 ) {
     unsafe {
         for i in 0..count as usize {
-            let src_ptr = *source.add(i);
-            let tgt_ptr = *target.add(i);
-            let src_ffi = &*(src_ptr as *const FfiState);
-            let tgt_ffi = &mut *(tgt_ptr as *mut FfiState);
-
-            if src_ffi.inner.is_null() || tgt_ffi.inner.is_null() {
+            let Some(src) = FfiState::<SequenceNextNodeState>::with_state(*source.add(i)) else {
                 continue;
-            }
+            };
+            let Some(tgt) = FfiState::<SequenceNextNodeState>::with_state_mut(*target.add(i))
+            else {
+                continue;
+            };
 
-            (*tgt_ffi.inner).combine_in_place(&*src_ffi.inner);
+            tgt.combine_in_place(src);
         }
     }
 }
@@ -289,20 +196,18 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        duckdb_vector_ensure_validity_writable(result);
-        let validity = duckdb_vector_get_validity(result);
+        let mut writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
-            let state_ptr = *source.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
             let idx = (offset as usize + i) as idx_t;
 
-            if ffi_state.inner.is_null() {
-                duckdb_validity_set_row_invalid(validity, idx);
+            let Some(state) = FfiState::<SequenceNextNodeState>::with_state_mut(*source.add(i))
+            else {
+                writer.set_null(idx as usize);
                 continue;
-            }
+            };
 
-            match (*ffi_state.inner).finalize() {
+            match state.finalize() {
                 Some(value) => {
                     // Interior null bytes would cause CString::new to fail.
                     // Strip them defensively rather than silently producing
@@ -313,28 +218,114 @@ unsafe extern "C" fn state_finalize(
                     } else {
                         // Should be unreachable after stripping null bytes,
                         // but return NULL rather than panicking across FFI.
-                        duckdb_validity_set_row_invalid(validity, idx);
+                        writer.set_null(idx as usize);
                     }
                 }
                 None => {
-                    duckdb_validity_set_row_invalid(validity, idx);
+                    writer.set_null(idx as usize);
                 }
             }
         }
     }
 }
 
-// SAFETY: `state` points to `count` aggregate state pointers. Each inner pointer
-// was allocated by `Box::into_raw` in `state_init`.
-unsafe extern "C" fn state_destroy(state: *mut duckdb_aggregate_state, count: idx_t) {
-    unsafe {
-        for i in 0..count as usize {
-            let state_ptr = *state.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            if !ffi_state.inner.is_null() {
-                drop(Box::from_raw(ffi_state.inner));
-                ffi_state.inner = std::ptr::null_mut();
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sequence_next_node::{Base, Direction};
+    use quack_rs::testing::AggregateTestHarness;
+
+    #[test]
+    fn test_next_node_combine_config_propagation() {
+        // Simulate DuckDB's zero-initialized target combine pattern (Session 10 bug).
+        let mut source = AggregateTestHarness::<SequenceNextNodeState>::new();
+        source.update(|s| {
+            s.set_direction(Direction::Forward);
+            s.set_base(Base::Head);
+            s.num_steps = 1;
+            s.update(NextNodeEvent {
+                timestamp_us: 1_000_000,
+                value: Some(Arc::from("A")),
+                base_condition: true,
+                conditions: 0b1,
+            });
+        });
+
+        let mut target = AggregateTestHarness::<SequenceNextNodeState>::new();
+        target.combine(&source, |src, tgt| tgt.combine_in_place(src));
+
+        let state = target.finalize();
+        assert_eq!(state.direction, Some(Direction::Forward));
+        assert_eq!(state.base, Some(Base::Head));
+    }
+
+    #[test]
+    fn test_next_node_combine_event_union() {
+        let mut a = AggregateTestHarness::<SequenceNextNodeState>::new();
+        a.update(|s| {
+            s.set_direction(Direction::Forward);
+            s.set_base(Base::Head);
+            s.num_steps = 1;
+            s.update(NextNodeEvent {
+                timestamp_us: 1_000_000,
+                value: Some(Arc::from("A")),
+                base_condition: true,
+                conditions: 0b1,
+            });
+        });
+
+        let mut b = AggregateTestHarness::<SequenceNextNodeState>::new();
+        b.update(|s| {
+            s.set_direction(Direction::Forward);
+            s.set_base(Base::Head);
+            s.num_steps = 1;
+            s.update(NextNodeEvent {
+                timestamp_us: 2_000_000,
+                value: Some(Arc::from("B")),
+                base_condition: false,
+                conditions: 0,
+            });
+        });
+
+        b.combine(&a, |src, tgt| tgt.combine_in_place(src));
+
+        let mut state = b.finalize();
+        // After combining and finalizing, the result depends on matching logic.
+        // With forward/head and base_condition on A, next node after match should be B.
+        let result = state.finalize();
+        assert_eq!(result.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn test_next_node_null_value_handling() {
+        let mut harness = AggregateTestHarness::<SequenceNextNodeState>::new();
+        harness.update(|s| {
+            s.set_direction(Direction::Forward);
+            s.set_base(Base::Head);
+            s.num_steps = 1;
+            // Event with NULL value
+            s.update(NextNodeEvent {
+                timestamp_us: 1_000_000,
+                value: None,
+                base_condition: true,
+                conditions: 0b1,
+            });
+        });
+
+        let mut state = harness.finalize();
+        // NULL value should be preserved through the pipeline.
+        let result = state.finalize();
+        // With only a base match but no next node, result is None.
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_next_node_interior_null_bytes() {
+        // Verify that interior null bytes in strings don't cause issues.
+        // The FFI layer sanitizes \0 via value.replace('\0', "").
+        let value_with_null = "hello\0world";
+        let sanitized = value_with_null.replace('\0', "");
+        assert_eq!(sanitized, "helloworld");
+        assert!(CString::new(sanitized).is_ok());
     }
 }

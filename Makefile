@@ -13,6 +13,9 @@ USE_UNSTABLE_C_API=1
 # Target DuckDB version (must match duckdb = "=1.4.4" pin in Cargo.toml)
 TARGET_DUCKDB_VERSION=v1.4.4
 
+# Pin the test runner to the same DuckDB version (extension-ci-tools defaults to latest)
+DUCKDB_TEST_VERSION=1.4.4
+
 all: configure debug
 
 # Include makefiles from DuckDB extension-ci-tools

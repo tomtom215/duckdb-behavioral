@@ -30,15 +30,18 @@ The release workflow validates that all three match before building.
 
 ### Runtime Dependencies
 
-The extension has exactly **one** runtime dependency:
+The extension has exactly **two** runtime dependencies:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `libduckdb-sys` | `=1.4.4` | DuckDB C API bindings for aggregate function registration |
+| `quack-rs` | `=0.3.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
+| `libduckdb-sys` | `=1.4.4` | DuckDB C API bindings (re-exported by quack-rs; kept explicitly for `sessionize` window function FFI) |
 
-The version is **pinned exactly** (`=1.4.4`) to prevent silent dependency
-updates. The `loadable-extension` feature provides runtime function pointer
-stubs via global atomic statics.
+Both versions are **pinned exactly** to prevent silent dependency updates.
+`quack-rs` provides `entry_point!`, `AggregateFunctionSetBuilder`,
+`FfiState<T>`, `VectorReader`/`VectorWriter`, and `AggregateTestHarness`.
+`libduckdb-sys` with the `loadable-extension` feature provides runtime
+function pointer stubs via global atomic statics.
 
 ### Dev-Only Dependencies
 

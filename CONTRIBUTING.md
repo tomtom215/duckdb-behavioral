@@ -14,14 +14,14 @@ cd duckdb-behavioral
 cargo build
 
 # Run all checks (all must pass)
-cargo test                     # 434 unit tests + 1 doc-test
+cargo test                     # 453 unit tests + 1 doc-test
 cargo clippy --all-targets     # Zero warnings required
 cargo fmt -- --check           # Format check
 ```
 
 ## Development Requirements
 
-- Rust 1.80+ (the project's MSRV)
+- Rust 1.84.1+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
 - DuckDB CLI v1.4.4 (for E2E testing)
 
@@ -38,11 +38,12 @@ cargo fmt -- --check           # Format check
 
 ## Adding a New Function
 
-1. Create `src/new_function.rs` with `new()`, `update()`, `combine()`,
-   `combine_in_place()`, and `finalize()`.
-2. Create `src/ffi/new_function.rs` with FFI callbacks.
+1. Create `src/new_function.rs` with state struct (`Default + Send + 'static`),
+   plus `update()`, `combine_in_place()`, and `finalize()`.
+2. Create `src/ffi/new_function.rs` using quack-rs builders (`FfiState<T>`,
+   `VectorReader`, `AggregateFunctionSetBuilder`).
 3. Register in `src/ffi/mod.rs`.
-4. Add benchmark, unit tests, and E2E SQL tests.
+4. Add benchmark, unit tests, `AggregateTestHarness` tests, and E2E SQL tests.
 
 See the full [Contributing Guide](https://tomtom215.github.io/duckdb-behavioral/contributing.html)
 for detailed expectations on testing, benchmarking, and the PR process.

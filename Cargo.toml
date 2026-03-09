@@ -5,7 +5,7 @@
 name = "duckdb-behavioral"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.84.1"
 authors = ["Tom F <tomtom215@users.noreply.github.com>"]
 description = "Behavioral analytics functions for DuckDB: sessionize, retention, funnels, sequence matching"
 license = "MIT"
@@ -20,6 +20,7 @@ name = "behavioral"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+quack-rs = "=0.3.0"
 libduckdb-sys = { version = "=1.4.4", features = ["loadable-extension"] }
 
 [dev-dependencies]

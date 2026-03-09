@@ -2,14 +2,26 @@
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
 //! FFI registration for the `retention` aggregate function.
+//!
+//! Uses [`quack_rs::aggregate::FfiState`] for safe state management and
+//! [`quack_rs::vector::VectorReader`] for safe vector reading.
+//!
+//! Registration uses raw `libduckdb-sys` calls because
+//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
+//! parameterized return types like `LIST(BOOLEAN)` — the `returns()` method
+//! takes a [`quack_rs::types::TypeId`] which cannot express list element types.
 
 use crate::retention::RetentionState;
 use libduckdb_sys::*;
+use quack_rs::aggregate::FfiState;
+use quack_rs::vector::VectorReader;
 
 /// Minimum number of boolean condition parameters for retention.
 const MIN_CONDITIONS: usize = 2;
 /// Maximum number of boolean condition parameters for retention.
 const MAX_CONDITIONS: usize = 32;
+
+impl quack_rs::aggregate::AggregateState for RetentionState {}
 
 /// Registers the `retention` function with `DuckDB` as a function set
 /// with overloads for 2..=32 boolean parameters.
@@ -37,7 +49,8 @@ pub unsafe fn register_retention(con: duckdb_connection) {
             }
             duckdb_destroy_logical_type(&mut { bool_type });
 
-            // Return type: LIST(BOOLEAN)
+            // Return type: LIST(BOOLEAN) — cannot use AggregateFunctionSetBuilder
+            // because it only supports TypeId, not parameterized list types.
             let inner_bool = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
             let list_type = duckdb_create_list_type(inner_bool);
             duckdb_aggregate_function_set_return_type(func, list_type);
@@ -46,14 +59,17 @@ pub unsafe fn register_retention(con: duckdb_connection) {
 
             duckdb_aggregate_function_set_functions(
                 func,
-                Some(state_size),
-                Some(state_init),
+                Some(FfiState::<RetentionState>::size_callback),
+                Some(FfiState::<RetentionState>::init_callback),
                 Some(state_update),
                 Some(state_combine),
                 Some(state_finalize),
             );
 
-            duckdb_aggregate_function_set_destructor(func, Some(state_destroy));
+            duckdb_aggregate_function_set_destructor(
+                func,
+                Some(FfiState::<RetentionState>::destroy_callback),
+            );
 
             duckdb_add_aggregate_function_to_set(set, func);
             duckdb_destroy_aggregate_function(&mut { func });
@@ -68,28 +84,8 @@ pub unsafe fn register_retention(con: duckdb_connection) {
     }
 }
 
-#[repr(C)]
-struct FfiState {
-    inner: *mut RetentionState,
-}
-
-// SAFETY: Pure computation returning the byte size of FfiState.
-unsafe extern "C" fn state_size(_info: duckdb_function_info) -> idx_t {
-    std::mem::size_of::<FfiState>() as idx_t
-}
-
-// SAFETY: `state` is a DuckDB-allocated buffer of at least `state_size()` bytes.
-// We initialize the inner pointer to a heap-allocated RetentionState.
-unsafe extern "C" fn state_init(_info: duckdb_function_info, state: duckdb_aggregate_state) {
-    unsafe {
-        let ffi_state = &mut *(state as *mut FfiState);
-        ffi_state.inner = Box::into_raw(Box::new(RetentionState::new()));
-    }
-}
-
 // SAFETY: `input` is a valid DuckDB data chunk with N BOOLEAN columns (as registered).
-// `states` points to `row_count` aggregate state pointers initialized by `state_init`.
-// Vector data pointers are valid for `row_count` elements; null validity means all valid.
+// `states` points to `row_count` aggregate state pointers initialized by `FfiState::init_callback`.
 unsafe extern "C" fn state_update(
     _info: duckdb_function_info,
     input: duckdb_data_chunk,
@@ -99,25 +95,20 @@ unsafe extern "C" fn state_update(
         let row_count = duckdb_data_chunk_get_size(input) as usize;
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
 
-        // Read all boolean condition vectors
-        let mut vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(col_count);
-        for c in 0..col_count {
-            let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const u8;
-            let validity = duckdb_vector_get_validity(vec);
-            vectors.push((data, validity));
-        }
+        // Read all boolean condition vectors using VectorReader
+        let readers: Vec<VectorReader> = (0..col_count)
+            .map(|c| VectorReader::new(input, c))
+            .collect();
 
         for i in 0..row_count {
-            let state_ptr = *states.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            let state = &mut *ffi_state.inner;
+            let Some(state) = FfiState::<RetentionState>::with_state_mut(*states.add(i)) else {
+                continue;
+            };
 
             let mut conditions = Vec::with_capacity(col_count);
-            for &(data, validity) in &vectors {
-                let valid =
-                    validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                let value = if valid { *data.add(i) != 0 } else { false };
+            for reader in &readers {
+                let valid = reader.is_valid(i);
+                let value = if valid { reader.read_bool(i) } else { false };
                 conditions.push(value);
             }
 
@@ -127,7 +118,6 @@ unsafe extern "C" fn state_update(
 }
 
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
-// Null checks guard against uninitialized states.
 unsafe extern "C" fn state_combine(
     _info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
@@ -136,17 +126,15 @@ unsafe extern "C" fn state_combine(
 ) {
     unsafe {
         for i in 0..count as usize {
-            let src_ptr = *source.add(i);
-            let tgt_ptr = *target.add(i);
-            let src_ffi = &*(src_ptr as *const FfiState);
-            let tgt_ffi = &mut *(tgt_ptr as *mut FfiState);
-
-            if src_ffi.inner.is_null() || tgt_ffi.inner.is_null() {
+            let Some(src) = FfiState::<RetentionState>::with_state(*source.add(i)) else {
                 continue;
-            }
+            };
+            let Some(tgt) = FfiState::<RetentionState>::with_state_mut(*target.add(i)) else {
+                continue;
+            };
 
-            let combined = (*tgt_ffi.inner).combine(&*src_ffi.inner);
-            *tgt_ffi.inner = combined;
+            let combined = tgt.combine(src);
+            *tgt = combined;
         }
     }
 }
@@ -162,23 +150,19 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        // Ensure validity bitmap is writable once before the loop (idempotent
-        // but wasteful if called per-iteration).
+        // Ensure validity bitmap is writable once before the loop
         duckdb_vector_ensure_validity_writable(result);
         let validity = duckdb_vector_get_validity(result);
 
-        // Result is a LIST(BOOLEAN) vector
         for i in 0..count as usize {
-            let state_ptr = *source.add(i);
-            let ffi_state = &*(state_ptr as *const FfiState);
             let idx = offset as usize + i;
 
-            if ffi_state.inner.is_null() {
+            let Some(state) = FfiState::<RetentionState>::with_state(*source.add(i)) else {
                 duckdb_validity_set_row_invalid(validity, idx as idx_t);
                 continue;
-            }
+            };
 
-            let retention_result = (*ffi_state.inner).finalize();
+            let retention_result = state.finalize();
 
             // Write list entry to the result vector
             let child = duckdb_list_vector_get_child(result);
@@ -201,18 +185,73 @@ unsafe extern "C" fn state_finalize(
     }
 }
 
-// SAFETY: `state` points to `count` aggregate state pointers. Each inner pointer
-// was allocated by `Box::into_raw` in `state_init`. We reclaim via `Box::from_raw`
-// to free heap memory, then null the pointer to prevent double-free.
-unsafe extern "C" fn state_destroy(state: *mut duckdb_aggregate_state, count: idx_t) {
-    unsafe {
-        for i in 0..count as usize {
-            let state_ptr = *state.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            if !ffi_state.inner.is_null() {
-                drop(Box::from_raw(ffi_state.inner));
-                ffi_state.inner = std::ptr::null_mut();
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quack_rs::testing::AggregateTestHarness;
+
+    #[test]
+    fn test_retention_combine_propagates_config() {
+        // Simulate DuckDB's zero-initialized target combine pattern (Session 10 bug).
+        let mut source = AggregateTestHarness::<RetentionState>::new();
+        source.update(|s| s.update(&[true, true, false]));
+
+        let mut target = AggregateTestHarness::<RetentionState>::new();
+        // Target is fresh/default — no updates yet.
+
+        target.combine(&source, |src, tgt| {
+            let combined = tgt.combine(src);
+            *tgt = combined;
+        });
+
+        let state = target.finalize();
+        assert_eq!(state.conditions_met, 0b011);
+        assert_eq!(state.num_conditions, 3);
+    }
+
+    #[test]
+    fn test_retention_combine_empty_source() {
+        let mut target = AggregateTestHarness::<RetentionState>::new();
+        target.update(|s| s.update(&[true, false]));
+
+        let source = AggregateTestHarness::<RetentionState>::new();
+        // Source is empty — should not change target.
+
+        target.combine(&source, |src, tgt| {
+            let combined = tgt.combine(src);
+            *tgt = combined;
+        });
+
+        let state = target.finalize();
+        assert_eq!(state.conditions_met, 0b01);
+        assert_eq!(state.num_conditions, 2);
+    }
+
+    #[test]
+    fn test_retention_combine_empty_target() {
+        let source = AggregateTestHarness::<RetentionState>::with_state({
+            let mut s = RetentionState::new();
+            s.update(&[true, true]);
+            s
+        });
+
+        let mut target = AggregateTestHarness::<RetentionState>::new();
+        target.combine(&source, |src, tgt| {
+            let combined = tgt.combine(src);
+            *tgt = combined;
+        });
+
+        let state = target.finalize();
+        assert_eq!(state.conditions_met, 0b11);
+        assert_eq!(state.num_conditions, 2);
+    }
+
+    #[test]
+    fn test_retention_harness_full_lifecycle() {
+        let state = AggregateTestHarness::<RetentionState>::aggregate(
+            vec![vec![true, false, true], vec![false, true, false]],
+            |s, conditions| s.update(&conditions),
+        );
+        assert_eq!(state.finalize(), vec![true, true, true]);
     }
 }

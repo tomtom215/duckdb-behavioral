@@ -3,18 +3,25 @@
 
 //! FFI bindings for registering behavioral analytics functions with `DuckDB`.
 //!
-//! This module bridges the pure Rust implementations with `DuckDB`'s C Extension API.
-//!
 //! # Architecture
 //!
-//! `DuckDB` does not yet provide a high-level Rust API for aggregate functions.
-//! We use the raw `libduckdb-sys` FFI bindings to register aggregate functions
-//! with the five required callbacks: `state_size`, `init`, `update`, `combine`,
-//! and `finalize`.
+//! All modules except [`sessionize`] use the `quack-rs` SDK for function
+//! registration and safe state/vector management:
 //!
-//! Each function module (`sessionize`, `retention`, `window_funnel`, `sequence`)
-//! implements these callbacks as `unsafe extern "C"` functions that delegate to
-//! the pure Rust implementations in the parent modules.
+//! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function
+//!   sets with N overloads, automatically calling
+//!   `duckdb_aggregate_function_set_name` on each (preventing the Session 10 bug).
+//! - [`quack_rs::aggregate::FfiState<T>`] — `#[repr(C)]` wrapper providing safe
+//!   init/destroy lifecycle and null-checked `with_state_mut()` accessors.
+//! - [`quack_rs::vector::VectorReader`] — safe vector reading with `read_bool()`
+//!   (reads as `u8 != 0`), `read_str()` (handles `duckdb_string_t` format), and
+//!   `read_interval()`.
+//! - [`quack_rs::vector::VectorWriter`] — safe vector writing with automatic
+//!   `ensure_validity_writable` before null writes.
+//!
+//! The [`sessionize`] module is the sole exception: it requires window function
+//! registration via the C API, which `quack-rs` does not yet support (v0.3.0).
+//! It uses raw `libduckdb-sys` calls directly.
 
 pub mod retention;
 pub mod sequence;
@@ -25,15 +32,14 @@ pub mod window_funnel;
 
 /// Registers all behavioral analytics functions using a raw `duckdb_connection` handle.
 ///
-/// This function is called from the custom C entry point in `lib.rs`, which obtains
-/// the connection directly via `duckdb_connect` — avoiding any struct layout assumptions.
+/// This function is called from the `quack_rs::entry_point!` macro closure in `lib.rs`.
 ///
 /// # Safety
 ///
 /// The caller must ensure `raw_con` is a valid `duckdb_connection` handle.
 pub fn register_all_raw(raw_con: libduckdb_sys::duckdb_connection) {
     // Safety: The raw connection handle is valid — obtained via duckdb_connect
-    // in behavioral_init_internal and will be disconnected after registration.
+    // in the entry_point! macro and will be disconnected after registration.
     unsafe {
         sessionize::register_sessionize(raw_con);
         retention::register_retention(raw_con);

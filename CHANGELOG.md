@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Migrated FFI layer to `quack-rs` v0.3.0 SDK for safe state management,
+  vector I/O, and function set registration
+- 18 new `AggregateTestHarness` unit tests for combine config-propagation
+  across all 5 aggregate functions (435 → 453 tests)
+- `quack-rs` SDK lessons (48-55) in LESSONS.md
+
+### Changed
+
+- Entry point (`src/lib.rs`) now uses `quack_rs::entry_point!` macro instead
+  of ~80 lines of hand-rolled unsafe code
+- MSRV bumped from 1.80 to 1.84.1 (required by quack-rs)
+- FFI modules use `FfiState<T>`, `VectorReader`, `VectorWriter` from quack-rs
+- `sessionize` FFI remains hand-rolled (window function limitation in quack-rs)
+
+### Removed
+
+- Hand-rolled `read_varchar()` helper in `sequence_next_node` (replaced by
+  `VectorReader::read_str()`)
+
+---
+
+## [0.2.0] — 2026-02-15
+
+### Added
+
 - Listed in [DuckDB Community Extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/behavioral)
   repository ([PR #1306](https://github.com/duckdb/community-extensions/pull/1306),
   merged 2026-02-15). Install with `INSTALL behavioral FROM community; LOAD behavioral;`
@@ -115,7 +140,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sequence_match_events` -- return timestamps of matched pattern steps
 - `sequence_next_node` -- find next/previous event value after pattern match
 - Complete ClickHouse behavioral analytics function parity
-- 434 unit tests + 1 doc-test
+- 453 unit tests + 1 doc-test
 - 27 E2E SQL integration tests
 - Criterion.rs benchmarks for all 7 functions (up to 1 billion elements)
 - 88.4% mutation testing kill rate (cargo-mutants)

@@ -29,7 +29,7 @@ platform where Rust and DuckDB are available.
 
 **Prerequisites:**
 
-- Rust 1.80 or later (`rustup` recommended)
+- Rust 1.84.1 or later (`rustup` recommended)
 - A C compiler (gcc, clang, or MSVC -- needed for DuckDB system bindings)
 - DuckDB CLI v1.4.4 (for running queries)
 
@@ -399,7 +399,7 @@ or `brew install cmake` (macOS).
 
 ## Running Tests
 
-The extension includes 434 unit tests and 1 doc-test:
+The extension includes 453 unit tests and 1 doc-test:
 
 ```bash
 cargo test
@@ -433,7 +433,7 @@ previous runs by Criterion.
 
 ```
 src/
-  lib.rs                  # Custom C entry point (behavioral_init_c_api)
+  lib.rs                  # Entry point via quack_rs::entry_point! macro
   common/
     event.rs              # Shared Event type (16-byte bitmask)
     timestamp.rs          # Interval-to-microseconds conversion

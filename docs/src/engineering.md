@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 434 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 453 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -131,7 +131,7 @@ graph TB
 This architecture enables:
 
 - **Independent unit testing**: Business logic tests run in < 1 second with no
-  DuckDB instance. All 434 tests exercise Rust structs directly.
+  DuckDB instance. All 453 tests exercise Rust structs directly.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
   is decoupled from the database.
@@ -151,7 +151,7 @@ graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
         L2["E2E Tests (27)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
-        L1["Unit Tests (434)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
+        L1["Unit Tests (453)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -161,7 +161,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (434 tests)**
+**Level 1: Unit Tests (453 tests)**
 
 Organized by category within each module:
 
@@ -181,7 +181,7 @@ Organized by category within each module:
 
 Integration tests against a real DuckDB CLI instance that validate the complete
 chain: extension loading, function registration, SQL execution, and result
-correctness. These tests caught three critical bugs that all 434 unit tests
+correctness. These tests caught three critical bugs that all 453 unit tests
 missed:
 
 1. A segmentation fault on extension load (incorrect pointer arithmetic)
@@ -310,8 +310,10 @@ these analyses can run as interactive queries rather than batch jobs.
 ### DuckDB Aggregate Function Registration
 
 DuckDB's Rust crate does not provide high-level aggregate function
-registration. This project uses the raw C API (`libduckdb-sys`) directly,
-implementing five callback functions per aggregate:
+registration. This project uses the `quack-rs` SDK (v0.3.0) which wraps the
+raw C API with safe builders, state management, and vector I/O. The `sessionize`
+function uses raw `libduckdb-sys` due to window function limitations in quack-rs.
+Each aggregate implements five callback functions:
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f5f5f5', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#e8e8e8', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a', 'noteBkgColor': '#e8e8e8', 'noteTextColor': '#1a1a1a', 'noteBorderColor': '#333333', 'labelTextColor': '#1a1a1a', 'transitionColor': '#333333'}}}%%
@@ -399,7 +401,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 434 |
+| Unit tests | 453 |
 | Doc-tests | 1 |
 | E2E tests | 27 |
 | Property-based tests | 26 (proptest) |
@@ -407,7 +409,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Mutation kill rate | 88.4% (130/147) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
 | Unsafe block count | Confined to `src/ffi/` (6 files) |
-| MSRV | Rust 1.80 |
+| MSRV | Rust 1.84.1 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements |
 | CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
@@ -420,7 +422,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Language | Rust (stable, MSRV 1.80) | Memory safety, zero-cost abstractions, `unsafe` confinement |
+| Language | Rust (stable, MSRV 1.84.1) | Memory safety, zero-cost abstractions, `unsafe` confinement |
 | Database | DuckDB 1.4.4 | Analytical SQL engine, segment tree windowing |
 | FFI | libduckdb-sys (C API) | Raw aggregate function registration |
 | Benchmarking | Criterion.rs | Statistical benchmarking with confidence intervals |
