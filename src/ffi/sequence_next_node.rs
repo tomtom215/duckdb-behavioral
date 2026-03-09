@@ -103,8 +103,7 @@ unsafe extern "C" fn state_update(
             .collect();
 
         for i in 0..row_count {
-            let Some(state) =
-                FfiState::<SequenceNextNodeState>::with_state_mut(*states.add(i))
+            let Some(state) = FfiState::<SequenceNextNodeState>::with_state_mut(*states.add(i))
             else {
                 continue;
             };
@@ -145,8 +144,7 @@ unsafe extern "C" fn state_update(
             };
 
             // Read base_condition
-            let base_condition =
-                base_cond_reader.is_valid(i) && base_cond_reader.read_bool(i);
+            let base_condition = base_cond_reader.is_valid(i) && base_cond_reader.read_bool(i);
 
             // Pack event conditions into u32 bitmask
             let mut bitmask: u32 = 0;
@@ -175,13 +173,10 @@ unsafe extern "C" fn state_combine(
 ) {
     unsafe {
         for i in 0..count as usize {
-            let Some(src) =
-                FfiState::<SequenceNextNodeState>::with_state(*source.add(i))
-            else {
+            let Some(src) = FfiState::<SequenceNextNodeState>::with_state(*source.add(i)) else {
                 continue;
             };
-            let Some(tgt) =
-                FfiState::<SequenceNextNodeState>::with_state_mut(*target.add(i))
+            let Some(tgt) = FfiState::<SequenceNextNodeState>::with_state_mut(*target.add(i))
             else {
                 continue;
             };
@@ -206,8 +201,7 @@ unsafe extern "C" fn state_finalize(
         for i in 0..count as usize {
             let idx = (offset as usize + i) as idx_t;
 
-            let Some(state) =
-                FfiState::<SequenceNextNodeState>::with_state_mut(*source.add(i))
+            let Some(state) = FfiState::<SequenceNextNodeState>::with_state_mut(*source.add(i))
             else {
                 writer.set_null(idx as usize);
                 continue;

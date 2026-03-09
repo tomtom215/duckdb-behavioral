@@ -146,8 +146,7 @@ unsafe fn update_impl(
             .collect();
 
         for i in 0..row_count {
-            let Some(state) = FfiState::<WindowFunnelState>::with_state_mut(*states.add(i))
-            else {
+            let Some(state) = FfiState::<WindowFunnelState>::with_state_mut(*states.add(i)) else {
                 continue;
             };
 
