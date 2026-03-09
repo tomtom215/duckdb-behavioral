@@ -16,6 +16,7 @@ Accumulated from past development sessions. Consult before beginning any work.
 - [Performance Optimization Principles](#performance-optimization-principles) (19, 32-33)
 - [String & Memory Optimization](#string--memory-optimization) (37, 43-46)
 - [Community Extension](#community-extension) (39-41, 47, 62)
+- [quack-rs SDK](#quack-rs-sdk) (48-55)
 
 ---
 
@@ -470,3 +471,42 @@ Accumulated from past development sessions. Consult before beginning any work.
     targets (`configure`, `debug`, `release`, `test`) cannot function. The
     submodule must be initialized before any `make` invocation. Pin to a
     known-working commit for reproducibility.
+
+## quack-rs SDK
+
+48. **`AggregateFunctionSetBuilder` prevents the Session 10 function-set-name
+    bug**: The builder automatically calls `duckdb_aggregate_function_set_name`
+    on each overload. This was the bug that caused 6 of 7 functions to silently
+    fail to register — now structurally impossible when using the builder.
+
+49. **`FfiState::with_state_mut()` returns `Option` instead of raw pointer
+    dereference**: If DuckDB passes a null state pointer, the callback returns
+    `None` and continues safely rather than segfaulting. This replaces the
+    manual null checks on `ffi_state.inner`.
+
+50. **`VectorWriter::set_null()` calls `ensure_validity_writable` automatically**:
+    The NULL validity bitmap bug from Session 12 (`\0\0\0\0` instead of NULL) is
+    now structurally impossible when using `VectorWriter`.
+
+51. **`VectorReader::read_bool()` reads as `u8 != 0` by design**: The defensive
+    boolean reading pattern from Session 14 (avoiding Rust's strict `bool`
+    invariant for C API data) is now the only code path.
+
+52. **`LogicalType` RAII prevents create/destroy imbalance**: The `Drop` impl
+    calls `duckdb_destroy_logical_type` automatically. Manually balancing
+    `create`/`destroy` pairs across error paths is no longer needed.
+
+53. **`AggregateTestHarness` enables combine config-propagation testing without
+    E2E**: The Session 10 bug class (zero-initialized target combine losing
+    `window_size_us` and `mode`) is now unit-testable. All 5 aggregate functions
+    have harness tests verifying this pattern.
+
+54. **`sessionize` cannot use quack-rs (v0.3.0) due to window function limitation**:
+    DuckDB's public C Extension API does not expose window function registration
+    hooks. Re-check when quack-rs adds window function support.
+
+55. **quack-rs `interval_to_micros()` has different month semantics**: The local
+    `interval_to_micros` intentionally rejects month-based intervals (ambiguous
+    28-31 days). quack-rs converts months to 30 days. Keep the local version
+    for behavioral analytics correctness. MSRV compatibility: quack-rs 0.3.0
+    requires Rust 1.84.1. Always verify quack-rs MSRV before updating.
