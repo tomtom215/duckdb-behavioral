@@ -2,6 +2,16 @@
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
 //! FFI registration for the `sessionize` aggregate/window function.
+//!
+//! `sessionize` is registered as an aggregate function with window semantics.
+//! The `DuckDB` public C Extension API does not expose window function registration
+//! hooks (see `quack-rs` documentation: "Known limitations — window functions").
+//! This module intentionally uses raw `libduckdb-sys` calls and is excluded from
+//! the `quack-rs` migration. Do not attempt to migrate this module without first
+//! verifying that `quack-rs` has added window function support.
+//!
+//! All other FFI modules in this crate use `quack-rs` builders and safe abstractions.
+//! See `LESSONS.md` for context on this decision.
 
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
