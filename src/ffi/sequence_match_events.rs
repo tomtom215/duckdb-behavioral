@@ -2,15 +2,26 @@
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
 //! FFI registration for the `sequence_match_events` aggregate function.
+//!
+//! Uses [`quack_rs::aggregate::FfiState`] for safe state management and
+//! [`quack_rs::vector::VectorReader`] for safe vector reading.
+//!
+//! Registration uses raw `libduckdb-sys` calls because
+//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
+//! parameterized return types like `LIST(TIMESTAMP)`.
 
 use crate::common::event::Event;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
+use quack_rs::aggregate::FfiState;
+use quack_rs::vector::VectorReader;
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
 /// Maximum number of boolean condition parameters for sequence functions.
 const MAX_CONDITIONS: usize = 32;
+
+// Note: AggregateState for SequenceState is implemented in ffi/sequence.rs.
 
 /// Registers the `sequence_match_events` function with `DuckDB`.
 ///
@@ -48,7 +59,7 @@ pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
             }
             duckdb_destroy_logical_type(&mut { bool_type });
 
-            // Return type: LIST(TIMESTAMP)
+            // Return type: LIST(TIMESTAMP) — cannot use AggregateFunctionSetBuilder
             let inner_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
             let list_type = duckdb_create_list_type(inner_type);
             duckdb_aggregate_function_set_return_type(func, list_type);
@@ -57,14 +68,17 @@ pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
 
             duckdb_aggregate_function_set_functions(
                 func,
-                Some(state_size),
-                Some(state_init),
+                Some(FfiState::<SequenceState>::size_callback),
+                Some(FfiState::<SequenceState>::init_callback),
                 Some(state_update),
                 Some(state_combine),
                 Some(state_finalize),
             );
 
-            duckdb_aggregate_function_set_destructor(func, Some(state_destroy));
+            duckdb_aggregate_function_set_destructor(
+                func,
+                Some(FfiState::<SequenceState>::destroy_callback),
+            );
 
             duckdb_add_aggregate_function_to_set(set, func);
             duckdb_destroy_aggregate_function(&mut { func });
@@ -79,24 +93,6 @@ pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
     }
 }
 
-#[repr(C)]
-struct FfiState {
-    inner: *mut SequenceState,
-}
-
-// SAFETY: Pure computation returning byte size of FfiState.
-unsafe extern "C" fn state_size(_info: duckdb_function_info) -> idx_t {
-    std::mem::size_of::<FfiState>() as idx_t
-}
-
-// SAFETY: `state` is a DuckDB-allocated buffer of at least `state_size()` bytes.
-unsafe extern "C" fn state_init(_info: duckdb_function_info, state: duckdb_aggregate_state) {
-    unsafe {
-        let ffi_state = &mut *(state as *mut FfiState);
-        ffi_state.inner = Box::into_raw(Box::new(SequenceState::new()));
-    }
-}
-
 // SAFETY: `input` is a valid DuckDB data chunk with columns (VARCHAR, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 unsafe extern "C" fn state_update(
@@ -107,54 +103,32 @@ unsafe extern "C" fn state_update(
     unsafe {
         let row_count = duckdb_data_chunk_get_size(input) as usize;
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
-        let num_conditions = col_count.saturating_sub(2);
 
-        let pattern_vec = duckdb_data_chunk_get_vector(input, 0);
-
-        let ts_vec = duckdb_data_chunk_get_vector(input, 1);
-        let ts_data = duckdb_vector_get_data(ts_vec) as *const i64;
-        let ts_validity = duckdb_vector_get_validity(ts_vec);
-
-        let mut cond_vectors: Vec<(*const u8, *mut u64)> = Vec::with_capacity(num_conditions);
-        for c in 2..col_count {
-            let vec = duckdb_data_chunk_get_vector(input, c as idx_t);
-            let data = duckdb_vector_get_data(vec) as *const u8;
-            let validity = duckdb_vector_get_validity(vec);
-            cond_vectors.push((data, validity));
-        }
+        let pattern_reader = VectorReader::new(input, 0);
+        let ts_reader = VectorReader::new(input, 1);
+        let cond_readers: Vec<VectorReader> = (2..col_count)
+            .map(|c| VectorReader::new(input, c))
+            .collect();
 
         for i in 0..row_count {
-            let state_ptr = *states.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            let state = &mut *ffi_state.inner;
+            let Some(state) = FfiState::<SequenceState>::with_state_mut(*states.add(i)) else {
+                continue;
+            };
 
-            if state.pattern_str.is_none() {
-                let pattern_str_raw = duckdb_vector_get_data(pattern_vec);
-                if !pattern_str_raw.is_null() {
-                    let str_struct = pattern_str_raw.add(i * std::mem::size_of::<duckdb_string_t>())
-                        as *const duckdb_string_t;
-                    let str_ptr = duckdb_string_t_data(str_struct.cast_mut());
-                    if !str_ptr.is_null() {
-                        let len = duckdb_string_t_length(*str_struct);
-                        let bytes = std::slice::from_raw_parts(str_ptr as *const u8, len as usize);
-                        if let Ok(s) = std::str::from_utf8(bytes) {
-                            state.set_pattern(s);
-                        }
-                    }
-                }
+            if state.pattern_str.is_none() && pattern_reader.is_valid(i) {
+                let s = pattern_reader.read_str(i);
+                state.set_pattern(s);
             }
 
-            if !ts_validity.is_null() && !duckdb_validity_row_is_valid(ts_validity, i as idx_t) {
+            if !ts_reader.is_valid(i) {
                 continue;
             }
 
-            let timestamp = *ts_data.add(i);
+            let timestamp = ts_reader.read_i64(i);
 
             let mut bitmask: u32 = 0;
-            for (c, &(data, validity)) in cond_vectors.iter().enumerate() {
-                let valid =
-                    validity.is_null() || duckdb_validity_row_is_valid(validity, i as idx_t);
-                if valid && *data.add(i) != 0 {
+            for (c, reader) in cond_readers.iter().enumerate() {
+                if reader.is_valid(i) && reader.read_bool(i) {
                     bitmask |= 1 << c;
                 }
             }
@@ -173,16 +147,14 @@ unsafe extern "C" fn state_combine(
 ) {
     unsafe {
         for i in 0..count as usize {
-            let src_ptr = *source.add(i);
-            let tgt_ptr = *target.add(i);
-            let src_ffi = &*(src_ptr as *const FfiState);
-            let tgt_ffi = &mut *(tgt_ptr as *mut FfiState);
-
-            if src_ffi.inner.is_null() || tgt_ffi.inner.is_null() {
+            let Some(src) = FfiState::<SequenceState>::with_state(*source.add(i)) else {
                 continue;
-            }
+            };
+            let Some(tgt) = FfiState::<SequenceState>::with_state_mut(*target.add(i)) else {
+                continue;
+            };
 
-            (*tgt_ffi.inner).combine_in_place(&*src_ffi.inner);
+            tgt.combine_in_place(src);
         }
     }
 }
@@ -202,20 +174,18 @@ unsafe extern "C" fn state_finalize(
         let mut list_offset: idx_t = duckdb_list_vector_get_size(result);
 
         for i in 0..count as usize {
-            let state_ptr = *source.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
             let idx = (offset as usize + i) as idx_t;
 
-            if ffi_state.inner.is_null() {
+            let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
                 // Empty list for null state
                 duckdb_list_vector_set_size(result, list_offset);
                 let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
                 (*list_data.add(idx as usize)).offset = list_offset;
                 (*list_data.add(idx as usize)).length = 0;
                 continue;
-            }
+            };
 
-            let timestamps = (*ffi_state.inner).finalize_events().unwrap_or_default();
+            let timestamps = state.finalize_events().unwrap_or_default();
 
             let ts_count = timestamps.len() as idx_t;
 
@@ -239,17 +209,65 @@ unsafe extern "C" fn state_finalize(
     }
 }
 
-// SAFETY: `state` points to `count` aggregate state pointers. Each inner pointer
-// was allocated by `Box::into_raw` in `state_init`.
-unsafe extern "C" fn state_destroy(state: *mut duckdb_aggregate_state, count: idx_t) {
-    unsafe {
-        for i in 0..count as usize {
-            let state_ptr = *state.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            if !ffi_state.inner.is_null() {
-                drop(Box::from_raw(ffi_state.inner));
-                ffi_state.inner = std::ptr::null_mut();
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quack_rs::testing::AggregateTestHarness;
+
+    #[test]
+    fn test_sequence_events_empty_pattern() {
+        let mut state = AggregateTestHarness::<SequenceState>::aggregate(
+            vec![Event::new(1_000_000, 0b01), Event::new(2_000_000, 0b10)],
+            |s, event| {
+                if s.pattern_str.is_none() {
+                    s.set_pattern("(?3)"); // condition 3 never fires
+                }
+                s.update(event);
+            },
+        );
+        let events = state.finalize_events().unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_sequence_events_combine_timestamp_union() {
+        let mut a = AggregateTestHarness::<SequenceState>::new();
+        a.update(|s| {
+            s.set_pattern("(?1).*(?2)");
+            s.update(Event::new(1_000_000, 0b01));
+        });
+
+        let mut b = AggregateTestHarness::<SequenceState>::new();
+        b.update(|s| {
+            s.set_pattern("(?1).*(?2)");
+            s.update(Event::new(2_000_000, 0b10));
+        });
+
+        b.combine(&a, |src, tgt| tgt.combine_in_place(src));
+
+        let mut state = b.finalize();
+        let events = state.finalize_events().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0], 1_000_000);
+        assert_eq!(events[1], 2_000_000);
+    }
+
+    #[test]
+    fn test_sequence_events_config_propagation() {
+        // Zero-initialized target combine pattern (Session 10 bug).
+        let mut source = AggregateTestHarness::<SequenceState>::new();
+        source.update(|s| {
+            s.set_pattern("(?1).*(?2)");
+            s.update(Event::new(1_000_000, 0b01));
+            s.update(Event::new(2_000_000, 0b10));
+        });
+
+        let mut target = AggregateTestHarness::<SequenceState>::new();
+        target.combine(&source, |src, tgt| tgt.combine_in_place(src));
+
+        let mut state = target.finalize();
+        assert!(state.pattern_str.is_some());
+        let events = state.finalize_events().unwrap();
+        assert_eq!(events.len(), 2);
     }
 }
