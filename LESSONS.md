@@ -94,14 +94,14 @@ Accumulated from past development sessions. Consult before beginning any work.
 
 49. **E2E testing against real DuckDB is non-negotiable**: Unit tests alone missed
     3 critical bugs: SEGFAULT on load, 6 functions failing to register, and
-    `window_funnel` returning wrong results. All 434 unit tests passed while the
+    `window_funnel` returning wrong results. All 453 unit tests passed while the
     extension was completely broken in production. Unit tests validate business
     logic in isolation; E2E tests validate the FFI boundary, DuckDB's data chunk
     format, state lifecycle management, and the extension loading mechanism. Both
     test levels are mandatory — never ship without E2E validation.
 
 56. **Unit tests and E2E tests serve fundamentally different purposes**: The 375 unit
-    tests at the time (now 434) validated business logic: combine associativity, mode parsing, NFA pattern
+    tests at the time (now 453) validated business logic: combine associativity, mode parsing, NFA pattern
     matching, edge cases. But they operate on Rust structs in isolation — they never
     exercise the FFI boundary, DuckDB's data chunk format, DuckDB's aggregate state
     lifecycle (init→update→combine→finalize→destroy), or extension loading. All 3

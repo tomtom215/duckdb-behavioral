@@ -32,9 +32,10 @@ programming). In the interest of full transparency and academic rigor, the
 following safeguards ensure that AI assistance does not compromise correctness,
 reproducibility, or trustworthiness:
 
-- **434 unit tests + 1 doc-test** covering all functions, edge cases, combine
-  associativity, property-based testing (proptest), and mutation-testing-guided
-  coverage. All tests run in under 1 second via `cargo test`.
+- **453 unit tests + 1 doc-test** covering all functions, edge cases, combine
+  associativity, property-based testing (proptest), mutation-testing-guided
+  coverage, and `AggregateTestHarness` combine config-propagation tests.
+  All tests run in under 1 second via `cargo test`.
 - **27 end-to-end SQL tests** against a real DuckDB v1.4.4 instance validating
   the complete chain from extension loading through SQL execution to correct
   results, including NULL inputs, empty tables, all 6 funnel modes, 5+
@@ -45,9 +46,9 @@ reproducibility, or trustworthiness:
 - **88.4% mutation testing kill rate** (130 caught / 17 missed) via
   `cargo-mutants`, systematically verifying that tests detect real faults.
 - **Zero clippy warnings** under pedantic, nursery, and cargo lint groups.
-- **Deterministic, reproducible builds** — pinned dependencies (`libduckdb-sys
-  = "=1.4.4"`), MSRV 1.84.1 verified in CI, and release profile with LTO and
-  single codegen unit.
+- **Deterministic, reproducible builds** — pinned dependencies (`quack-rs
+  = "=0.3.0"`, `libduckdb-sys = "=1.4.4"`), MSRV 1.84.1 verified in CI,
+  and release profile with LTO and single codegen unit.
 - **Every optimization session** documents hypothesis, technique, measured
   before/after data with confidence intervals, and negative results are
   reported honestly (5 negative results documented in PERF.md).
@@ -192,7 +193,7 @@ workflow automates the full pre-submission pipeline in 5 phases:
 | Phase | Purpose |
 |-------|---------|
 | Validate | `description.yml` schema, version consistency, required files |
-| Quality Gate | `cargo test` (434 + doc-test), `clippy`, `fmt`, `doc` |
+| Quality Gate | `cargo test` (453 + doc-test), `clippy`, `fmt`, `doc` |
 | Build & Test | `make configure && make release && make test_release` |
 | Pin Ref | Updates `description.yml` ref to the validated commit SHA |
 | Submission Package | Uploads artifact, generates step-by-step PR commands |
@@ -209,7 +210,7 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 
 | Metric | Value |
 |---|---|
-| Unit tests | 434 + 1 doc-test |
+| Unit tests | 453 + 1 doc-test |
 | E2E tests | 27 (against real DuckDB CLI) |
 | Property-based tests | 26 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
@@ -253,7 +254,7 @@ cargo build --release
 ## Development
 
 ```bash
-cargo test                  # 434 unit tests + 1 doc-test
+cargo test                  # 453 unit tests + 1 doc-test
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt                   # Format
 cargo bench                 # Criterion.rs benchmarks

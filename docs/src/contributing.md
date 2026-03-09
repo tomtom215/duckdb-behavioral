@@ -45,25 +45,33 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
 
 - **Pure Rust core**: Business logic in top-level modules (`sessionize.rs`,
   `retention.rs`, etc.) with zero FFI dependencies.
-- **FFI bridge**: DuckDB C API registration confined to `src/ffi/`. Every
-  `unsafe` block has a `// SAFETY:` comment.
+- **FFI bridge via quack-rs SDK**: DuckDB C API registration confined to
+  `src/ffi/`, using [quack-rs](https://github.com/tomtom215/quack-rs) v0.3.0
+  for safe builders, state management (`FfiState<T>`), and vector I/O
+  (`VectorReader`/`VectorWriter`). Every `unsafe` block has a `// SAFETY:`
+  comment.
 - **All public items documented**: Functions, structs, and modules must have
   doc comments.
 
 ### Adding a New Function
 
-1. Create `src/new_function.rs` with state struct implementing `new()`,
-   `update()`, `combine()`, `combine_in_place()`, and `finalize()`.
-2. Create `src/ffi/new_function.rs` with FFI callbacks.
-   - If using function sets, call `duckdb_aggregate_function_set_name` on
-     **each** function in the set.
-   - `combine_in_place` must propagate **all** configuration fields from
+1. Create `src/new_function.rs` with state struct implementing `Default + Send + 'static`,
+   plus `update()`, `combine_in_place()`, `finalize()` methods.
+2. Add `impl quack_rs::aggregate::AggregateState for NewFunctionState {}` in the FFI module.
+3. Create `src/ffi/new_function.rs` using quack-rs builders:
+   - Use `AggregateFunctionSetBuilder::new("name").overloads(...)` for registration
+     (automatically handles function-set-name per overload).
+   - Use `FfiState::<NewFunctionState>::size_callback`/`init_callback`/`destroy_callback`.
+   - Use `VectorReader` for input (`read_bool`, `read_str`, `read_i64`, `read_interval`).
+   - Use `VectorWriter` for output (`write_i32`, `write_bool`, `set_null`).
+   - **NOTE**: If return type is `LIST(T)`, use raw registration — the builder cannot express it.
+   - **CRITICAL**: `combine_in_place` must propagate **all** configuration fields from
      the source state (not just events).
-3. Register in `src/ffi/mod.rs` `register_all_raw()`.
-4. Add `pub mod new_function;` to `src/lib.rs`.
-5. Add a benchmark in `benches/`.
-6. Write unit tests in the module.
-7. **E2E test**: Build release, load in DuckDB CLI, verify SQL produces
+4. Register in `src/ffi/mod.rs` `register_all_raw()`.
+5. Add `pub mod new_function;` to `src/lib.rs`.
+6. Add a benchmark in `benches/`.
+7. Write unit tests + `AggregateTestHarness` combine config-propagation tests.
+8. **E2E test**: Build release, load in DuckDB CLI, verify SQL produces
    correct results.
 
 ## Testing Expectations

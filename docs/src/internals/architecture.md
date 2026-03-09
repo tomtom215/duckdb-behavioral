@@ -8,7 +8,7 @@ business logic and DuckDB's C API.
 
 ```
 src/
-  lib.rs                       Custom C entry point (behavioral_init_c_api)
+  lib.rs                       Entry point via quack_rs::entry_point! macro
   common/
     mod.rs
     event.rs                   Event type (u32 bitmask, Copy, 16 bytes)
@@ -24,12 +24,12 @@ src/
   sequence_next_node.rs        Next event value after pattern match (Arc<str>)
   ffi/
     mod.rs                     register_all_raw() dispatcher
-    sessionize.rs              FFI callbacks for sessionize
-    retention.rs               FFI callbacks for retention
-    window_funnel.rs           FFI callbacks for window_funnel
-    sequence.rs                FFI callbacks for sequence_match + sequence_count
-    sequence_match_events.rs   FFI callbacks for sequence_match_events
-    sequence_next_node.rs      FFI callbacks for sequence_next_node
+    sessionize.rs              FFI callbacks (raw libduckdb-sys — window function)
+    retention.rs               FFI via quack-rs FfiState + VectorReader
+    window_funnel.rs           FFI via quack-rs builder + FfiState + VectorReader
+    sequence.rs                FFI via quack-rs builder for sequence_match/count
+    sequence_match_events.rs   FFI via quack-rs FfiState (raw registration for LIST)
+    sequence_next_node.rs      FFI via quack-rs builder + VectorReader::read_str
 ```
 
 ## Design Principles
@@ -60,9 +60,10 @@ DuckDB requires five callbacks for aggregate function registration:
 | `state_combine` | Merges two states (used by DuckDB's segment tree) |
 | `state_finalize` | Produces the output value from a state |
 
-Each FFI module wraps a `FfiState` struct containing a pointer to the
-heap-allocated Rust state. The `state_destroy` callback reclaims memory via
-`Box::from_raw`.
+Each FFI module uses `quack_rs::aggregate::FfiState<T>` for safe state
+management. `FfiState<T>` handles heap allocation, null-checked access via
+`with_state_mut()`, and memory reclamation — replacing hand-rolled
+`Box::from_raw` patterns.
 
 ### Function Sets for Variadic Signatures
 
@@ -75,16 +76,34 @@ This is necessary for `retention`, `window_funnel`, `sequence_match`,
 `sessionize` function has a fixed two-parameter signature and does not require a
 function set.
 
-### Custom C Entry Point
+### Entry Point via quack-rs
 
-The extension uses a hand-written `behavioral_init_c_api` entry point that
-obtains `duckdb_connection` directly via `duckdb_connect` from the
-`duckdb_extension_access` struct. This bypasses `duckdb::Connection` entirely,
-eliminating fragile struct layout assumptions that caused SEGFAULTs in earlier
+The extension uses the `quack_rs::entry_point!` macro to generate the
+`behavioral_init_c_api` symbol. The macro handles API initialization,
+connection management via `duckdb_connect`/`duckdb_disconnect`, and error
+reporting — replacing ~80 lines of hand-rolled unsafe code from earlier
 versions.
 
-Only `libduckdb-sys` (with the `loadable-extension` feature) is needed at
-runtime. The `duckdb` crate is used only in `#[cfg(test)]` for unit tests.
+### quack-rs SDK
+
+The FFI layer uses [quack-rs](https://github.com/tomtom215/quack-rs) v0.3.0,
+a Rust SDK for DuckDB loadable extensions. It provides:
+
+- **`AggregateFunctionSetBuilder`**: Safe registration of function sets with
+  automatic per-overload naming (preventing the Session 10 bug where 6 of 7
+  functions silently failed to register).
+- **`FfiState<T>`**: Null-checked state management with `with_state_mut()`
+  returning `Option<&mut T>`, safe init/destroy lifecycle.
+- **`VectorReader`/`VectorWriter`**: Safe vector I/O replacing raw pointer
+  arithmetic (`read_bool()`, `read_str()`, `read_interval()`, `write_i32()`,
+  `set_null()`).
+- **`AggregateTestHarness`**: Unit-test harness for verifying combine
+  config-propagation without E2E testing.
+
+Functions with parameterized return types (`LIST(BOOLEAN)`, `LIST(TIMESTAMP)`)
+use raw `libduckdb-sys` for registration but quack-rs for state/vector ops.
+`sessionize` remains fully hand-rolled (window function limitation in quack-rs).
+The `duckdb` crate is used only in `#[cfg(test)]` for unit tests.
 
 ## Event Representation
 

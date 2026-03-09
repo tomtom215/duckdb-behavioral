@@ -433,7 +433,7 @@ previous runs by Criterion.
 
 ```
 src/
-  lib.rs                  # Custom C entry point (behavioral_init_c_api)
+  lib.rs                  # Entry point via quack_rs::entry_point! macro
   common/
     event.rs              # Shared Event type (16-byte bitmask)
     timestamp.rs          # Interval-to-microseconds conversion
