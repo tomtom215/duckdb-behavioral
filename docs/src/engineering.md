@@ -407,7 +407,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Mutation kill rate | 88.4% (130/147) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
 | Unsafe block count | Confined to `src/ffi/` (6 files) |
-| MSRV | Rust 1.80 |
+| MSRV | Rust 1.84.1 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements |
 | CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
@@ -420,7 +420,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Language | Rust (stable, MSRV 1.80) | Memory safety, zero-cost abstractions, `unsafe` confinement |
+| Language | Rust (stable, MSRV 1.84.1) | Memory safety, zero-cost abstractions, `unsafe` confinement |
 | Database | DuckDB 1.4.4 | Analytical SQL engine, segment tree windowing |
 | FFI | libduckdb-sys (C API) | Raw aggregate function registration |
 | Benchmarking | Criterion.rs | Statistical benchmarking with confidence intervals |

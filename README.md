@@ -10,7 +10,7 @@
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.80-blue.svg" alt="MSRV: 1.80"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.84.1-blue.svg" alt="MSRV: 1.84.1"></a>
 </p>
 
 Provides `sessionize`, `retention`, `window_funnel`, `sequence_match`,
@@ -46,7 +46,7 @@ reproducibility, or trustworthiness:
   `cargo-mutants`, systematically verifying that tests detect real faults.
 - **Zero clippy warnings** under pedantic, nursery, and cargo lint groups.
 - **Deterministic, reproducible builds** — pinned dependencies (`libduckdb-sys
-  = "=1.4.4"`), MSRV 1.80 verified in CI, and release profile with LTO and
+  = "=1.4.4"`), MSRV 1.84.1 verified in CI, and release profile with LTO and
   single codegen unit.
 - **Every optimization session** documents hypothesis, technique, measured
   before/after data with confidence intervals, and negative results are
@@ -239,7 +239,7 @@ E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
 
 ## Building
 
-**Prerequisites**: Rust 1.80+ (MSRV), a C compiler (for DuckDB sys bindings)
+**Prerequisites**: Rust 1.84.1+ (MSRV), a C compiler (for DuckDB sys bindings)
 
 ```bash
 # Build the extension (release mode)
@@ -279,7 +279,7 @@ for the full SemVer rules applied to SQL function signatures.
 
 ## Requirements
 
-- Rust 1.80+ (MSRV)
+- Rust 1.84.1+ (MSRV)
 - DuckDB 1.4.4 (pinned dependency)
 - Python 3.x (for extension metadata tooling)
 

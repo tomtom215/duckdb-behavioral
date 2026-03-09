@@ -29,7 +29,7 @@ platform where Rust and DuckDB are available.
 
 **Prerequisites:**
 
-- Rust 1.80 or later (`rustup` recommended)
+- Rust 1.84.1 or later (`rustup` recommended)
 - A C compiler (gcc, clang, or MSVC -- needed for DuckDB system bindings)
 - DuckDB CLI v1.4.4 (for running queries)
 

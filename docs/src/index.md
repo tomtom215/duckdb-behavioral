@@ -265,7 +265,7 @@ For a comprehensive technical overview, see the
 ## Requirements
 
 - **DuckDB 1.4.4** (C API version v1.2.0)
-- **Rust 1.80+** (MSRV) for building from source
+- **Rust 1.84.1+** (MSRV) for building from source
 - A C compiler for DuckDB system bindings
 
 ## Source Code
