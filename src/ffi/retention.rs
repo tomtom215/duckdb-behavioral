@@ -3,18 +3,20 @@
 
 //! FFI registration for the `retention` aggregate function.
 //!
-//! Uses [`quack_rs::aggregate::FfiState`] for safe state management and
-//! [`quack_rs::vector::VectorReader`] for safe vector reading.
-//!
-//! Registration uses raw `libduckdb-sys` calls because
-//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
-//! parameterized return types like `LIST(BOOLEAN)` — the `returns()` method
-//! takes a [`quack_rs::types::TypeId`] which cannot express list element types.
+//! Uses [`quack_rs::aggregate::AggregateFunctionSetBuilder`] with
+//! [`returns_logical`][quack_rs::aggregate::AggregateFunctionSetBuilder::returns_logical]
+//! for `LIST(BOOLEAN)` return type registration.
+//! Uses [`quack_rs::aggregate::FfiState`] for safe state management,
+//! [`quack_rs::vector::VectorReader`] for input, and
+//! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
+//! for LIST output.
 
 use crate::retention::RetentionState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::FfiState;
-use quack_rs::vector::VectorReader;
+use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::types::{LogicalType, TypeId};
+use quack_rs::vector::complex::ListVector;
+use quack_rs::vector::{VectorReader, VectorWriter};
 
 /// Minimum number of boolean condition parameters for retention.
 const MIN_CONDITIONS: usize = 2;
@@ -32,55 +34,25 @@ impl quack_rs::aggregate::AggregateState for RetentionState {}
 ///
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_retention(con: duckdb_connection) {
-    unsafe {
-        let name = c"retention";
-        let set = duckdb_create_aggregate_function_set(name.as_ptr());
-
-        for n in MIN_CONDITIONS..=MAX_CONDITIONS {
-            let func = duckdb_create_aggregate_function();
-
-            // Each function in the set must have a name set
-            duckdb_aggregate_function_set_name(func, name.as_ptr());
-
-            // Add n BOOLEAN parameters
-            let bool_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            for _ in 0..n {
-                duckdb_aggregate_function_add_parameter(func, bool_type);
-            }
-            duckdb_destroy_logical_type(&mut { bool_type });
-
-            // Return type: LIST(BOOLEAN) — cannot use AggregateFunctionSetBuilder
-            // because it only supports TypeId, not parameterized list types.
-            let inner_bool = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            let list_type = duckdb_create_list_type(inner_bool);
-            duckdb_aggregate_function_set_return_type(func, list_type);
-            duckdb_destroy_logical_type(&mut { inner_bool });
-            duckdb_destroy_logical_type(&mut { list_type });
-
-            duckdb_aggregate_function_set_functions(
-                func,
-                Some(FfiState::<RetentionState>::size_callback),
-                Some(FfiState::<RetentionState>::init_callback),
-                Some(state_update),
-                Some(state_combine),
-                Some(state_finalize),
-            );
-
-            duckdb_aggregate_function_set_destructor(
-                func,
-                Some(FfiState::<RetentionState>::destroy_callback),
-            );
-
-            duckdb_add_aggregate_function_to_set(set, func);
-            duckdb_destroy_aggregate_function(&mut { func });
-        }
-
-        let result = duckdb_register_aggregate_function_set(con, set);
-        if result != DuckDBSuccess {
-            eprintln!("behavioral: failed to register retention function set");
-        }
-
-        duckdb_destroy_aggregate_function_set(&mut { set });
+    let result = unsafe {
+        AggregateFunctionSetBuilder::new("retention")
+            .returns_logical(LogicalType::list(TypeId::Boolean))
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+                let mut b = builder;
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.state_size(FfiState::<RetentionState>::size_callback)
+                    .init(FfiState::<RetentionState>::init_callback)
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+                    .destructor(FfiState::<RetentionState>::destroy_callback)
+            })
+            .register(con)
+    };
+    if let Err(e) = result {
+        eprintln!("behavioral: failed to register retention function set: {e}");
     }
 }
 
@@ -100,12 +72,13 @@ unsafe extern "C" fn state_update(
             .map(|c| VectorReader::new(input, c))
             .collect();
 
+        let mut conditions = Vec::with_capacity(col_count);
         for i in 0..row_count {
             let Some(state) = FfiState::<RetentionState>::with_state_mut(*states.add(i)) else {
                 continue;
             };
 
-            let mut conditions = Vec::with_capacity(col_count);
+            conditions.clear();
             for reader in &readers {
                 let valid = reader.is_valid(i);
                 let value = if valid { reader.read_bool(i) } else { false };
@@ -140,7 +113,7 @@ unsafe extern "C" fn state_combine(
 }
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB LIST(BOOLEAN) vector. We use DuckDB's list vector APIs to write
+// valid DuckDB LIST(BOOLEAN) vector. We use ListVector + VectorWriter to write
 // entries: reserve space, set size, write list_entry offsets, then write child data.
 unsafe extern "C" fn state_finalize(
     _info: duckdb_function_info,
@@ -150,37 +123,30 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        // Ensure validity bitmap is writable once before the loop
-        duckdb_vector_ensure_validity_writable(result);
-        let validity = duckdb_vector_get_validity(result);
+        let mut parent_writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
             let idx = offset as usize + i;
 
             let Some(state) = FfiState::<RetentionState>::with_state(*source.add(i)) else {
-                duckdb_validity_set_row_invalid(validity, idx as idx_t);
+                parent_writer.set_null(idx);
                 continue;
             };
 
             let retention_result = state.finalize();
 
-            // Write list entry to the result vector
-            let child = duckdb_list_vector_get_child(result);
-            let current_size = duckdb_list_vector_get_size(result);
-            let new_size = current_size + retention_result.len() as idx_t;
-            duckdb_list_vector_reserve(result, new_size);
-            duckdb_list_vector_set_size(result, new_size);
-
-            // Set the list entry (offset and length)
-            let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
-            (*list_data.add(idx)).offset = current_size;
-            (*list_data.add(idx)).length = retention_result.len() as idx_t;
+            let current_size = ListVector::get_size(result) as u64;
+            let new_size = current_size + retention_result.len() as u64;
+            ListVector::reserve(result, new_size as usize);
 
             // Write boolean values to child vector
-            let child_data = duckdb_vector_get_data(child) as *mut u8;
+            let mut child_writer = ListVector::child_writer(result);
             for (j, &val) in retention_result.iter().enumerate() {
-                *child_data.add(current_size as usize + j) = u8::from(val);
+                child_writer.write_bool(current_size as usize + j, val);
             }
+
+            ListVector::set_size(result, new_size as usize);
+            ListVector::set_entry(result, idx, current_size, retention_result.len() as u64);
         }
     }
 }

@@ -88,7 +88,7 @@ to pin all transitive dependency versions.
 Release artifacts include:
 
 1. **SHA256 checksums** (`SHA256SUMS.txt`) for every release artifact
-2. **GitHub artifact attestations** via `actions/attest-build-provenance@v2`,
+2. **GitHub artifact attestations** via `actions/attest-build-provenance@v3`,
    which provides a cryptographic link between the artifact and the GitHub
    Actions build that produced it
 3. **Immutable build logs** in GitHub Actions with full command output

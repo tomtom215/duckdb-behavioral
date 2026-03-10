@@ -1,7 +1,7 @@
 [book]
 title = "duckdb-behavioral"
 description = "Behavioral Analytics Functions for DuckDB"
-authors = ["Thomas Thompson"]
+authors = ["Tom F."]
 language = "en"
 src = "src"
 

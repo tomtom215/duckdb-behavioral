@@ -25,11 +25,11 @@ src/
   ffi/
     mod.rs                     register_all_raw() dispatcher
     sessionize.rs              FFI callbacks (raw libduckdb-sys — window function)
-    retention.rs               FFI via quack-rs FfiState + VectorReader
-    window_funnel.rs           FFI via quack-rs builder + FfiState + VectorReader
+    retention.rs               FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
+    window_funnel.rs           FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
     sequence.rs                FFI via quack-rs builder for sequence_match/count
-    sequence_match_events.rs   FFI via quack-rs FfiState (raw registration for LIST)
-    sequence_next_node.rs      FFI via quack-rs builder + VectorReader::read_str
+    sequence_match_events.rs   FFI via quack-rs builder + returns_logical(LIST(TIMESTAMP)) + ListVector
+    sequence_next_node.rs      FFI via quack-rs builder + VectorWriter::write_varchar
 ```
 
 ## Design Principles
@@ -86,22 +86,28 @@ versions.
 
 ### quack-rs SDK
 
-The FFI layer uses [quack-rs](https://github.com/tomtom215/quack-rs) v0.3.0,
+The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.5.0,
 a Rust SDK for DuckDB loadable extensions. It provides:
 
 - **`AggregateFunctionSetBuilder`**: Safe registration of function sets with
-  automatic per-overload naming (preventing the Session 10 bug where 6 of 7
-  functions silently failed to register).
+  automatic per-overload naming. Supports both `.returns(TypeId)` for simple types
+  and `.returns_logical(LogicalType)` for parameterized types like `LIST(T)`.
 - **`FfiState<T>`**: Null-checked state management with `with_state_mut()`
   returning `Option<&mut T>`, safe init/destroy lifecycle.
-- **`VectorReader`/`VectorWriter`**: Safe vector I/O replacing raw pointer
-  arithmetic (`read_bool()`, `read_str()`, `read_interval()`, `write_i32()`,
-  `set_null()`).
+- **`VectorReader`**: Safe input reading (`read_bool()`, `read_str()`,
+  `read_i64()`, `read_interval()`, `is_valid()`).
+- **`VectorWriter`**: Safe output writing (`write_i32()`, `write_bool()`,
+  `write_varchar()`, `set_null()` with automatic validity bitmap setup).
+- **`ListVector`**: Safe LIST output (`reserve()`, `set_size()`, `set_entry()`,
+  `child_writer()`) replacing raw `duckdb_list_vector_*` pointer arithmetic.
+- **`LogicalType::list()`**: RAII construction of `LIST(T)` types for
+  `returns_logical()`.
 - **`AggregateTestHarness`**: Unit-test harness for verifying combine
   config-propagation without E2E testing.
 
-Functions with parameterized return types (`LIST(BOOLEAN)`, `LIST(TIMESTAMP)`)
-use raw `libduckdb-sys` for registration but quack-rs for state/vector ops.
+All 6 aggregate functions use `AggregateFunctionSetBuilder` for registration,
+including `retention` and `sequence_match_events` which use
+`.returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
 `sessionize` remains fully hand-rolled (window function limitation in quack-rs).
 The `duckdb` crate is used only in `#[cfg(test)]` for unit tests.
 

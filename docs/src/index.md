@@ -239,7 +239,7 @@ For a comprehensive technical overview, see the
 | **Testing Rigor** | 453 unit tests, 27 E2E tests against real DuckDB, 26 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
 | **Performance** | Fifteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
-| **Database Internals** | DuckDB C API integration via [quack-rs](https://github.com/tomtom215/quack-rs) SDK with safe builders, state management, and vector I/O. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
+| **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
 | **CI/CD** | 13 CI jobs, 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
 | **Feature Completeness** | Complete ClickHouse behavioral analytics parity: 7 functions, 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
 

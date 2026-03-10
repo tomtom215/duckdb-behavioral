@@ -1,42 +1,20 @@
 # CLAUDE.md — DuckDB Behavioral Analytics Extension
 
-This file provides context for AI assistants working on this codebase.
+Engineering reference for the `duckdb-behavioral` codebase.
 
 ## Table of Contents
 
 - [Project Overview](#project-overview)
 - [Architecture](#architecture)
-  - [Key Design Decisions](#key-design-decisions)
 - [Build & Test](#build--test)
 - [Functions](#functions)
 - [Dependencies](#dependencies)
 - [Code Quality Standards](#code-quality-standards)
 - [Performance](#performance)
-  - [Session 1: Event Bitmask Optimization](#session-1-event-bitmask-optimization)
-  - [Session 2: In-Place Combine + Sort Optimization](#session-2-in-place-combine--sort-optimization)
-  - [Session 3: NFA Lazy Matching + 10M Benchmarks](#session-3-nfa-lazy-matching--10m-benchmarks)
-  - [Session 4: Billion-Row Benchmarks + Test Hardening](#session-4-billion-row-benchmarks--test-hardening)
-  - [Session 5: ClickHouse Feature Parity + sequenceMatchEvents](#session-5-clickhouse-feature-parity--sequencematchevents)
-  - [Session 6: Mode FFI + 32-Condition Support + Presorted Detection](#session-6-mode-ffi--32-condition-support--presorted-detection)
-  - [Session 7: Negative Results + Benchmark Validation + Testing](#session-7-negative-results--benchmark-validation--testing)
-  - [Session 8: sequenceNextNode + Complete ClickHouse Parity](#session-8-sequencenextnode--complete-clickhouse-parity)
-  - [Session 9: Rc\<str\> Optimization + Community Extension](#session-9-rcstr-optimization--community-extension)
-  - [Session 10: E2E Validation + Custom C Entry Point](#session-10-e2e-validation--custom-c-entry-point)
-  - [Session 11: NFA Fast Paths + Git Mining Demo](#session-11-nfa-fast-paths--git-mining-demo)
-  - [Session 12: Community Extension Readiness + Benchmark Completion](#session-12-community-extension-readiness--benchmark-completion)
-  - [Session 13: CI/CD Hardening + Benchmark Refresh](#session-13-cicd-hardening--benchmark-refresh)
-  - [Session 14: Production Readiness Hardening](#session-14-production-readiness-hardening)
-  - [Session 15: Enterprise Quality Standards](#session-15-enterprise-quality-standards)
-  - [Session 16: ClickHouse Parity Audit + Documentation Hardening](#session-16-clickhouse-parity-audit--documentation-hardening)
-  - [Session 17: quack-rs SDK Migration](#session-17-quack-rs-sdk-migration)
 - [ClickHouse Parity Status](#clickhouse-parity-status)
 - [Testing](#testing)
 - [CI/CD](#cicd)
 - [Common Tasks](#common-tasks)
-  - [Adding a new function](#adding-a-new-function)
-  - [Updating DuckDB version](#updating-duckdb-version)
-  - [Performance optimization session](#performance-optimization-session)
-- [Lessons Learned](#lessons-learned) → [`LESSONS.md`](LESSONS.md)
 
 ## Project Overview
 
@@ -67,11 +45,11 @@ src/
 └── ffi/
     ├── mod.rs              # register_all_raw() — dispatches to all FFI modules
     ├── sessionize.rs       # FFI callbacks for sessionize (raw libduckdb-sys — window function)
-    ├── retention.rs        # FFI via quack-rs FfiState + VectorReader (raw registration for LIST return)
-    ├── window_funnel.rs    # FFI via quack-rs AggregateFunctionSetBuilder + FfiState + VectorReader
+    ├── retention.rs        # FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
+    ├── window_funnel.rs    # FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
     ├── sequence.rs         # FFI via quack-rs builder for sequence_match + sequence_count
-    ├── sequence_match_events.rs  # FFI via quack-rs FfiState (raw registration for LIST return)
-    └── sequence_next_node.rs     # FFI via quack-rs builder + VectorReader::read_str
+    ├── sequence_match_events.rs  # FFI via quack-rs builder + returns_logical(LIST(TIMESTAMP)) + ListVector
+    └── sequence_next_node.rs     # FFI via quack-rs builder + VectorWriter::write_varchar
 ```
 
 ### Key Design Decisions
@@ -81,18 +59,21 @@ src/
    submodules handle DuckDB C API registration only.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
-   provide high-level aggregate function registration. We use `quack-rs` v0.3.0
-   which wraps the raw C API with safe builders (`AggregateFunctionSetBuilder`),
-   state management (`FfiState<T>`), and vector I/O (`VectorReader`/`VectorWriter`).
-   Functions with parameterized return types (`LIST(BOOLEAN)`, `LIST(TIMESTAMP)`)
-   still use raw `libduckdb-sys` for registration but quack-rs for state/vector ops.
+   provide high-level aggregate function registration. We use `quack-rs` v0.5.0
+   ([crates.io](https://crates.io/crates/quack-rs)) which wraps the raw C API with safe builders
+   (`AggregateFunctionSetBuilder`), state management (`FfiState<T>`), vector I/O
+   (`VectorReader`/`VectorWriter` including `write_varchar`), complex type helpers
+   (`ListVector`, `LogicalType::list()`), parameterized return type support
+   (`returns_logical(LogicalType)`), and `AggregateTestHarness` for combine
+   testing. All 6 aggregate functions use the builder for registration --
+   including `retention` and `sequence_match_events` which use
+   `returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
    `sessionize` remains fully hand-rolled (window function limitation in quack-rs).
 
 3. **Function sets for variadic signatures**: Since `duckdb_aggregate_function_set_varargs`
    doesn't exist, we register function sets with 31 overloads (2-32 boolean parameters)
    via `AggregateFunctionSetBuilder::overloads(2..=32, ...)` which automatically calls
-   `duckdb_aggregate_function_set_name` on each overload (preventing the Session 10 bug
-   where 6 of 7 functions silently failed to register).
+   `duckdb_aggregate_function_set_name` on each overload.
 
 4. **Combinable `FunnelMode` bitflags**: `window_funnel` modes are represented as a
    `u8` bitflag struct (`FunnelMode(u8)`) rather than a mutually exclusive enum. This
@@ -109,8 +90,7 @@ src/
 
 6. **Entry point via `quack_rs::entry_point!` macro**: The `behavioral_init_c_api`
    symbol is generated by the macro, which handles API initialization, connection
-   management via `duckdb_connect`/`duckdb_disconnect`, and error reporting. This
-   replaces ~80 lines of hand-rolled unsafe code from Session 10.
+   management via `duckdb_connect`/`duckdb_disconnect`, and error reporting.
 
 ## Build & Test
 
@@ -170,14 +150,16 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs = "=0.3.0"` — Rust SDK for DuckDB loadable extensions. Provides
-  `entry_point!` macro, `AggregateFunctionSetBuilder`, `FfiState<T>`,
-  `VectorReader`/`VectorWriter`, `LogicalType` RAII, and `AggregateTestHarness`.
-  Re-exports `libduckdb-sys` with `loadable-extension` feature.
+- `quack-rs` v0.5.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
+  for DuckDB loadable extensions. Provides `entry_point!` macro,
+  `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
+  `FfiState<T>`, `VectorReader`/`VectorWriter` (including `write_varchar`),
+  `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
+  and `AggregateTestHarness` for combine testing. Re-exports `libduckdb-sys`
+  with `loadable-extension` feature.
 - `libduckdb-sys = "=1.4.4"` with `loadable-extension` feature — Kept explicitly
-  for `sessionize` FFI (window function not supported by quack-rs) and for
-  functions with parameterized return types (`LIST(BOOLEAN)`, `LIST(TIMESTAMP)`)
-  that the builder cannot express.
+  for `sessionize` FFI (window function not supported by quack-rs). Re-exported
+  by quack-rs but pinned explicitly for the raw window function callbacks.
 
 **Dev-only** (unit tests and benchmarks):
 - `duckdb = "=1.4.4"` with `bundled` feature — Used in `#[cfg(test)]` modules
@@ -189,7 +171,7 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 
 ### Mandatory Requirements
 
-Every session MUST meet these requirements before completion:
+Every change MUST meet these requirements:
 
 1. **`cargo test`** — ALL tests pass. Zero failures. Zero ignored.
 2. **`cargo clippy --all-targets`** — Zero warnings.
@@ -198,32 +180,6 @@ Every session MUST meet these requirements before completion:
 5. **Test count verified** — Actual test count matches documented count.
 6. **Documentation accurate** — All claims in CLAUDE.md, PERF.md, docs/ are
    verifiable and match current code state.
-
-### Anti-Patterns (MUST NOT Do)
-
-- **Do NOT claim parity, coverage, or performance numbers without verification.**
-  Every number in this file MUST be reproduced by running the relevant command.
-- **Do NOT update test counts without running `cargo test` and counting output.**
-- **Do NOT claim "complete" parity without checking official ClickHouse docs.**
-- **Do NOT add session entries for work not actually completed and verified.**
-- **Do NOT overstate optimizations.** Negative results are valuable and MUST be
-  documented honestly with the same rigor as positive results.
-- **Do NOT guess function semantics.** When uncertain about ClickHouse behavior,
-  check the official documentation and/or source code. Document uncertainty.
-
-### Session Protocol
-
-Each development session MUST follow this protocol:
-
-1. **Read CLAUDE.md and LESSONS.md** before starting any work.
-2. **Run `cargo test && cargo clippy --all-targets && cargo fmt -- --check`**
-   at the start to establish baseline.
-3. **Document all changes** with verifiable before/after evidence.
-4. **Run the full validation suite** at the end of the session.
-5. **Update CLAUDE.md** with a session entry documenting all changes, test
-   counts, and any new lessons learned.
-6. **Verify every claim** — if CLAUDE.md says "435 tests", run `cargo test`
-   and confirm "435 passed" appears in the output.
 
 ### Current Metrics
 
@@ -247,521 +203,11 @@ Each development session MUST follow this protocol:
 
 ## Performance
 
-Performance engineering is documented in [`PERF.md`](PERF.md), which contains:
-
-- **Benchmark methodology**: Criterion.rs configuration, reproduction instructions
-- **Algorithmic complexity**: Formal O() analysis for all functions
-- **Optimization history**: Every optimization with hypothesis, technique, measured
-  before/after data with confidence intervals, and scaling analysis
-- **Current baseline**: Post-optimization benchmark numbers that serve as the
-  floor for future sessions
-- **Session improvement protocol**: The exact workflow for ensuring measurable,
-  auditable, session-over-session improvement
-
-### Session 1: Event Bitmask Optimization
-
-Event conditions are stored as a bitmask rather than `Vec<bool>`. This
-eliminates per-event heap allocation and enables `Copy` semantics.
-(Originally `u8`, expanded to `u32` in Session 6 for 32-condition support.)
-
-- **Event struct**: 16 bytes (`i64` + `u32` + padding) with `Copy`, down from 32+ bytes
-  + heap allocation
-- **Condition check**: single bitwise AND (`O(1)`) instead of `Vec` indexing
-- **Merge**: `memcpy` via `Copy` instead of per-element `clone()`
-
-| Function | Input | Before | After | Speedup |
-|---|---|---|---|---|
-| `window_funnel` | 1k events | 18.6 µs | 1.65 µs | 11.3x |
-| `window_funnel` | 100k events | 2.35 ms | 188 µs | 12.5x |
-| `sequence_match` | 10k events | 260 µs | 28.0 µs | 9.3x |
-| `sequence_count` | 10k events | 254 µs | 48.9 µs | 5.2x |
-
-### Session 2: In-Place Combine + Sort Optimization
-
-Replaced O(N²) merge-allocate combine with O(N) in-place extend. Added
-`combine_in_place(&mut self)` that extends the existing Vec using amortized
-O(1) appends. Also switched to unstable sort (pdqsort) for event sorting.
-
-| Function | Input | Before | After | Speedup |
-|---|---|---|---|---|
-| `window_funnel_combine` | 100 states | 10.9 µs | 466 ns | 23x |
-| `window_funnel_combine` | 1k states | 781 µs | 3.03 µs | 258x |
-| `window_funnel_combine` | 10k states | 75.3 ms | 30.9 µs | **2,436x** |
-| `sequence_combine` | 100 states | 12.1 µs | 1.31 µs | 9.2x |
-| `sequence_combine` | 1k states | 756 µs | 11.0 µs | 68.8x |
-
-Full optimization history with confidence intervals: [`PERF.md`](PERF.md)
-
-### Session 3: NFA Lazy Matching + 10M Benchmarks
-
-Fixed NFA `.*` exploration order in `src/pattern/executor.rs`: swapped LIFO stack
-push order so the NFA tries advancing the pattern before consuming events (lazy
-matching). This eliminated catastrophic O(n * MAX_NFA_STATES * starts) behavior.
-
-| Function | Input | Before | After | Speedup |
-|---|---|---|---|---|
-| `sequence_match` | 100 events | 750 ns | 454 ns | 1.76x |
-| `sequence_match` | 1M events | 4.43 s | 2.31 ms | **1,961x** |
-
-Also expanded all benchmarks to 10M elements, added 22 mutation-killing boundary
-tests (204 → 226), and added isolated sort benchmarks. No new bottlenecks found
-at 10M scale — all functions scale as documented.
-
-### Session 4: Billion-Row Benchmarks + Test Hardening
-
-Expanded benchmarks to 100M for all event-collecting functions and 1B for O(1)-state
-functions (sessionize, retention). Added 12 mutation-killing tests targeting NFA
-executor gaps identified through systematic mutation analysis.
-
-**Headline numbers (Criterion-validated, 3 runs, 95% CI):**
-
-| Function | Scale | Wall Clock | Throughput |
-|---|---|---|---|
-| `sessionize_update` | **1 billion** | **1.21 s** | **824 Melem/s** |
-| `retention_combine` | **1 billion** | **3.06 s** | **327 Melem/s** |
-| `window_funnel` | 100 million | 898 ms | 111 Melem/s |
-| `sequence_match` | 100 million | 1.08 s | 92.7 Melem/s |
-| `sequence_count` | 100 million | 1.57 s | 63.5 Melem/s |
-
-Test count increased from 226 to 238 (+12 targeted mutation-killing tests).
-
-### Session 5: ClickHouse Feature Parity + `sequenceMatchEvents`
-
-Architectural refactoring session focused on closing ClickHouse feature parity gaps.
-No performance optimization targets — this session prioritized correctness and
-feature completeness.
-
-**Changes:**
-
-1. **`FunnelMode` bitflags refactor**: Replaced mutually exclusive `enum FunnelMode`
-   with `struct FunnelMode(u8)` bitflags, enabling ClickHouse-compatible mode
-   combinations. Five ClickHouse modes: `STRICT` (0x01, also accepts
-   `'strict_deduplication'`), `STRICT_ORDER` (0x02), `STRICT_INCREASE` (0x08),
-   `STRICT_ONCE` (0x10), `ALLOW_REENTRY` (0x20). One extension mode:
-   `STRICT_DEDUPLICATION` (0x04, SQL: `'timestamp_dedup'`).
-
-2. **Three new `window_funnel` modes**:
-   - `strict_increase`: Requires strictly increasing timestamps between steps
-   - `strict_once`: Each event can advance the funnel by at most one step
-   - `allow_reentry`: Resets the funnel chain when condition 0 fires again
-
-3. **Multi-step advancement per event**: Changed condition checking from `if` to
-   `while` loop, allowing a single event to advance multiple funnel steps when it
-   satisfies consecutive conditions. This matches ClickHouse default behavior.
-   `STRICT_ONCE` breaks after one advancement per event.
-
-4. **`sequence_match_events` function**: New aggregate function returning
-   `LIST(TIMESTAMP)` — the timestamps of each matched `(?N)` step in the pattern.
-   Empty list on no match. Implemented via `NfaStateWithTimestamps` in the NFA
-   executor that collects timestamps during pattern matching.
-
-5. **51 new tests** (238 → 289): 30 for `window_funnel` mode combinations, 7 for
-   NFA executor event collection, 14 for `SequenceState::finalize_events`.
-
-Test count increased from 238 to 289 (+51 tests).
-
-### Session 6: Mode FFI + 32-Condition Support + Presorted Detection
-
-Session focused on closing ClickHouse parity gaps and adding sort optimization.
-
-**Changes:**
-
-1. **`window_funnel` mode FFI exposure** (PARITY-1): Exposed all six `FunnelMode`
-   flags via the FFI layer. Added VARCHAR parameter overloads accepting
-   comma-separated mode strings (e.g., `'strict_increase, strict_once'`).
-   Added `FunnelMode::parse_modes()` method. Backward-compatible: existing
-   SQL without mode string continues to work.
-
-2. **32-condition support** (PARITY-2): Expanded conditions bitmask from `u8`
-   (8 conditions) to `u32` (32 conditions), matching ClickHouse's limit. Event
-   struct stays at 16 bytes due to alignment padding. FFI registrations expanded
-   from 7 overloads (2-8) to 31 overloads (2-32) per function.
-
-3. **Presorted detection** (PERF-2): Added O(n) is_sorted check to `sort_events()`
-   that skips O(n log n) pdqsort when events are already in timestamp order.
-   Common case optimization for ORDER BY queries.
-
-4. **20 new tests** (289 → 309): 10 for `parse_modes`, 5 for presorted detection,
-   5 for 32-condition support.
-
-Test count increased from 289 to 309 (+20 tests).
-
-### Session 7: Negative Results + Benchmark Validation + Testing
-
-Session focused on benchmark validation, performance experimentation, and test
-hardening. Three performance optimization hypotheses were tested and all
-produced negative results — documented honestly in PERF.md.
-
-**Changes:**
-
-1. **Benchmark baseline validation**: Ran `cargo bench` 3 times to establish
-   Session 7 baseline. Retroactively validated Session 6's presorted detection
-   claim (modest ~3-5% improvement, CIs overlap on some runs).
-
-2. **PERF-1: LSD Radix Sort (NEGATIVE)**: Implemented 8-bit LSD radix sort
-   for Event sorting. Measured 4.3x slower at 100M elements due to poor cache
-   locality in scatter pattern for 16-byte elements. Reverted.
-
-3. **PERF-3: Branchless Sessionize (NEGATIVE)**: Replaced branches with
-   `i64::from(bool)`, `max`, `min`. Measured ~5-10% regression — branch predictor
-   handles the 90/10 pattern efficiently. Reverted.
-
-4. **PERF-4: Retention Update (NOT ATTEMPTED)**: Analysis showed benchmark
-   bottleneck is `Vec<bool>` allocation, not the update loop.
-
-5. **PARITY-3: `sequenceNextNode` Investigation**: Researched ClickHouse's
-   `sequenceNextNode` function. Key finding: return type is always
-   `Nullable(String)` (not polymorphic), which simplifies FFI. Documented
-   design analysis below.
-
-6. **15 new tests** (309 → 324): 10 proptest-based tests for 32-condition paths
-   (retention: 4, window_funnel: 3, sequence: 3), 5 mutation-killing tests for
-   event.rs (sort presorted check, from_bools, condition bit extraction, negative
-   timestamps).
-
-Test count increased from 309 to 324 (+15 tests).
-
-### Session 8: sequenceNextNode + Complete ClickHouse Parity
-
-Session focused on implementing the last remaining ClickHouse behavioral analytics
-function, achieving COMPLETE feature parity.
-
-**Changes:**
-
-1. **`sequence_next_node` function** (PARITY-3): Implemented `sequenceNextNode`
-   with full direction (forward/backward) and base (head/tail/first_match/last_match)
-   support. Uses a dedicated `NextNodeEvent` struct with per-event `Arc<str>` storage
-   (separate from the `Copy` `Event` struct). Simple sequential matching algorithm.
-
-2. **New FFI module** (`src/ffi/sequence_next_node.rs`): 32 function set overloads
-   (1-32 event conditions) with VARCHAR return type. Shared `read_varchar` helper
-   for DuckDB string extraction.
-
-3. **New benchmark** (`benches/sequence_next_node_bench.rs`): Update + finalize
-   throughput and combine benchmarks at multiple scales.
-
-4. **42 new tests** (324 → 366): 39 unit tests covering direction/base parsing,
-   all 8 direction×base combinations, multi-step patterns, combine correctness,
-   NULL values, gap events, unsorted input, edge cases. 3 proptest-based tests
-   for algebraic properties.
-
-5. **Documentation**: New function page (`docs/src/functions/sequence-next-node.md`),
-   updated ClickHouse compatibility matrix (all functions now "Complete").
-
-Test count increased from 324 to 366 (+42 tests).
-
-### Session 9: Rc\<str\> Optimization + Community Extension
-
-Session focused on performance optimization of `sequence_next_node` and preparing
-for DuckDB community extension submission.
-
-**Changes:**
-
-1. **Rc\<str\> optimization** (PERF-2): Replaced `Option<String>` with `Option<Arc<str>>`
-   in `NextNodeEvent`, reducing struct size from 40 to 32 bytes and enabling O(1)
-   clone via reference counting. Delivered 2.1-5.8x improvement across all scales,
-   with combine operations improving 2.8-6.4x. Updated FFI layer to convert
-   `read_varchar` results to `Arc<str>`.
-
-2. **String pool attempt** (PERF-1, NEGATIVE): Tested `PooledEvent` (24 bytes, Copy)
-   with separate `Vec<String>` pool. Measured 10-55% regression at most scales due to
-   dual-vector overhead. Only 1M showed improvement (22%). Reverted and documented.
-
-3. **Realistic cardinality benchmark**: Added `sequence_next_node_realistic` benchmark
-   using a pool of 100 distinct `Arc<str>` values, matching typical behavioral analytics
-   cardinality. Shows 35% improvement over unique strings at 1M events.
-
-4. **Community extension infrastructure**: Added `Makefile` with configure/debug/release
-   targets, `extension-ci-tools` git submodule, `description.yml` for community
-   extension submission, and SQL integration tests in `test/sql/` covering all 7
-   functions.
-
-5. **9 new tests** (366 → 375): `Arc<str>` sharing verification, struct size assertion,
-   combine reference sharing, empty/unicode/long string values, 32-condition
-   interaction, three-state combine chain, mixed null/Arc values in combine.
-
-Test count increased from 366 to 375 (+9 tests).
-
-### Session 10: E2E Validation + Custom C Entry Point
-
-Session focused on end-to-end validation against a real DuckDB instance. Discovered
-and fixed three critical bugs that all 375 passing unit tests at the time completely missed.
-
-**Bugs discovered and fixed:**
-
-1. **SEGFAULT on extension load**: `extract_raw_connection` used incorrect pointer
-   arithmetic through `Rc<RefCell<InnerConnection>>`. Replaced with a custom C entry
-   point (`behavioral_init_c_api`) that obtains `duckdb_connection` via
-   `duckdb_connect` directly from `duckdb_extension_access`.
-
-2. **6 of 7 functions silently failed to register**: `duckdb_aggregate_function_set_name`
-   must be called on EACH function added to a function set. Without this,
-   `duckdb_register_aggregate_function_set` returns `DuckDBError` with no diagnostic.
-   Only `sessionize` (registered as a single function, not a set) worked.
-
-3. **`window_funnel` returned wrong results**: `combine_in_place` did not propagate
-   `window_size_us` or `mode`. DuckDB's segment tree creates fresh zero-initialized
-   target states and combines source states into them. At finalize time,
-   `window_size_us=0` caused all events outside the entry timestamp to be excluded.
-
-**Changes:**
-
-1. **Custom C entry point** (`src/lib.rs`): Hand-written `behavioral_init_c_api` that
-   calls `duckdb_rs_extension_api_init`, `duckdb_connect`, `register_all_raw`,
-   `duckdb_disconnect`. Removes `duckdb` and `duckdb-loadable-macros` as runtime
-   dependencies.
-
-2. **Function set name fix** (`src/ffi/*.rs`): Added `duckdb_aggregate_function_set_name`
-   call inside every function set registration loop across 5 FFI modules (retention,
-   window_funnel, sequence, sequence_match_events, sequence_next_node).
-
-3. **Combine propagation fix** (`src/window_funnel.rs`): `combine_in_place` now
-   propagates `window_size_us` and `mode` from source states when the target has
-   default values.
-
-4. **Dependency simplification** (`Cargo.toml`): Runtime dependency reduced from 3
-   crates (`duckdb`, `duckdb-loadable-macros`, `libduckdb-sys`) to 1
-   (`libduckdb-sys` with `loadable-extension` feature).
-
-5. **11 E2E tests**: All 7 functions validated with real SQL against DuckDB v1.4.4 CLI.
-
-### Session 11: NFA Fast Paths + Git Mining Demo
-
-Session focused on performance optimization of the NFA pattern executor and
-developer experience (demo, SQL examples, combine test coverage).
-
-**Performance optimizations (2 Criterion-validated):**
-
-1. **NFA reusable stack** (`src/pattern/executor.rs`): Pre-allocate the NFA state
-   Vec once in `execute_pattern` and reuse across all starting positions via
-   `clear()`. Eliminates O(N) alloc/free pairs in `sequence_count`.
-   `sequence_count` improved 33-47% across all scales (p=0.00).
-
-2. **Fast-path linear scan** (`src/pattern/executor.rs`): Pattern classification
-   dispatches common shapes to specialized O(n) scans:
-   - `AdjacentConditions` (`(?1)(?2)`): sliding window scan
-   - `WildcardSeparated` (`(?1).*(?2)`): single-pass step counter
-   - `Complex`: falls back to NFA
-   `sequence_count` improved 39-40% on top of the NFA reusable stack (p=0.00).
-   Combined improvement: 56-61% at 100-1M scale.
-
-3. **First-condition pre-check (NEGATIVE)**: Adding an early-exit branch for
-   non-matching first conditions increased overhead. Reverted.
-
-**Other changes:**
-
-4. **21 combine propagation tests**: Systematic tests verifying DuckDB's
-   zero-initialized target combine pattern works correctly for all 5 functions.
-   Tests: sessionize (4), window_funnel (5), sequence (4),
-   sequence_next_node (5), retention (3).
-
-5. **7 fast-path tests**: Edge cases for adjacent skip correctness, three-step
-   patterns, wildcard counting, insufficient events, and NFA fallback.
-
-6. **Git mining SQL examples** (`test/sql/git_mining.test`): 7 SQL integration
-   tests demonstrating all functions for git repository mining, each grounded
-   in published academic research with citations.
-
-7. **Interactive HTML demo** (`demo/index.html`): Tabbed interface showcasing
-   all 7 functions with SQL examples and pre-computed results.
-
-Test count increased from 375 to 403 (+28 tests).
-
-### Session 12: Community Extension Readiness + Benchmark Completion
-
-Session focused on community extension submission readiness, benchmark completion,
-comprehensive documentation, and E2E test fixes.
-
-**Changes:**
-
-1. **`sequence_match_events` benchmark** (`benches/sequence_match_events_bench.rs`):
-   New Criterion benchmark covering update + finalize throughput (100 to 100M events)
-   and combine operations (100 to 1M states). All 7 functions now have dedicated
-   benchmarks.
-
-2. **Library name fix for community extension**: Added `name = "behavioral"` to
-   `[lib]` in `Cargo.toml` so `cargo build --release` produces `libbehavioral.so`
-   (required by the community extension Makefile) instead of
-   `libduckdb_behavioral.so`. Updated all benchmark imports from
-   `duckdb_behavioral::` to `behavioral::` and fixed the doc-test import.
-
-3. **`sequence_next_node` NULL handling fix** (`src/ffi/sequence_next_node.rs`):
-   Added `duckdb_vector_ensure_validity_writable` call before setting validity bits.
-   Without this, setting a row as invalid wrote to an uninitialized validity bitmap,
-   producing `\0\0\0\0` instead of NULL in the output.
-
-4. **SQL test corrections** (`test/sql/`): Fixed expected values across multiple
-   test files — session IDs changed from 0-indexed to 1-indexed (matching actual
-   `sessionize` output), timestamp lists changed to single-quoted format (matching
-   DuckDB's actual LIST output), and `sequence_next_node` test restructured to
-   match the base_condition + event matching semantics.
-
-5. **GitHub Pages documentation expansion**:
-   - Enhanced `index.md` with value proposition, use case sections, quick install
-   - Enhanced `getting-started.md` with troubleshooting, worked examples
-   - Created `faq.md` with loading, functions, pattern syntax, modes, performance,
-     ClickHouse differences, data preparation, scaling, integration sections
-   - Created `contributing.md` with dev setup, code style, testing, benchmark protocol
-   - Created `use-cases.md` with 5 complete real-world examples (e-commerce funnels,
-     SaaS retention, web sessions, user journeys, A/B testing)
-   - Completed `performance.md` with Sessions 8-11 detail and updated baseline tables
-   - Added cross-references between related function pages
-   - Updated `SUMMARY.md` with all new pages
-
-6. **Community extension infrastructure**: Initialized `extension-ci-tools` submodule,
-   verified `make configure && make release && make test_release` passes all 7 SQL
-   test files.
-
-### Session 13: CI/CD Hardening + Benchmark Refresh
-
-Session focused on CI/CD hardening, E2E workflow addition, SemVer release
-validation, documentation expansion, and full benchmark baseline refresh.
-
-**Changes:**
-
-1. **CI/CD hardening**: Added E2E workflow testing all 7 functions against real
-   DuckDB, SemVer release validation, expanded CI to 13 jobs.
-
-2. **Benchmark refresh**: Re-ran full `cargo bench` suite to establish Session 13
-   baseline. All 7 functions benchmarked including `sequence_match_events`
-   (previously pending).
-
-3. **Documentation expansion**: Enhanced GitHub Pages site, CLAUDE.md
-   modularization, added Mermaid architecture diagrams.
-
-4. **Test count fix**: Corrected stale test count references (375 → 434).
-
-**Session 13 baseline (Criterion-validated, 95% CI):**
-
-| Function | Scale | Wall Clock | Throughput |
-|---|---|---|---|
-| `sessionize_update` | **1 billion** | **1.18 s** | **848 Melem/s** |
-| `retention_combine` | **1 billion** | **2.94 s** | **340 Melem/s** |
-| `window_funnel` | 100 million | 715 ms | 140 Melem/s |
-| `sequence_match` | 100 million | 902 ms | 111 Melem/s |
-| `sequence_count` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_match_events` | 100 million | 921 ms | 109 Melem/s |
-| `sequence_next_node` | 10 million | 438 ms | 23 Melem/s |
-
-### Session 14: Production Readiness Hardening
-
-Session focused on closing every gap identified in a 4-audit production readiness
-review. All changes are correctness, safety, or documentation improvements — no
-new features or performance optimizations.
-
-**Source code safety improvements:**
-
-1. **`Arc<str>` migration** (`src/sequence_next_node.rs`, `src/ffi/sequence_next_node.rs`,
-   `benches/sequence_next_node_bench.rs`): Replaced `Rc<str>` with `Arc<str>` for
-   `Send + Sync` safety. Eliminates theoretical unsoundness if DuckDB ever
-   parallelizes combine operations. Adds ~1-2ns/clone overhead (atomic vs
-   non-atomic reference counting) — negligible at measured throughput.
-
-2. **Defensive boolean reading** (all 5 FFI modules): Changed `*const bool` to
-   `*const u8` with `!= 0` comparison. Avoids depending on Rust's strict `bool`
-   invariant (must be 0 or 1) for data read from DuckDB's C API. Output booleans
-   use `u8::from(matched)`.
-
-3. **No-panic FFI entry point** (`src/lib.rs`): Replaced `.unwrap()` on
-   `set_error` and `get_database` function pointers with `if let Some()` and
-   `.ok_or()` respectively. Prevents panicking across FFI boundaries in debug
-   builds.
-
-4. **Hoisted validity bitmap** (`src/ffi/retention.rs`): Moved
-   `duckdb_vector_ensure_validity_writable` and `duckdb_vector_get_validity`
-   calls outside the finalize loop. Previously called per-null-state inside the
-   loop — correct but wasteful.
-
-5. **Interior null byte handling** (`src/ffi/sequence_next_node.rs`): Replaced
-   `CString::new(value).unwrap_or_default()` with explicit null-byte stripping
-   via `value.replace('\0', "")`. Prevents silently producing empty strings on
-   values containing null bytes.
-
-**Documentation fixes:**
-
-6. **Stale benchmark numbers**: Updated 4 function doc pages (retention,
-   window-funnel, sequence-match, sequence-count) to Session 13 baseline.
-7. **Cross-references**: Added See Also sections to sessionize.md and retention.md.
-8. **Negative results count**: Fixed engineering.md from "3" to "5" (added
-   compiled pattern preservation and first-condition pre-check).
-9. **`Arc<str>` references**: Updated all `Rc<str>` references across 10
-   documentation files to `Arc<str>`.
-
-**E2E test expansion (16 new test cases):**
-
-10. **NULL/empty input tests**: sessionize NULL timestamp, retention empty table,
-    window_funnel empty table.
-11. **All 6 window_funnel modes**: strict, strict_order, strict_deduplication,
-    strict_once, allow_reentry (plus existing strict_increase).
-12. **5-condition test**: sequence_match with 5 boolean conditions.
-13. **All direction×base combinations**: 6 new sequence_next_node tests covering
-    forward/backward × head/tail/last_match (existing covered first_match).
-
-**CI/CD hardening:**
-
-14. **Pinned GitHub Actions to commit SHAs**: All third-party Actions across 4
-    workflow files pinned to specific SHAs with version comments.
-15. **Visible CI failures**: Removed `|| true` from cargo-semver-checks and
-    cargo-tarpaulin. Added `continue-on-error: true` at job level instead.
-
-**Repository structure improvements:**
-
-16. **Root-level files**: Added `CHANGELOG.md` (Keep a Changelog format),
-    `SECURITY.md` (vulnerability reporting, security model), `CONTRIBUTING.md`
-    (quick-start guide linking to full docs).
-
-**Session 14 baseline (Criterion-validated, 95% CI):**
-
-| Function | Scale | Wall Clock | Throughput |
-|---|---|---|---|
-| `sessionize_update` | **1 billion** | **1.21 s** | **826 Melem/s** |
-| `retention_combine` | 100 million | 259 ms | 386 Melem/s |
-| `window_funnel` | 100 million | 755 ms | 132 Melem/s |
-| `sequence_match` | 100 million | 951 ms | 105 Melem/s |
-| `sequence_count` | 100 million | 1.10 s | 91 Melem/s |
-| `sequence_match_events` | 100 million | 988 ms | 101 Melem/s |
-| `sequence_next_node` | 10 million | 559 ms | 18 Melem/s |
-
-Performance is consistent with Session 13 baseline. `sequence_next_node`
-throughput decreased from 23 to 18 Melem/s due to `Arc<str>` atomic reference
-counting overhead — an expected and acceptable cost for `Send+Sync` safety.
-
-### Session 15: Enterprise Quality Standards
-
-Session focused on dependency consolidation, documentation polish, benchmark
-refresh, and GitHub Pages improvements. No Rust source code changes.
-
-**Dependency updates (7 dependabot PRs consolidated):**
-
-1. **Criterion 0.5 → 0.8.2**: Migrated `criterion::black_box` to
-   `std::hint::black_box` across all 7 benchmark files.
-2. **rand 0.8 → 0.9.2**: Transparent update — no code uses rand directly.
-3. **Swatinem/rust-cache v2.7.8 → v2.8.2**: CI workflow cache action.
-4. **actions/setup-python v5.6.0 → v6.2.0**: CI workflow Python setup.
-5. **actions/attest-build-provenance v2.2.3 → v3.2.0**: Release attestation.
-6. **actions/download-artifact v4.2.1 → v7.0.0**: Release artifact download.
-7. **dtolnay/rust-toolchain**: Skipped — uses branch refs, not version tags.
-
-**GitHub Pages improvements:**
-
-8. **Mermaid diagram contrast**: Added comprehensive CSS overrides in
-   `custom.css` forcing dark text and visible borders on all mermaid elements.
-   Added inline `style` directives with saturated fill colors and explicit
-   `color:#1a1a1a` to all mermaid diagrams across 4 documentation files.
-9. **Dark theme support**: Navy/coal theme overrides for mermaid edge labels,
-   arrows, and backgrounds.
-10. **SUMMARY.md restructure**: Reorganized into 4 sections: Getting Started,
-    Function Reference, Technical Deep Dive, Operations & Contributing.
-
-**Documentation updates:**
-
-11. **Test count**: Updated 403 → 434 across all documentation files.
-12. **Criterion version**: Updated 0.5 → 0.8 references in PERF.md and
-    performance.md.
-13. **README.md badges**: Added E2E Tests and MSRV badges.
-14. **Benchmark baseline refresh**: Full `cargo bench` with Criterion 0.8.2.
-
-**Session 15 baseline (Criterion 0.8.2, 95% CI):**
+Performance engineering is documented in [`PERF.md`](PERF.md), which contains
+optimization history with before/after measurements, algorithmic complexity
+analysis, and the benchmark improvement protocol.
+
+**Current baseline (Criterion 0.8.2, 95% CI):**
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
@@ -773,148 +219,36 @@ refresh, and GitHub Pages improvements. No Rust source code changes.
 | `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
 | `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
 
-Performance is consistent with Session 14 baseline. Minor throughput
-differences reflect Criterion 0.8.2's updated statistical sampling and
-rand 0.9.2's different data generation — no Rust source code was changed.
-
-### Session 16: ClickHouse Parity Audit + Documentation Hardening
-
-Session focused on rigorous verification of ClickHouse parity claims against
-the [official ClickHouse documentation](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions),
-documentation accuracy improvements, and quality standards hardening.
-
-**ClickHouse parity audit findings:**
-
-1. **`strict_deduplication` mode mapping fix**: Discovered that ClickHouse's
-   `'strict'` and `'strict_deduplication'` are aliases for the same behavior
-   (chain breaks when previously-matched condition fires again). Our extension
-   previously mapped `'strict_deduplication'` to a different behavior
-   (timestamp-based dedup, 0x04) instead of the correct `STRICT` (0x01).
-   Fixed `parse_mode_str` so both SQL strings map to `STRICT`. The timestamp-
-   based dedup mode is now available as `'timestamp_dedup'` (extension mode).
-
-2. **Non-behavioral functions scoped out**: Verified that ClickHouse's
-   parametric functions page includes 4 non-behavioral functions that are
-   correctly out of scope: `histogram` (statistical distribution of numeric
-   values into frequency buckets), `uniqUpTo` (cardinality estimation with
-   a cap), `sumMapFiltered` (key-filtered summation over parallel arrays),
-   `sumMapFilteredWithOverflow` (same with overflow semantics). None of
-   these operate on event sequences, require timestamps, or model user
-   behavior. They share the parametric calling convention but not the
-   semantic domain. Full justification in
-   `docs/src/internals/clickhouse-compatibility.md`.
-
-3. **`sessionize` confirmed as extension-only**: Verified that ClickHouse has
-   no built-in `sessionize` function (open feature request
-   [#45311](https://github.com/ClickHouse/ClickHouse/issues/45311)).
-
-4. **`strict` mode semantic nuance documented**: Identified that our `STRICT`
-   mode includes an additional `!event.condition(current_step)` guard not
-   present in ClickHouse's implementation. This only affects events satisfying
-   multiple conditions simultaneously.
-
-**Changes:**
-
-5. **`FunnelMode::parse_mode_str` fix** (`src/window_funnel.rs`): `'strict_deduplication'`
-   now maps to `STRICT` (0x01), matching ClickHouse. `'timestamp_dedup'` maps to
-   `STRICT_DEDUPLICATION` (0x04), the extension mode.
-
-6. **Documentation overhaul**: Updated `CLAUDE.md` ClickHouse Parity Status with
-   precise scope table, mode mapping details, extensions list, and known semantic
-   differences. Updated `clickhouse-compatibility.md` with non-behavioral function
-   scope table and semantic difference notes. Updated `window-funnel.md` and
-   `faq.md` mode tables. Updated SQL test comments.
-
-7. **Quality standards hardening**: Strengthened `CLAUDE.md` with mandatory
-   verification requirements, session protocol, and anti-pattern list.
-
-8. **1 new test** (435 → 435+1 = 435): `test_parse_modes_all_modes_including_extensions`
-   verifying extension mode parsing.
-
-Test count: 435 unit tests + 1 doc-test.
-
-### Session 17: quack-rs SDK Migration
-
-Full migration of the FFI layer to `quack-rs` v0.3.0, the Rust SDK for DuckDB
-loadable extensions. No business logic changes — only FFI plumbing was modified.
-
-**Changes:**
-
-1. **Entry point migration** (`src/lib.rs`): Replaced ~80 lines of hand-rolled
-   `behavioral_init_c_api` with `quack_rs::entry_point!` macro (14 lines).
-
-2. **`FfiState<T>` adoption** (5 FFI modules): Replaced hand-rolled `#[repr(C)]
-   struct FfiState { inner: *mut T }` with `quack_rs::aggregate::FfiState<T>`.
-   Provides null-checked `with_state_mut()` returning `Option<&mut T>`, safe
-   init/destroy lifecycle, and `AggregateState` trait bound enforcement.
-
-3. **`VectorReader` adoption** (5 FFI modules): Replaced raw pointer arithmetic
-   for boolean reading (`*const u8 != 0`), VARCHAR reading (hand-rolled
-   `duckdb_string_t` parsing), interval reading (16-byte stride), and timestamp
-   reading with `VectorReader::read_bool()`, `read_str()`, `read_interval()`,
-   `read_i64()`.
-
-4. **`VectorWriter` adoption** (3 FFI modules): Replaced manual
-   `duckdb_vector_get_data` + pointer writes with `VectorWriter::write_bool()`,
-   `write_i32()`, `write_i64()`, `set_null()` (auto `ensure_validity_writable`).
-
-5. **`AggregateFunctionSetBuilder` adoption** (4 FFI modules): `sequence_match`,
-   `sequence_count`, `window_funnel`, and `sequence_next_node` use the builder.
-   `retention` and `sequence_match_events` cannot because the builder's `returns()`
-   method takes `TypeId` which cannot express `LIST(BOOLEAN)` or `LIST(TIMESTAMP)`.
-
-6. **`sessionize` not migrated**: Window function registration is not supported by
-   `quack-rs` v0.3.0. Module documented with rationale.
-
-7. **MSRV bumped to 1.84.1**: Required by `quack-rs`. Updated `Cargo.toml`, CI
-   workflows, README badge, and all documentation references.
-
-8. **18 new `AggregateTestHarness` tests** (435 → 453): Combine config-propagation
-   tests for all 5 aggregate functions using `quack_rs::testing::AggregateTestHarness`.
-   These tests verify the Session 10 bug pattern (zero-initialized target combine)
-   is handled correctly, without requiring E2E testing against DuckDB.
-
-9. **`read_varchar()` helper removed** (`src/ffi/sequence_next_node.rs`): Replaced
-   with `VectorReader::read_str()` which handles `duckdb_string_t` inline/pointer
-   format safely.
-
-10. **Timestamp module kept**: `src/common/timestamp.rs` retained despite
-    `quack-rs` providing `interval_to_micros()`, because the local version
-    intentionally rejects month-based intervals (returns `None`) while
-    `quack-rs` converts months to 30 days.
-
-Test count: 453 unit tests + 1 doc-test.
+Key optimizations: u32 bitmask conditions (eliminates per-event heap alloc),
+in-place O(N) combine (replaces O(N^2) merge-allocate), NFA lazy matching
+(eliminates catastrophic backtracking), fast-path linear scans for common
+pattern shapes, presorted detection, and `Arc<str>` for reference-counted
+string sharing in `sequence_next_node`.
 
 ## ClickHouse Parity Status
 
-**COMPLETE** — All six ClickHouse behavioral parametric functions are
-implemented as of Session 8. Verified against the
-[ClickHouse parametric functions documentation](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions)
-in Session 16.
+**Complete.** All six ClickHouse behavioral parametric functions are implemented.
+Verified against the
+[ClickHouse parametric functions documentation](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions).
 
 ### Scope
 
-The ClickHouse [parametric functions page](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions)
-documents 10 functions. Six are behavioral analytics functions (all
-implemented). Four are general-purpose aggregate functions that share the
-parametric calling convention but do not operate on event sequences, do not
-require timestamps, and do not model user behavior:
+The ClickHouse parametric functions page documents 10 functions. Six are
+behavioral (all implemented). Four are out of scope:
 
 | Category | Functions | Status |
 |---|---|---|
 | Behavioral | `retention`, `windowFunnel`, `sequenceMatch`, `sequenceCount`, `sequenceMatchEvents`, `sequenceNextNode` | All implemented |
-| Statistical distribution | `histogram(number_of_bins)(values)` — adaptive histogram over numeric values | Out of scope |
-| Cardinality estimation | `uniqUpTo(N)(x)` — count distinct values up to threshold N | Out of scope |
-| Map aggregation | `sumMapFiltered(keys)(keys, values)` — key-filtered summation over arrays | Out of scope |
-| Map aggregation variant | `sumMapFilteredWithOverflow(keys)(keys, values)` — same, preserves input type | Out of scope |
+| Statistical | `histogram` | Out of scope (not behavioral) |
+| Cardinality | `uniqUpTo` | Out of scope (not behavioral) |
+| Map aggregation | `sumMapFiltered`, `sumMapFilteredWithOverflow` | Out of scope (not behavioral) |
 
-Full per-function justification: [`docs/src/internals/clickhouse-compatibility.md`](docs/src/internals/clickhouse-compatibility.md)
+Full justification: [`docs/src/internals/clickhouse-compatibility.md`](docs/src/internals/clickhouse-compatibility.md)
 
 ### `windowFunnel` Mode Mapping
 
-In ClickHouse, `'strict'` and `'strict_deduplication'` are aliases for the
-same behavior. Our extension correctly maps both SQL strings to the same
-internal mode (`STRICT`, 0x01) as of Session 16. The extension also provides
+ClickHouse's `'strict'` and `'strict_deduplication'` are aliases for the same
+behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
 `'timestamp_dedup'` as a mode not present in ClickHouse.
 
 ### Extensions Beyond ClickHouse
@@ -929,52 +263,43 @@ internal mode (`STRICT`, 0x01) as of Session 16. The extension also provides
 ### Known Semantic Differences
 
 1. **`strict` mode guard**: Our implementation adds a `!event.condition(current_step)`
-   guard — if an event matches both the previously-matched condition AND the
+   guard -- if an event matches both the previously-matched condition AND the
    next target condition, we advance rather than break. ClickHouse may break
-   unconditionally. This only affects events satisfying multiple conditions
-   simultaneously (uncommon in typical funnel data).
+   unconditionally. Only affects events satisfying multiple conditions simultaneously.
 
 2. **Window parameter type**: ClickHouse uses integer seconds; we use DuckDB
    `INTERVAL`. Functionally equivalent.
 
 ## Testing
 
-Tests are organized as `#[cfg(test)] mod tests` within each module. Key test
-categories:
+Tests are organized as `#[cfg(test)] mod tests` within each module.
+
+**Test categories:**
 
 - **State tests**: Empty state, single update, multiple updates
 - **Edge cases**: Threshold boundaries, NULL handling, empty inputs
-- **Combine correctness**: Empty combine, boundary detection, associativity
-- **Property-based tests**: 26 proptest-based tests verifying algebraic properties
-  (combine associativity, commutativity, identity element, idempotency, monotonicity)
-  including 10 tests exercising 32-condition paths (conditions 9-32)
-- **Mutation-testing-guided tests**: 51 tests added from cargo-mutants analysis to
-  kill surviving mutants (combine_in_place, OR vs XOR, strict mode edge cases,
-  boundary conditions, condition index limits, timestamp extremes, NFA executor
-  time constraint propagation, lazy matching verification, sort presorted check,
-  from_bools accumulation, condition bit extraction)
+- **Combine correctness**: Empty combine, boundary detection, associativity,
+  config propagation via `AggregateTestHarness`
+- **Property-based tests**: 26 proptest tests verifying algebraic properties
+  (associativity, commutativity, identity, idempotency, monotonicity)
+  including 10 tests exercising 32-condition paths
+- **Mutation-testing-guided tests**: 51 tests from cargo-mutants analysis
 - **Pattern parser**: All operators, error positions, whitespace tolerance
-- **NFA executor**: Match/no-match, wildcards, time constraints, counting, event
-  collection (`execute_pattern_events`)
-- **`FunnelMode` tests**: Bitflag operations, mode parsing, display, all six modes
-  individually, mode combinations (strict+strict_increase, strict_order+strict_increase,
-  strict_dedup+strict_increase, strict_once+strict_increase, allow_reentry+strict_order,
-  all modes combined)
-- **`sequence_match_events` tests**: Basic matching, multi-step, gap events, no-match,
-  single-event-match, complex patterns, interaction with `finalize_events`
-- **`sequence_next_node` tests**: Direction/base parsing, forward/backward matching,
-  head/tail/first_match/last_match combinations, multi-step patterns, combine
-  correctness, NULL value handling, gap events, presorted detection, proptest,
-  Arc\<str\> sharing verification, struct size assertions, unicode/long strings
+- **NFA executor**: Match/no-match, wildcards, time constraints, counting,
+  event collection, fast-path classification
+- **`FunnelMode` tests**: Bitflag operations, parsing, all six modes,
+  mode combinations
+- **`sequence_match_events` tests**: Multi-step, gap events, no-match,
+  complex patterns
+- **`sequence_next_node` tests**: All 8 direction/base combinations,
+  multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
 Run with `cargo test`. All 453 tests + 1 doc-test run in <1 second.
 
-**E2E tests** (manual, against real DuckDB CLI):
-- 27 test cases covering all 7 functions
-- Tests: basic usage, timeouts, all 6 modes, GROUP BY, no-match, per-user aggregation,
-  NULL inputs, empty tables, 5+ conditions, all direction×base combinations
+**E2E tests** (27 cases, against real DuckDB CLI):
+- Covers all 7 functions with basic usage, timeouts, all 6 modes, GROUP BY,
+  no-match, NULL inputs, empty tables, 5+ conditions, all direction x base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`
-- Validates the complete chain: extension load → function registration → SQL execution → correct results
 
 ## CI/CD
 
@@ -987,7 +312,7 @@ GitHub Actions workflows in `.github/workflows/`:
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
   creates GitHub release on tag push with SemVer validation
 - **community-submission.yml**: On-demand workflow for community extension
-  submission — validates, builds, tests, pins ref, generates submission package
+  submission -- validates, builds, tests, pins ref, generates submission package
 - **pages.yml**: Deploys mdBook documentation to GitHub Pages
 
 ## Common Tasks
@@ -999,11 +324,11 @@ GitHub Actions workflows in `.github/workflows/`:
 2. Add `impl quack_rs::aggregate::AggregateState for NewFunctionState {}` in the FFI module
 3. Create `src/ffi/new_function.rs` using quack-rs builders:
    - Use `AggregateFunctionSetBuilder::new("name").overloads(...)` for registration
-     (automatically handles function-set-name per overload — no Session 10 bug)
    - Use `FfiState::<NewFunctionState>::size_callback`/`init_callback`/`destroy_callback`
    - Use `VectorReader` for input (read_bool, read_str, read_i64, read_interval)
-   - Use `VectorWriter` for output (write_i32, write_bool, set_null)
-   - **NOTE**: If return type is `LIST(T)`, use raw registration — builder cannot express it
+   - Use `VectorWriter` for output (write_i32, write_bool, write_varchar, set_null)
+   - For `LIST(T)` output, use `.returns_logical(LogicalType::list(TypeId::...))` on the
+     builder, and `ListVector` + `VectorWriter` for child data in finalize
    - **CRITICAL**: `combine_in_place` must propagate ALL configuration fields (not just events)
 4. Register in `src/ffi/mod.rs` `register_all_raw()`
 5. Add `pub mod new_function;` to `src/lib.rs`
@@ -1017,14 +342,14 @@ The entry point uses `quack-rs` which depends on `libduckdb-sys`. When updating:
 
 1. Update `libduckdb-sys` version in `[dependencies]` and `duckdb` in `[dev-dependencies]`
 2. Check if `duckdb_rs_extension_api_init` minimum version string needs updating
-   (currently `"v1.2.0"` — find the new C API version from `duckdb-loadable-macros`)
+   (currently `"v1.2.0"` -- find the new C API version from `duckdb-loadable-macros`)
 3. Update `append_extension_metadata.py -dv` to match the new C API version
 4. Run full unit test suite (`cargo test`)
-5. **MANDATORY**: E2E test — build release, load in DuckDB CLI, verify all 7 functions
+5. **MANDATORY**: E2E test -- build release, load in DuckDB CLI, verify all 7 functions
 
 ### Performance optimization session
 
-Follow the Session Improvement Protocol in [`PERF.md`](PERF.md). Summary:
+Follow the protocol in [`PERF.md`](PERF.md):
 
 1. Run `cargo bench` 3 times. Record baseline. Compare against PERF.md "Current Baseline".
 2. One optimization per commit. Measure before/after with confidence intervals.
@@ -1032,12 +357,100 @@ Follow the Session Improvement Protocol in [`PERF.md`](PERF.md). Summary:
 4. Update PERF.md: add optimization history entry, update current baseline.
 5. Update test count in this file if tests were added or removed.
 
-## Lessons Learned
+## Critical Implementation Notes
 
-65 lessons accumulated from 12 development sessions, organized by category in
-[`LESSONS.md`](LESSONS.md). Consult before beginning any work.
+Hard-won knowledge from developing this extension. Consult before making changes.
 
-Categories: Type Safety, Build & Dependencies, Testing Strategy, Unsafe Code & FFI,
-Benchmarking & Measurement, Combine Operations, Sorting & Data Structures,
-NFA Pattern Engine, ClickHouse Semantics, Performance Optimization Principles,
-String & Memory Optimization, Community Extension.
+### DuckDB FFI Gotchas
+
+- **Combine creates zero-initialized targets**: DuckDB's segment tree calls
+  `state_init` on fresh target states, then combines sources into them. All
+  config fields (`window_size_us`, `mode`, `pattern_str`, `direction`, `base`,
+  `num_steps`) default to zero/empty and must be explicitly propagated in
+  `combine_in_place`. Failure produces silently wrong results at finalize.
+
+- **Function set name must be set per overload**: `duckdb_register_aggregate_function_set`
+  silently fails if individual functions don't have `duckdb_aggregate_function_set_name`
+  called. The quack-rs builder handles this automatically; raw registration must not forget it.
+
+- **`duckdb_vector_ensure_validity_writable` required before setting NULL**: Without
+  this call, `duckdb_vector_get_validity` returns an uninitialized pointer. Writing
+  to it produces garbage instead of NULL. `VectorWriter::set_null()` handles this
+  automatically.
+
+- **Extension metadata version is C API version, not DuckDB version**: DuckDB v1.4.4
+  uses C API version `v1.2.0`. The `append_extension_metadata.py -dv` flag must use
+  the C API version, not the release version.
+
+- **`sessionize` cannot use quack-rs**: DuckDB's public C Extension API does not
+  expose window function registration hooks. This module stays on raw `libduckdb-sys`.
+
+### Performance Gotchas
+
+- **Combine is the dominant cost**: DuckDB's segment tree calls combine O(n log n)
+  times. Use `combine_in_place` with `Vec::extend_from_slice` (O(N) amortized) rather
+  than `combine` returning a new Vec (O(N^2) total copies for left-fold chains).
+
+- **NFA exploration order is catastrophic if wrong**: The `.*` wildcard must try
+  advancing the pattern first (lazy), not consuming events first (greedy). Wrong
+  order causes O(n * states * starts) behavior — 1,961x slower at 1M events.
+
+- **Presorted detection before sort**: DuckDB often provides timestamp-ordered data.
+  An O(n) `windows(2).all()` check before `sort_unstable_by_key` avoids O(n log n)
+  for the common case.
+
+- **`Arc<str>` not `String` for shared event values**: `sequence_next_node` stores
+  per-event string values. `Arc::clone` is ~1ns (atomic increment) vs `String::clone`
+  at ~20-80ns (byte copy). Compounds in combine operations.
+
+- **Radix sort is wrong for embedded-key structs**: LSD radix sort (8-bit, 8 passes)
+  on 16-byte `Event` structs was 4.3x slower than pdqsort at 100M elements due to
+  cache-hostile scatter patterns. Comparison sorts win for embedded keys.
+
+- **Branchless is wrong for well-predicted branches**: `CMOV` always evaluates both
+  paths. For 90/10 splits (like session boundary checks), the branch predictor
+  achieves near-perfect accuracy and branching is faster.
+
+### ClickHouse Semantics
+
+- **`strict` and `strict_deduplication` are aliases in ClickHouse**: Both map to
+  `STRICT` (0x01). The extension's `'timestamp_dedup'` mode (0x04) provides
+  timestamp-based deduplication — a behavior not in ClickHouse.
+
+- **`sequenceNextNode` always returns `Nullable(String)`**: Not polymorphic.
+  Simplifies FFI to a single VARCHAR return type.
+
+- **`sequence_next_node` requires base_condition AND event1 at start**: The starting
+  event must satisfy both `base_condition(i) && conditions[0](i)` simultaneously.
+
+- **Multi-step funnel advancement**: A single event can advance multiple funnel steps
+  when it satisfies consecutive conditions (use `while`, not `if`). `strict_once`
+  constrains to one step per event.
+
+### Build & Community Extension
+
+- **Library `[lib] name` must match extension name**: The community Makefile expects
+  `lib{name}.so`. The crate name `duckdb-behavioral` produces `libduckdb_behavioral.so`.
+  Fix: `[lib] name = "behavioral"` in Cargo.toml.
+
+- **`extension-ci-tools` submodule is required**: Initialize before any `make` invocation.
+  Provides Makefile includes, metadata script, and test runner.
+
+- **Local `interval_to_micros` rejects months intentionally**: quack-rs converts
+  months to 30 days. The local version returns `None` for month-based intervals
+  because 28-31 day ambiguity is unacceptable for behavioral analytics.
+
+### Testing Notes
+
+- **E2E testing is non-negotiable**: Unit tests once passed at 375/375 while the
+  extension was completely broken: SEGFAULT on load, 6 of 7 functions silently
+  failing to register, and `window_funnel` returning wrong results. All three bugs
+  were in the FFI layer that unit tests don't exercise.
+
+- **SQL test values must be validated against actual DuckDB output**: Session IDs
+  are 1-indexed (not 0-indexed), LIST(TIMESTAMP) uses single-quoted format,
+  `sequence_next_node` requires base_condition AND event1 conjunction.
+
+- **Event filtering in tests**: `update()` filters events where `has_any_condition()`
+  is false. Test "gap" events must have at least one true condition or they're silently
+  dropped.

@@ -3,17 +3,20 @@
 
 //! FFI registration for the `sequence_match_events` aggregate function.
 //!
-//! Uses [`quack_rs::aggregate::FfiState`] for safe state management and
-//! [`quack_rs::vector::VectorReader`] for safe vector reading.
-//!
-//! Registration uses raw `libduckdb-sys` calls because
-//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
-//! parameterized return types like `LIST(TIMESTAMP)`.
+//! Uses [`quack_rs::aggregate::AggregateFunctionSetBuilder`] with
+//! [`returns_logical`][quack_rs::aggregate::AggregateFunctionSetBuilder::returns_logical]
+//! for `LIST(TIMESTAMP)` return type registration.
+//! Uses [`quack_rs::aggregate::FfiState`] for safe state management,
+//! [`quack_rs::vector::VectorReader`] for input, and
+//! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
+//! for LIST output.
 
 use crate::common::event::Event;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::FfiState;
+use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::types::{LogicalType, TypeId};
+use quack_rs::vector::complex::ListVector;
 use quack_rs::vector::VectorReader;
 
 /// Minimum number of boolean condition parameters for sequence functions.
@@ -34,62 +37,25 @@ const MAX_CONDITIONS: usize = 32;
 ///
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
-    unsafe {
-        let name = c"sequence_match_events";
-        let set = duckdb_create_aggregate_function_set(name.as_ptr());
-
-        for n in MIN_CONDITIONS..=MAX_CONDITIONS {
-            let func = duckdb_create_aggregate_function();
-            duckdb_aggregate_function_set_name(func, name.as_ptr());
-
-            // Parameter 0: VARCHAR (pattern)
-            let varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
-            duckdb_aggregate_function_add_parameter(func, varchar_type);
-            duckdb_destroy_logical_type(&mut { varchar_type });
-
-            // Parameter 1: TIMESTAMP
-            let ts_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
-            duckdb_aggregate_function_add_parameter(func, ts_type);
-            duckdb_destroy_logical_type(&mut { ts_type });
-
-            // Parameters 2..2+n: BOOLEAN conditions
-            let bool_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            for _ in 0..n {
-                duckdb_aggregate_function_add_parameter(func, bool_type);
-            }
-            duckdb_destroy_logical_type(&mut { bool_type });
-
-            // Return type: LIST(TIMESTAMP) — cannot use AggregateFunctionSetBuilder
-            let inner_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
-            let list_type = duckdb_create_list_type(inner_type);
-            duckdb_aggregate_function_set_return_type(func, list_type);
-            duckdb_destroy_logical_type(&mut { inner_type });
-            duckdb_destroy_logical_type(&mut { list_type });
-
-            duckdb_aggregate_function_set_functions(
-                func,
-                Some(FfiState::<SequenceState>::size_callback),
-                Some(FfiState::<SequenceState>::init_callback),
-                Some(state_update),
-                Some(state_combine),
-                Some(state_finalize),
-            );
-
-            duckdb_aggregate_function_set_destructor(
-                func,
-                Some(FfiState::<SequenceState>::destroy_callback),
-            );
-
-            duckdb_add_aggregate_function_to_set(set, func);
-            duckdb_destroy_aggregate_function(&mut { func });
-        }
-
-        let result = duckdb_register_aggregate_function_set(con, set);
-        if result != DuckDBSuccess {
-            eprintln!("behavioral: failed to register sequence_match_events function set");
-        }
-
-        duckdb_destroy_aggregate_function_set(&mut { set });
+    let result = unsafe {
+        AggregateFunctionSetBuilder::new("sequence_match_events")
+            .returns_logical(LogicalType::list(TypeId::Timestamp))
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+                let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.state_size(FfiState::<SequenceState>::size_callback)
+                    .init(FfiState::<SequenceState>::init_callback)
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+                    .destructor(FfiState::<SequenceState>::destroy_callback)
+            })
+            .register(con)
+    };
+    if let Err(e) = result {
+        eprintln!("behavioral: failed to register sequence_match_events function set: {e}");
     }
 }
 
@@ -170,41 +136,34 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        let list_child = duckdb_list_vector_get_child(result);
-        let mut list_offset: idx_t = duckdb_list_vector_get_size(result);
+        let mut list_offset = ListVector::get_size(result) as u64;
 
         for i in 0..count as usize {
-            let idx = (offset as usize + i) as idx_t;
+            let idx = offset as usize + i;
 
             let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
                 // Empty list for null state
-                duckdb_list_vector_set_size(result, list_offset);
-                let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
-                (*list_data.add(idx as usize)).offset = list_offset;
-                (*list_data.add(idx as usize)).length = 0;
+                ListVector::set_entry(result, idx, list_offset, 0);
                 continue;
             };
 
             let timestamps = state.finalize_events().unwrap_or_default();
-
-            let ts_count = timestamps.len() as idx_t;
+            let ts_count = timestamps.len() as u64;
 
             // Reserve space in the list child vector
-            duckdb_list_vector_reserve(result, list_offset + ts_count);
+            ListVector::reserve(result, (list_offset + ts_count) as usize);
 
             // Write timestamps into the child vector
-            let child_data = duckdb_vector_get_data(list_child) as *mut i64;
+            let mut child_writer = ListVector::child_writer(result);
             for (j, &ts) in timestamps.iter().enumerate() {
-                *child_data.add((list_offset + j as idx_t) as usize) = ts;
+                child_writer.write_i64(list_offset as usize + j, ts);
             }
 
             // Set the list entry metadata
-            let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
-            (*list_data.add(idx as usize)).offset = list_offset;
-            (*list_data.add(idx as usize)).length = ts_count;
+            ListVector::set_entry(result, idx, list_offset, ts_count);
 
             list_offset += ts_count;
-            duckdb_list_vector_set_size(result, list_offset);
+            ListVector::set_size(result, list_offset as usize);
         }
     }
 }

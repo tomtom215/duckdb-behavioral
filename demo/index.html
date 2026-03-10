@@ -6,7 +6,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DuckDB Behavioral Analytics - Interactive Demo</title>
-<link rel="icon" type="image/svg+xml" href="../assets/logo-64.svg">
+<link rel="icon" type="image/svg+xml" href="https://raw.githubusercontent.com/tomtom215/duckdb-behavioral/main/assets/logo-64.svg">
 <meta name="description" content="Interactive demo of duckdb-behavioral: ClickHouse-compatible behavioral analytics functions for DuckDB.">
 <meta property="og:title" content="DuckDB Behavioral Analytics">
 <meta property="og:description" content="Session analysis, conversion funnels, retention cohorts, and event sequence pattern matching for DuckDB.">
@@ -110,7 +110,7 @@
 <div class="container">
 
 <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px;">
-  <img src="../assets/logo-64.svg" alt="" width="48" height="48">
+  <img src="https://raw.githubusercontent.com/tomtom215/duckdb-behavioral/main/assets/logo-64.svg" alt="" width="48" height="48">
   <div>
     <h1><span>behavioral</span> DuckDB Extension</h1>
     <p class="subtitle" style="margin-bottom: 0;">ClickHouse-compatible behavioral analytics functions for DuckDB</p>
@@ -152,12 +152,12 @@
     <p class="result-label">Result</p>
     <table class="result-table">
       <tr><th>author</th><th>commit_time</th><th>work_session</th></tr>
-      <tr><td>alice</td><td>2024-03-15 09:00</td><td class="val-num">0</td></tr>
-      <tr><td>alice</td><td>2024-03-15 09:45</td><td class="val-num">0</td></tr>
-      <tr><td>alice</td><td>2024-03-15 10:30</td><td class="val-num">0</td></tr>
-      <tr><td>alice</td><td>2024-03-15 16:00</td><td class="val-num">1</td></tr>
-      <tr><td>bob</td><td>2024-03-15 14:00</td><td class="val-num">0</td></tr>
-      <tr><td>bob</td><td>2024-03-16 10:00</td><td class="val-num">1</td></tr>
+      <tr><td>alice</td><td>2024-03-15 09:00</td><td class="val-num">1</td></tr>
+      <tr><td>alice</td><td>2024-03-15 09:45</td><td class="val-num">1</td></tr>
+      <tr><td>alice</td><td>2024-03-15 10:30</td><td class="val-num">1</td></tr>
+      <tr><td>alice</td><td>2024-03-15 16:00</td><td class="val-num">2</td></tr>
+      <tr><td>bob</td><td>2024-03-15 14:00</td><td class="val-num">1</td></tr>
+      <tr><td>bob</td><td>2024-03-16 10:00</td><td class="val-num">2</td></tr>
     </table>
   </div>
 </div>
@@ -217,8 +217,8 @@
     <p class="result-label">Result</p>
     <table class="result-table">
       <tr><th>author</th><th>pr_funnel_step</th></tr>
-      <tr><td>alice</td><td class="val-num">1</td></tr>
-      <tr><td>bob</td><td class="val-num">1</td></tr>
+      <tr><td>alice</td><td class="val-num">4</td></tr>
+      <tr><td>bob</td><td class="val-num">2</td></tr>
       <tr><td>carol</td><td class="val-num">1</td></tr>
     </table>
     <p class="description" style="margin-top:12px">Supports 6 combinable modes: <code>strict</code>, <code>strict_order</code>, <code>strict_deduplication</code>, <code>strict_increase</code>, <code>strict_once</code>, <code>allow_reentry</code>.</p>

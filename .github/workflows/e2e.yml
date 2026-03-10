@@ -299,7 +299,7 @@ jobs:
             echo ""
             echo "| Test | Status |"
             echo "|------|--------|"
-            echo "| Extension build | ${{ steps.*.outcome == 'success' && '✅' || '⚠️ Check logs' }} |"
+            echo "| Extension build | ${{ job.status == 'success' && '✅' || '⚠️ Check logs' }} |"
             echo "| Extension loads | Verified |"
             echo "| sessionize | Verified |"
             echo "| retention | Verified |"

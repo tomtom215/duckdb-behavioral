@@ -458,7 +458,7 @@ jobs:
 
           ### Testing
 
-          - 434 unit tests + 1 doc-test
+          - 453 unit tests + 1 doc-test
           - 27 E2E tests against real DuckDB v1.4.4
           - 7 SQL integration test files in test/sql/
           - Criterion.rs benchmarks up to 1 billion elements

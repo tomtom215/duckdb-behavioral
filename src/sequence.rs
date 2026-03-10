@@ -122,8 +122,10 @@ impl SequenceState {
             self.compiled_pattern = Some(parse_pattern(pattern_str)?);
         }
 
-        // SAFETY of unwrap: we just ensured compiled_pattern is Some above.
-        let pattern = self.compiled_pattern.as_ref().unwrap();
+        let pattern = self
+            .compiled_pattern
+            .as_ref()
+            .expect("compiled_pattern was set on the line above");
         Ok(execute_pattern(pattern, &self.events, count_all))
     }
 
@@ -161,7 +163,10 @@ impl SequenceState {
             self.compiled_pattern = Some(parse_pattern(pattern_str)?);
         }
 
-        let pattern = self.compiled_pattern.as_ref().unwrap();
+        let pattern = self
+            .compiled_pattern
+            .as_ref()
+            .expect("compiled_pattern was set on the line above");
         Ok(execute_pattern_events(pattern, &self.events).unwrap_or_default())
     }
 }

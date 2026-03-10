@@ -5,23 +5,31 @@
 //!
 //! # Architecture
 //!
-//! All modules except [`sessionize`] use the `quack-rs` SDK for function
-//! registration and safe state/vector management:
+//! All modules except [`sessionize`] use the `quack-rs` v0.5.0 SDK for
+//! registration, state management, and vector I/O:
 //!
 //! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function
-//!   sets with N overloads, automatically calling
-//!   `duckdb_aggregate_function_set_name` on each (preventing the Session 10 bug).
+//!   sets with N overloads. Supports both simple returns (`.returns(TypeId)`) and
+//!   parameterized returns (`.returns_logical(LogicalType)`) for `LIST(T)` types.
 //! - [`quack_rs::aggregate::FfiState<T>`] — `#[repr(C)]` wrapper providing safe
 //!   init/destroy lifecycle and null-checked `with_state_mut()` accessors.
-//! - [`quack_rs::vector::VectorReader`] — safe vector reading with `read_bool()`
-//!   (reads as `u8 != 0`), `read_str()` (handles `duckdb_string_t` format), and
-//!   `read_interval()`.
-//! - [`quack_rs::vector::VectorWriter`] — safe vector writing with automatic
-//!   `ensure_validity_writable` before null writes.
+//! - [`quack_rs::vector::VectorReader`] — safe vector reading (`read_bool()`,
+//!   `read_str()`, `read_i64()`, `read_interval()`).
+//! - [`quack_rs::vector::VectorWriter`] — safe vector writing (`write_i32()`,
+//!   `write_bool()`, `write_varchar()`, `set_null()` with automatic validity
+//!   bitmap setup).
+//! - [`quack_rs::vector::complex::ListVector`] — safe LIST vector output
+//!   (`reserve()`, `set_size()`, `set_entry()`, `child_writer()`).
+//! - [`quack_rs::types::LogicalType::list()`] — RAII construction of `LIST(T)`
+//!   types for `returns_logical()` and function registration.
+//!
+//! All 6 aggregate functions use `AggregateFunctionSetBuilder` for registration,
+//! including `retention` and `sequence_match_events` which use
+//! `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
 //!
 //! The [`sessionize`] module is the sole exception: it requires window function
-//! registration via the C API, which `quack-rs` does not yet support (v0.3.0).
-//! It uses raw `libduckdb-sys` calls directly.
+//! registration via the C API, which `quack-rs` does not support. It uses raw
+//! `libduckdb-sys` calls directly.
 
 pub mod retention;
 pub mod sequence;

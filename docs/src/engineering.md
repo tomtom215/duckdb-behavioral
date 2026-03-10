@@ -45,7 +45,7 @@ graph TB
     end
 
     subgraph "Extension Entry Point"
-        EP[behavioral_init_c_api<br/>src/lib.rs]
+        EP[entry_point! macro<br/>src/lib.rs]
     end
 
     subgraph "FFI Bridge — src/ffi/"
@@ -121,10 +121,11 @@ graph TB
   (`state_size`, `init`, `update`, `combine`, `finalize`). Every `unsafe` block
   has a `// SAFETY:` comment documenting the invariants it relies on.
 
-- **Entry point** (`src/lib.rs`): A custom C entry point
-  (`behavioral_init_c_api`) that bypasses the `duckdb` Rust crate's connection
-  wrapper entirely, using `duckdb_connect` directly from the extension access
-  struct. This eliminates struct layout fragility across DuckDB versions.
+- **Entry point** (`src/lib.rs`): Uses the `quack_rs::entry_point!` macro,
+  which handles API initialization, connection management via
+  `duckdb_connect`/`duckdb_disconnect`, and error reporting. This replaces
+  ~80 lines of hand-rolled unsafe code and eliminates struct layout fragility
+  across DuckDB versions.
 
 ### Why This Matters
 
@@ -310,9 +311,12 @@ these analyses can run as interactive queries rather than batch jobs.
 ### DuckDB Aggregate Function Registration
 
 DuckDB's Rust crate does not provide high-level aggregate function
-registration. This project uses the `quack-rs` SDK (v0.3.0) which wraps the
-raw C API with safe builders, state management, and vector I/O. The `sessionize`
-function uses raw `libduckdb-sys` due to window function limitations in quack-rs.
+registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
+SDK (v0.5.0) which wraps the raw C API with safe builders
+(including `returns_logical(LogicalType)` for `LIST(T)` return types),
+state management, vector I/O, and LIST output helpers. All 6 aggregate
+functions use the builder for registration. The `sessionize` function
+uses raw `libduckdb-sys` due to window function limitations in quack-rs.
 Each aggregate implements five callback functions:
 
 ```mermaid
