@@ -60,7 +60,7 @@ src/
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
    provide high-level aggregate function registration. We use `quack-rs` v0.5.0
-   (pre-release, git dependency) which wraps the raw C API with safe builders
+   ([crates.io](https://crates.io/crates/quack-rs)) which wraps the raw C API with safe builders
    (`AggregateFunctionSetBuilder`), state management (`FfiState<T>`), vector I/O
    (`VectorReader`/`VectorWriter` including `write_varchar`), complex type helpers
    (`ListVector`, `LogicalType::list()`), parameterized return type support
@@ -150,8 +150,8 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs` v0.5.0 (pre-release, git dependency from `claude/review-duckdb-analysis-lD5Az`
-  branch) — Rust SDK for DuckDB loadable extensions. Provides `entry_point!` macro,
+- `quack-rs` v0.5.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
+  for DuckDB loadable extensions. Provides `entry_point!` macro,
   `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
   `FfiState<T>`, `VectorReader`/`VectorWriter` (including `write_varchar`),
   `ListVector` for LIST output, `LogicalType::list()` for parameterized types,

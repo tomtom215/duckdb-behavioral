@@ -20,7 +20,7 @@ name = "behavioral"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-quack-rs = { git = "https://github.com/tomtom215/quack-rs", branch = "claude/review-duckdb-analysis-lD5Az" }
+quack-rs = "0.5.0"
 libduckdb-sys = { version = "=1.4.4", features = ["loadable-extension"] }
 
 [dev-dependencies]

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Migrated FFI layer to `quack-rs` v0.5.0 (pre-release, git dependency) SDK
+- Migrated FFI layer to `quack-rs` v0.5.0 ([crates.io](https://crates.io/crates/quack-rs)) SDK
   for safe state management, vector I/O, and function set registration
 - All 6 aggregate functions now use `AggregateFunctionSetBuilder` for registration
 - `retention` and `sequence_match_events` use `returns_logical(LogicalType::list(...))`

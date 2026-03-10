@@ -46,8 +46,8 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
 - **Pure Rust core**: Business logic in top-level modules (`sessionize.rs`,
   `retention.rs`, etc.) with zero FFI dependencies.
 - **FFI bridge via quack-rs SDK**: DuckDB C API registration confined to
-  `src/ffi/`, using [quack-rs](https://github.com/tomtom215/quack-rs) v0.5.0
-  (pre-release) for safe builders (including `returns_logical(LogicalType)` for
+  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.5.0
+  for safe builders (including `returns_logical(LogicalType)` for
   `LIST(T)` returns), state management (`FfiState<T>`), vector I/O
   (`VectorReader`/`VectorWriter`), LIST output (`ListVector`), and type
   construction (`LogicalType::list()`). Every `unsafe` block has a `// SAFETY:`
