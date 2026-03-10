@@ -20,7 +20,7 @@ name = "behavioral"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-quack-rs = "=0.3.0"
+quack-rs = "=0.4.0"
 libduckdb-sys = { version = "=1.4.4", features = ["loadable-extension"] }
 
 [dev-dependencies]
