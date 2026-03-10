@@ -67,7 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (0x01), matching ClickHouse where `'strict'` and `'strict_deduplication'`
   are aliases. The timestamp-based dedup behavior is now available under
   `'timestamp_dedup'`.
-
 - **BREAKING**: All public state structs marked `#[non_exhaustive]` to allow
   future field additions without semver-breaking changes. Affected structs:
   `SessionizeState`, `SessionizeBoundaryState`, `RetentionState`,

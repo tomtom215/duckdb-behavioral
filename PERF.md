@@ -81,7 +81,7 @@ cargo bench -- sequence_match
 | `sort_events` | (isolated) | sort only | 100 to 100M events | pdqsort scaling (random) |
 | `sort_events_presorted` | (isolated) | sort only | 100 to 100M events | pdqsort adaptive path |
 | `sequence_next_node` | `sequence_next_node` | update + finalize | 100 to 10M events | Sequential matching + Arc\<str\> clone |
-| `sequence_next_node_combine` | `sequence_next_node` | combine_in_place + finalize | 100 to 100K states | In-place append + sequential matching |
+| `sequence_next_node_combine` | `sequence_next_node` | combine_in_place + finalize | 100 to 1M states | In-place append + sequential matching |
 | `sequence_match_events` | `sequence_match_events` | update + finalize_events | 100 to 100M events | NFA pattern matching + timestamp collection |
 | `sequence_match_events_combine` | `sequence_match_events` | combine_in_place + finalize_events | 100 to 1M states | In-place append + NFA + timestamp cost |
 | `sequence_next_node_realistic` | `sequence_next_node` | update + finalize (100 distinct values) | 100 to 1M events | Realistic cardinality Arc\<str\> sharing |
@@ -547,7 +547,7 @@ storage (`NextNodeEvent` struct) rather than the `Copy` `Event` struct used by
 all other functions.
 
 **Benchmark design**: Update + finalize throughput at 100 to 10M events, and
-combine_in_place chains at 100 to 100K states. Uses forward direction with
+combine_in_place chains at 100 to 1M states. Uses forward direction with
 `first_match` base and 3-step patterns — the common case.
 
 **Measured Results** (3 runs, 95% CI from Criterion):
