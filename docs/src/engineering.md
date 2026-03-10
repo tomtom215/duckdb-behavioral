@@ -311,9 +311,10 @@ these analyses can run as interactive queries rather than batch jobs.
 ### DuckDB Aggregate Function Registration
 
 DuckDB's Rust crate does not provide high-level aggregate function
-registration. This project uses the `quack-rs` SDK (v0.3.0) which wraps the
-raw C API with safe builders, state management, and vector I/O. The `sessionize`
-function uses raw `libduckdb-sys` due to window function limitations in quack-rs.
+registration. This project uses the [quack-rs](https://github.com/tomtom215/quack-rs)
+SDK (v0.4.0) which wraps the raw C API with safe builders, state management,
+vector I/O, and LIST output helpers. The `sessionize` function uses raw
+`libduckdb-sys` due to window function limitations in quack-rs.
 Each aggregate implements five callback functions:
 
 ```mermaid

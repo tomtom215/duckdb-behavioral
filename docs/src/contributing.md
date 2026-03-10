@@ -46,9 +46,10 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
 - **Pure Rust core**: Business logic in top-level modules (`sessionize.rs`,
   `retention.rs`, etc.) with zero FFI dependencies.
 - **FFI bridge via quack-rs SDK**: DuckDB C API registration confined to
-  `src/ffi/`, using [quack-rs](https://github.com/tomtom215/quack-rs) v0.3.0
-  for safe builders, state management (`FfiState<T>`), and vector I/O
-  (`VectorReader`/`VectorWriter`). Every `unsafe` block has a `// SAFETY:`
+  `src/ffi/`, using [quack-rs](https://github.com/tomtom215/quack-rs) v0.4.0
+  for safe builders, state management (`FfiState<T>`), vector I/O
+  (`VectorReader`/`VectorWriter`), LIST output (`ListVector`), and type
+  construction (`LogicalType::list()`). Every `unsafe` block has a `// SAFETY:`
   comment.
 - **All public items documented**: Functions, structs, and modules must have
   doc comments.
@@ -63,8 +64,11 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
      (automatically handles function-set-name per overload).
    - Use `FfiState::<NewFunctionState>::size_callback`/`init_callback`/`destroy_callback`.
    - Use `VectorReader` for input (`read_bool`, `read_str`, `read_i64`, `read_interval`).
-   - Use `VectorWriter` for output (`write_i32`, `write_bool`, `set_null`).
-   - **NOTE**: If return type is `LIST(T)`, use raw registration — the builder cannot express it.
+   - Use `VectorWriter` for output (`write_i32`, `write_bool`, `write_varchar`, `set_null`).
+   - For `LIST(T)` output, use `ListVector` + `VectorWriter` for child data, and
+     `LogicalType::list()` for type construction.
+   - **NOTE**: If return type is `LIST(T)`, use raw function set registration — the
+     builder's `.returns(TypeId)` cannot express parameterized types.
    - **CRITICAL**: `combine_in_place` must propagate **all** configuration fields from
      the source state (not just events).
 4. Register in `src/ffi/mod.rs` `register_all_raw()`.

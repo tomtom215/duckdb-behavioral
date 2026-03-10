@@ -9,11 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Migrated FFI layer to `quack-rs` v0.3.0 SDK for safe state management,
+- Migrated FFI layer to `quack-rs` v0.4.0 SDK for safe state management,
   vector I/O, and function set registration
 - 18 new `AggregateTestHarness` unit tests for combine config-propagation
   across all 5 aggregate functions (435 → 453 tests)
-- `quack-rs` SDK context in LESSONS.md
 
 ### Changed
 
@@ -21,12 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of ~80 lines of hand-rolled unsafe code
 - MSRV bumped from 1.80 to 1.84.1 (required by quack-rs)
 - FFI modules use `FfiState<T>`, `VectorReader`, `VectorWriter` from quack-rs
+- LIST output uses `ListVector` + `VectorWriter` instead of raw pointer arithmetic
+- VARCHAR output uses `VectorWriter::write_varchar()` instead of `CString` + raw FFI
+- LIST type construction uses `LogicalType::list()` instead of raw `duckdb_create_list_type`
 - `sessionize` FFI remains hand-rolled (window function limitation in quack-rs)
 
 ### Removed
 
 - Hand-rolled `read_varchar()` helper in `sequence_next_node` (replaced by
   `VectorReader::read_str()`)
+- Raw `duckdb_list_vector_*` pointer arithmetic in retention and
+  sequence_match_events (replaced by `ListVector` wrappers)
+- `CString` sanitization in sequence_next_node (replaced by `write_varchar`)
 
 ---
 

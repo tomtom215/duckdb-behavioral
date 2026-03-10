@@ -45,11 +45,11 @@ src/
 └── ffi/
     ├── mod.rs              # register_all_raw() — dispatches to all FFI modules
     ├── sessionize.rs       # FFI callbacks for sessionize (raw libduckdb-sys — window function)
-    ├── retention.rs        # FFI via quack-rs FfiState + VectorReader (raw registration for LIST return)
-    ├── window_funnel.rs    # FFI via quack-rs AggregateFunctionSetBuilder + FfiState + VectorReader
+    ├── retention.rs        # FFI via quack-rs FfiState + ListVector + VectorWriter (raw registration for LIST return type)
+    ├── window_funnel.rs    # FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
     ├── sequence.rs         # FFI via quack-rs builder for sequence_match + sequence_count
-    ├── sequence_match_events.rs  # FFI via quack-rs FfiState (raw registration for LIST return)
-    └── sequence_next_node.rs     # FFI via quack-rs builder + VectorReader::read_str
+    ├── sequence_match_events.rs  # FFI via quack-rs FfiState + ListVector (raw registration for LIST return type)
+    └── sequence_next_node.rs     # FFI via quack-rs builder + VectorWriter::write_varchar
 ```
 
 ### Key Design Decisions
@@ -59,11 +59,15 @@ src/
    submodules handle DuckDB C API registration only.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
-   provide high-level aggregate function registration. We use `quack-rs` v0.3.0
+   provide high-level aggregate function registration. We use `quack-rs` v0.4.0
    which wraps the raw C API with safe builders (`AggregateFunctionSetBuilder`),
-   state management (`FfiState<T>`), and vector I/O (`VectorReader`/`VectorWriter`).
+   state management (`FfiState<T>`), vector I/O (`VectorReader`/`VectorWriter`
+   including `write_varchar`), complex type helpers (`ListVector`, `LogicalType::list()`),
+   and `AggregateTestHarness` for combine testing.
    Functions with parameterized return types (`LIST(BOOLEAN)`, `LIST(TIMESTAMP)`)
-   still use raw `libduckdb-sys` for registration but quack-rs for state/vector ops.
+   use raw `libduckdb-sys` for function set registration only (the builder's
+   `.returns(TypeId)` cannot express `LIST(T)`), but quack-rs for all state
+   management, input I/O, and output I/O (via `ListVector` + `VectorWriter`).
    `sessionize` remains fully hand-rolled (window function limitation in quack-rs).
 
 3. **Function sets for variadic signatures**: Since `duckdb_aggregate_function_set_varargs`
@@ -146,14 +150,17 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs = "=0.3.0"` — Rust SDK for DuckDB loadable extensions. Provides
+- `quack-rs = "=0.4.0"` — Rust SDK for DuckDB loadable extensions. Provides
   `entry_point!` macro, `AggregateFunctionSetBuilder`, `FfiState<T>`,
-  `VectorReader`/`VectorWriter`, `LogicalType` RAII, and `AggregateTestHarness`.
-  Re-exports `libduckdb-sys` with `loadable-extension` feature.
+  `VectorReader`/`VectorWriter` (including `write_varchar` for strings),
+  `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
+  and `AggregateTestHarness` for combine testing. Re-exports `libduckdb-sys`
+  with `loadable-extension` feature. v0.4.0 adds `Connection`/`Registrar` trait
+  and broadens DuckDB version support to 1.4.x--1.5.x.
 - `libduckdb-sys = "=1.4.4"` with `loadable-extension` feature — Kept explicitly
   for `sessionize` FFI (window function not supported by quack-rs) and for
-  functions with parameterized return types (`LIST(BOOLEAN)`, `LIST(TIMESTAMP)`)
-  that the builder cannot express.
+  raw function set registration of `retention` and `sequence_match_events`
+  (the builder's `.returns(TypeId)` cannot express `LIST(T)` return types).
 
 **Dev-only** (unit tests and benchmarks):
 - `duckdb = "=1.4.4"` with `bundled` feature — Used in `#[cfg(test)]` modules
@@ -320,8 +327,11 @@ GitHub Actions workflows in `.github/workflows/`:
    - Use `AggregateFunctionSetBuilder::new("name").overloads(...)` for registration
    - Use `FfiState::<NewFunctionState>::size_callback`/`init_callback`/`destroy_callback`
    - Use `VectorReader` for input (read_bool, read_str, read_i64, read_interval)
-   - Use `VectorWriter` for output (write_i32, write_bool, set_null)
-   - **NOTE**: If return type is `LIST(T)`, use raw registration -- builder cannot express it
+   - Use `VectorWriter` for output (write_i32, write_bool, write_varchar, set_null)
+   - For `LIST(T)` output, use `ListVector` + `VectorWriter` for child data, and
+     `LogicalType::list()` for type construction
+   - **NOTE**: If return type is `LIST(T)`, use raw function set registration -- the
+     builder's `.returns(TypeId)` cannot express parameterized types
    - **CRITICAL**: `combine_in_place` must propagate ALL configuration fields (not just events)
 4. Register in `src/ffi/mod.rs` `register_all_raw()`
 5. Add `pub mod new_function;` to `src/lib.rs`
