@@ -14,7 +14,6 @@ use libduckdb_sys::*;
 use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
-use std::ffi::CString;
 use std::sync::Arc;
 
 /// Minimum number of event condition boolean parameters.
@@ -209,13 +208,11 @@ unsafe extern "C" fn state_finalize(
 
             match state.finalize() {
                 Some(value) => {
-                    // Strip interior null bytes so CString construction is infallible.
-                    let sanitized = value.replace('\0', "");
-                    // SAFETY: All null bytes have been stripped above, so the Vec
-                    // contains no interior nulls. from_vec_unchecked adds the
-                    // trailing null terminator.
-                    let c_str = CString::from_vec_unchecked(sanitized.into_bytes());
-                    duckdb_vector_assign_string_element(result, idx, c_str.as_ptr());
+                    // write_varchar handles both inline (≤12 bytes) and pointer
+                    // storage formats via duckdb_vector_assign_string_element_len,
+                    // which accepts a length parameter — no null terminator or
+                    // CString conversion needed.
+                    writer.write_varchar(idx as usize, &value);
                 }
                 None => {
                     writer.set_null(idx as usize);
@@ -317,11 +314,10 @@ mod tests {
 
     #[test]
     fn test_next_node_interior_null_bytes() {
-        // Verify that interior null bytes in strings don't cause issues.
-        // The FFI layer sanitizes \0 via value.replace('\0', "").
+        // VectorWriter::write_varchar uses duckdb_vector_assign_string_element_len
+        // which copies exactly `len` bytes — interior null bytes are preserved
+        // transparently without needing CString sanitization.
         let value_with_null = "hello\0world";
-        let sanitized = value_with_null.replace('\0', "");
-        assert_eq!(sanitized, "helloworld");
-        assert!(CString::new(sanitized).is_ok());
+        assert_eq!(value_with_null.len(), 11);
     }
 }

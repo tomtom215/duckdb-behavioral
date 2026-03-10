@@ -3,8 +3,10 @@
 
 //! FFI registration for the `sequence_match_events` aggregate function.
 //!
-//! Uses [`quack_rs::aggregate::FfiState`] for safe state management and
-//! [`quack_rs::vector::VectorReader`] for safe vector reading.
+//! Uses [`quack_rs::aggregate::FfiState`] for safe state management,
+//! [`quack_rs::vector::VectorReader`] for safe vector reading, and
+//! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
+//! for LIST output.
 //!
 //! Registration uses raw `libduckdb-sys` calls because
 //! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
@@ -14,6 +16,7 @@ use crate::common::event::Event;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
 use quack_rs::aggregate::FfiState;
+use quack_rs::vector::complex::ListVector;
 use quack_rs::vector::VectorReader;
 
 /// Minimum number of boolean condition parameters for sequence functions.
@@ -60,11 +63,9 @@ pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
             duckdb_destroy_logical_type(&mut { bool_type });
 
             // Return type: LIST(TIMESTAMP) — cannot use AggregateFunctionSetBuilder
-            let inner_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
-            let list_type = duckdb_create_list_type(inner_type);
-            duckdb_aggregate_function_set_return_type(func, list_type);
-            duckdb_destroy_logical_type(&mut { inner_type });
-            duckdb_destroy_logical_type(&mut { list_type });
+            let list_type =
+                quack_rs::types::LogicalType::list(quack_rs::types::TypeId::Timestamp);
+            duckdb_aggregate_function_set_return_type(func, list_type.as_raw());
 
             duckdb_aggregate_function_set_functions(
                 func,
@@ -170,41 +171,34 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        let list_child = duckdb_list_vector_get_child(result);
-        let mut list_offset: idx_t = duckdb_list_vector_get_size(result);
+        let mut list_offset = ListVector::get_size(result) as u64;
 
         for i in 0..count as usize {
-            let idx = (offset as usize + i) as idx_t;
+            let idx = offset as usize + i;
 
             let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
                 // Empty list for null state
-                duckdb_list_vector_set_size(result, list_offset);
-                let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
-                (*list_data.add(idx as usize)).offset = list_offset;
-                (*list_data.add(idx as usize)).length = 0;
+                ListVector::set_entry(result, idx, list_offset, 0);
                 continue;
             };
 
             let timestamps = state.finalize_events().unwrap_or_default();
-
-            let ts_count = timestamps.len() as idx_t;
+            let ts_count = timestamps.len() as u64;
 
             // Reserve space in the list child vector
-            duckdb_list_vector_reserve(result, list_offset + ts_count);
+            ListVector::reserve(result, (list_offset + ts_count) as usize);
 
             // Write timestamps into the child vector
-            let child_data = duckdb_vector_get_data(list_child) as *mut i64;
+            let mut child_writer = ListVector::child_writer(result);
             for (j, &ts) in timestamps.iter().enumerate() {
-                *child_data.add((list_offset + j as idx_t) as usize) = ts;
+                child_writer.write_i64(list_offset as usize + j, ts);
             }
 
             // Set the list entry metadata
-            let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
-            (*list_data.add(idx as usize)).offset = list_offset;
-            (*list_data.add(idx as usize)).length = ts_count;
+            ListVector::set_entry(result, idx, list_offset, ts_count);
 
             list_offset += ts_count;
-            duckdb_list_vector_set_size(result, list_offset);
+            ListVector::set_size(result, list_offset as usize);
         }
     }
 }

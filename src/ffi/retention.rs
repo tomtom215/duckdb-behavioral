@@ -3,8 +3,10 @@
 
 //! FFI registration for the `retention` aggregate function.
 //!
-//! Uses [`quack_rs::aggregate::FfiState`] for safe state management and
-//! [`quack_rs::vector::VectorReader`] for safe vector reading.
+//! Uses [`quack_rs::aggregate::FfiState`] for safe state management,
+//! [`quack_rs::vector::VectorReader`] for safe vector reading, and
+//! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
+//! for LIST output.
 //!
 //! Registration uses raw `libduckdb-sys` calls because
 //! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
@@ -14,7 +16,8 @@
 use crate::retention::RetentionState;
 use libduckdb_sys::*;
 use quack_rs::aggregate::FfiState;
-use quack_rs::vector::VectorReader;
+use quack_rs::vector::complex::ListVector;
+use quack_rs::vector::{VectorReader, VectorWriter};
 
 /// Minimum number of boolean condition parameters for retention.
 const MIN_CONDITIONS: usize = 2;
@@ -51,11 +54,8 @@ pub unsafe fn register_retention(con: duckdb_connection) {
 
             // Return type: LIST(BOOLEAN) — cannot use AggregateFunctionSetBuilder
             // because it only supports TypeId, not parameterized list types.
-            let inner_bool = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            let list_type = duckdb_create_list_type(inner_bool);
-            duckdb_aggregate_function_set_return_type(func, list_type);
-            duckdb_destroy_logical_type(&mut { inner_bool });
-            duckdb_destroy_logical_type(&mut { list_type });
+            let list_type = quack_rs::types::LogicalType::list(quack_rs::types::TypeId::Boolean);
+            duckdb_aggregate_function_set_return_type(func, list_type.as_raw());
 
             duckdb_aggregate_function_set_functions(
                 func,
@@ -141,7 +141,7 @@ unsafe extern "C" fn state_combine(
 }
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB LIST(BOOLEAN) vector. We use DuckDB's list vector APIs to write
+// valid DuckDB LIST(BOOLEAN) vector. We use ListVector + VectorWriter to write
 // entries: reserve space, set size, write list_entry offsets, then write child data.
 unsafe extern "C" fn state_finalize(
     _info: duckdb_function_info,
@@ -151,37 +151,30 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        // Ensure validity bitmap is writable once before the loop
-        duckdb_vector_ensure_validity_writable(result);
-        let validity = duckdb_vector_get_validity(result);
+        let mut parent_writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
             let idx = offset as usize + i;
 
             let Some(state) = FfiState::<RetentionState>::with_state(*source.add(i)) else {
-                duckdb_validity_set_row_invalid(validity, idx as idx_t);
+                parent_writer.set_null(idx);
                 continue;
             };
 
             let retention_result = state.finalize();
 
-            // Write list entry to the result vector
-            let child = duckdb_list_vector_get_child(result);
-            let current_size = duckdb_list_vector_get_size(result);
-            let new_size = current_size + retention_result.len() as idx_t;
-            duckdb_list_vector_reserve(result, new_size);
-            duckdb_list_vector_set_size(result, new_size);
-
-            // Set the list entry (offset and length)
-            let list_data = duckdb_vector_get_data(result) as *mut duckdb_list_entry;
-            (*list_data.add(idx)).offset = current_size;
-            (*list_data.add(idx)).length = retention_result.len() as idx_t;
+            let current_size = ListVector::get_size(result) as u64;
+            let new_size = current_size + retention_result.len() as u64;
+            ListVector::reserve(result, new_size as usize);
 
             // Write boolean values to child vector
-            let child_data = duckdb_vector_get_data(child) as *mut u8;
+            let mut child_writer = ListVector::child_writer(result);
             for (j, &val) in retention_result.iter().enumerate() {
-                *child_data.add(current_size as usize + j) = u8::from(val);
+                child_writer.write_bool(current_size as usize + j, val);
             }
+
+            ListVector::set_size(result, new_size as usize);
+            ListVector::set_entry(result, idx, current_size, retention_result.len() as u64);
         }
     }
 }
