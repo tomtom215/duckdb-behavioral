@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vector I/O, and function set registration
 - 18 new `AggregateTestHarness` unit tests for combine config-propagation
   across all 5 aggregate functions (435 → 453 tests)
-- `quack-rs` SDK lessons (66-73) in LESSONS.md
+- `quack-rs` SDK context in LESSONS.md
 
 ### Changed
 

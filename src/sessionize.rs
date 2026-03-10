@@ -30,18 +30,14 @@
 //! if the gap between `left.last_ts` and `right.first_ts` exceeds the threshold.
 //! This enables O(n log n) windowed evaluation via segment trees.
 
-/// State for the sessionize aggregate (per-segment session counting).
+/// Simple session counter — counts sessions within a single segment.
 ///
-/// This implementation counts sessions per segment. For correct results
-/// with `DuckDB`'s segment tree windowing (which combines segments), use
-/// [`SessionizeBoundaryState`] instead — it tracks boundary crossings
-/// for O(1) combine with correct semantics.
-///
-/// Retained as public API for users who need direct session counting
-/// on pre-partitioned data without segment tree combine.
+/// **Not used by the extension.** The FFI layer uses [`SessionizeBoundaryState`],
+/// which tracks boundary crossings for O(1) combine with correct segment tree
+/// semantics. This type is retained for testing as a reference implementation.
+#[cfg(test)]
 #[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct SessionizeState {
+struct SessionizeState {
     /// Earliest timestamp in this segment (microseconds since epoch).
     pub first_ts: Option<i64>,
     /// Latest timestamp in this segment (microseconds since epoch).
@@ -54,6 +50,7 @@ pub struct SessionizeState {
     pub threshold_us: i64,
 }
 
+#[cfg(test)]
 impl SessionizeState {
     /// Creates a new empty state.
     #[must_use]
@@ -131,6 +128,7 @@ impl SessionizeState {
     }
 }
 
+#[cfg(test)]
 impl Default for SessionizeState {
     fn default() -> Self {
         Self::new()

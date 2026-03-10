@@ -209,17 +209,13 @@ unsafe extern "C" fn state_finalize(
 
             match state.finalize() {
                 Some(value) => {
-                    // Interior null bytes would cause CString::new to fail.
-                    // Strip them defensively rather than silently producing
-                    // an empty string via unwrap_or_default().
-                    let sanitized: String = value.replace('\0', "");
-                    if let Ok(c_str) = CString::new(sanitized) {
-                        duckdb_vector_assign_string_element(result, idx, c_str.as_ptr());
-                    } else {
-                        // Should be unreachable after stripping null bytes,
-                        // but return NULL rather than panicking across FFI.
-                        writer.set_null(idx as usize);
-                    }
+                    // Strip interior null bytes so CString construction is infallible.
+                    let sanitized = value.replace('\0', "");
+                    // SAFETY: All null bytes have been stripped above, so the Vec
+                    // contains no interior nulls. from_vec_unchecked adds the
+                    // trailing null terminator.
+                    let c_str = CString::from_vec_unchecked(sanitized.into_bytes());
+                    duckdb_vector_assign_string_element(result, idx, c_str.as_ptr());
                 }
                 None => {
                     writer.set_null(idx as usize);

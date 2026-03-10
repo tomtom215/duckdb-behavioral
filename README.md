@@ -23,42 +23,8 @@ behavioral analytics parity.**
 > time. It is not affiliated with, endorsed by, or related to my employer or
 > professional role in any way.
 
----
-
-### AI-Assisted Development Disclosure
-
-This project was developed with assistance from Anthropic's Claude (AI-assisted
-programming). In the interest of full transparency and academic rigor, the
-following safeguards ensure that AI assistance does not compromise correctness,
-reproducibility, or trustworthiness:
-
-- **453 unit tests + 1 doc-test** covering all functions, edge cases, combine
-  associativity, property-based testing (proptest), mutation-testing-guided
-  coverage, and `AggregateTestHarness` combine config-propagation tests.
-  All tests run in under 1 second via `cargo test`.
-- **27 end-to-end SQL tests** against a real DuckDB v1.4.4 instance validating
-  the complete chain from extension loading through SQL execution to correct
-  results, including NULL inputs, empty tables, all 6 funnel modes, 5+
-  conditions, and all 8 direction/base combinations.
-- **Criterion.rs benchmarks** with 95% confidence intervals, 3+ runs per
-  measurement, and documented methodology in [`PERF.md`](PERF.md). Every
-  performance claim is reproducible on commodity hardware.
-- **88.4% mutation testing kill rate** (130 caught / 17 missed) via
-  `cargo-mutants`, systematically verifying that tests detect real faults.
-- **Zero clippy warnings** under pedantic, nursery, and cargo lint groups.
-- **Deterministic, reproducible builds** — pinned dependencies (`quack-rs
-  = "=0.3.0"`, `libduckdb-sys = "=1.4.4"`), MSRV 1.84.1 verified in CI,
-  and release profile with LTO and single codegen unit.
-- **Every optimization session** documents hypothesis, technique, measured
-  before/after data with confidence intervals, and negative results are
-  reported honestly (5 negative results documented in PERF.md).
-- **All source code is publicly auditable** under the MIT license.
-
-AI tooling was used as an accelerator for implementation. All correctness
-guarantees rest on automated testing, reproducible benchmarks, and transparent
-documentation — not on AI output being assumed correct.
-
----
+> **AI-Assisted Development**: Built with Claude (Anthropic). Correctness is
+> validated by automated testing — not assumed from AI output. See [Quality](#quality).
 
 ## Table of Contents
 
@@ -193,7 +159,7 @@ workflow automates the full pre-submission pipeline in 5 phases:
 | Phase | Purpose |
 |-------|---------|
 | Validate | `description.yml` schema, version consistency, required files |
-| Quality Gate | `cargo test` (453 + doc-test), `clippy`, `fmt`, `doc` |
+| Quality Gate | `cargo test`, `clippy`, `fmt`, `doc` |
 | Build & Test | `make configure && make release && make test_release` |
 | Pin Ref | Updates `description.yml` ref to the validated commit SHA |
 | Submission Package | Uploads artifact, generates step-by-step PR commands |
@@ -254,7 +220,7 @@ cargo build --release
 ## Development
 
 ```bash
-cargo test                  # 453 unit tests + 1 doc-test
+cargo test                  # Unit tests + doc-tests
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt                   # Format
 cargo bench                 # Criterion.rs benchmarks
