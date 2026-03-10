@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Migrated FFI layer to `quack-rs` v0.4.0 SDK for safe state management,
-  vector I/O, and function set registration
+- Migrated FFI layer to `quack-rs` v0.5.0 (pre-release, git dependency) SDK
+  for safe state management, vector I/O, and function set registration
+- All 6 aggregate functions now use `AggregateFunctionSetBuilder` for registration
+- `retention` and `sequence_match_events` use `returns_logical(LogicalType::list(...))`
+  — eliminating the last raw function set registration code
 - 18 new `AggregateTestHarness` unit tests for combine config-propagation
   across all 5 aggregate functions (435 → 453 tests)
 
@@ -23,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LIST output uses `ListVector` + `VectorWriter` instead of raw pointer arithmetic
 - VARCHAR output uses `VectorWriter::write_varchar()` instead of `CString` + raw FFI
 - LIST type construction uses `LogicalType::list()` instead of raw `duckdb_create_list_type`
+- `retention` registration: ~45 lines of raw loop → 15-line builder chain
+- `sequence_match_events` registration: ~55 lines of raw loop → 15-line builder chain
 - `sessionize` FFI remains hand-rolled (window function limitation in quack-rs)
 
 ### Removed
@@ -31,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VectorReader::read_str()`)
 - Raw `duckdb_list_vector_*` pointer arithmetic in retention and
   sequence_match_events (replaced by `ListVector` wrappers)
+- Raw `duckdb_create_aggregate_function_set` loops in retention and
+  sequence_match_events (replaced by `AggregateFunctionSetBuilder`)
 - `CString` sanitization in sequence_next_node (replaced by `write_varchar`)
 
 ---

@@ -3,19 +3,18 @@
 
 //! FFI registration for the `retention` aggregate function.
 //!
+//! Uses [`quack_rs::aggregate::AggregateFunctionSetBuilder`] with
+//! [`returns_logical`][quack_rs::aggregate::AggregateFunctionSetBuilder::returns_logical]
+//! for `LIST(BOOLEAN)` return type registration.
 //! Uses [`quack_rs::aggregate::FfiState`] for safe state management,
-//! [`quack_rs::vector::VectorReader`] for safe vector reading, and
+//! [`quack_rs::vector::VectorReader`] for input, and
 //! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
 //! for LIST output.
-//!
-//! Registration uses raw `libduckdb-sys` calls because
-//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
-//! parameterized return types like `LIST(BOOLEAN)` — the `returns()` method
-//! takes a [`quack_rs::types::TypeId`] which cannot express list element types.
 
 use crate::retention::RetentionState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::FfiState;
+use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
 use quack_rs::vector::{VectorReader, VectorWriter};
 
@@ -35,52 +34,25 @@ impl quack_rs::aggregate::AggregateState for RetentionState {}
 ///
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_retention(con: duckdb_connection) {
-    unsafe {
-        let name = c"retention";
-        let set = duckdb_create_aggregate_function_set(name.as_ptr());
-
-        for n in MIN_CONDITIONS..=MAX_CONDITIONS {
-            let func = duckdb_create_aggregate_function();
-
-            // Each function in the set must have a name set
-            duckdb_aggregate_function_set_name(func, name.as_ptr());
-
-            // Add n BOOLEAN parameters
-            let bool_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            for _ in 0..n {
-                duckdb_aggregate_function_add_parameter(func, bool_type);
-            }
-            duckdb_destroy_logical_type(&mut { bool_type });
-
-            // Return type: LIST(BOOLEAN) — cannot use AggregateFunctionSetBuilder
-            // because it only supports TypeId, not parameterized list types.
-            let list_type = quack_rs::types::LogicalType::list(quack_rs::types::TypeId::Boolean);
-            duckdb_aggregate_function_set_return_type(func, list_type.as_raw());
-
-            duckdb_aggregate_function_set_functions(
-                func,
-                Some(FfiState::<RetentionState>::size_callback),
-                Some(FfiState::<RetentionState>::init_callback),
-                Some(state_update),
-                Some(state_combine),
-                Some(state_finalize),
-            );
-
-            duckdb_aggregate_function_set_destructor(
-                func,
-                Some(FfiState::<RetentionState>::destroy_callback),
-            );
-
-            duckdb_add_aggregate_function_to_set(set, func);
-            duckdb_destroy_aggregate_function(&mut { func });
-        }
-
-        let result = duckdb_register_aggregate_function_set(con, set);
-        if result != DuckDBSuccess {
-            eprintln!("behavioral: failed to register retention function set");
-        }
-
-        duckdb_destroy_aggregate_function_set(&mut { set });
+    let result = unsafe {
+        AggregateFunctionSetBuilder::new("retention")
+            .returns_logical(LogicalType::list(TypeId::Boolean))
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+                let mut b = builder;
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.state_size(FfiState::<RetentionState>::size_callback)
+                    .init(FfiState::<RetentionState>::init_callback)
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+                    .destructor(FfiState::<RetentionState>::destroy_callback)
+            })
+            .register(con)
+    };
+    if let Err(e) = result {
+        eprintln!("behavioral: failed to register retention function set: {e}");
     }
 }
 

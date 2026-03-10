@@ -3,19 +3,19 @@
 
 //! FFI registration for the `sequence_match_events` aggregate function.
 //!
+//! Uses [`quack_rs::aggregate::AggregateFunctionSetBuilder`] with
+//! [`returns_logical`][quack_rs::aggregate::AggregateFunctionSetBuilder::returns_logical]
+//! for `LIST(TIMESTAMP)` return type registration.
 //! Uses [`quack_rs::aggregate::FfiState`] for safe state management,
-//! [`quack_rs::vector::VectorReader`] for safe vector reading, and
+//! [`quack_rs::vector::VectorReader`] for input, and
 //! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
 //! for LIST output.
-//!
-//! Registration uses raw `libduckdb-sys` calls because
-//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`] does not support
-//! parameterized return types like `LIST(TIMESTAMP)`.
 
 use crate::common::event::Event;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::FfiState;
+use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
 use quack_rs::vector::VectorReader;
 
@@ -37,60 +37,25 @@ const MAX_CONDITIONS: usize = 32;
 ///
 /// Requires a valid `duckdb_connection` handle.
 pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
-    unsafe {
-        let name = c"sequence_match_events";
-        let set = duckdb_create_aggregate_function_set(name.as_ptr());
-
-        for n in MIN_CONDITIONS..=MAX_CONDITIONS {
-            let func = duckdb_create_aggregate_function();
-            duckdb_aggregate_function_set_name(func, name.as_ptr());
-
-            // Parameter 0: VARCHAR (pattern)
-            let varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
-            duckdb_aggregate_function_add_parameter(func, varchar_type);
-            duckdb_destroy_logical_type(&mut { varchar_type });
-
-            // Parameter 1: TIMESTAMP
-            let ts_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
-            duckdb_aggregate_function_add_parameter(func, ts_type);
-            duckdb_destroy_logical_type(&mut { ts_type });
-
-            // Parameters 2..2+n: BOOLEAN conditions
-            let bool_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
-            for _ in 0..n {
-                duckdb_aggregate_function_add_parameter(func, bool_type);
-            }
-            duckdb_destroy_logical_type(&mut { bool_type });
-
-            // Return type: LIST(TIMESTAMP) — cannot use AggregateFunctionSetBuilder
-            let list_type =
-                quack_rs::types::LogicalType::list(quack_rs::types::TypeId::Timestamp);
-            duckdb_aggregate_function_set_return_type(func, list_type.as_raw());
-
-            duckdb_aggregate_function_set_functions(
-                func,
-                Some(FfiState::<SequenceState>::size_callback),
-                Some(FfiState::<SequenceState>::init_callback),
-                Some(state_update),
-                Some(state_combine),
-                Some(state_finalize),
-            );
-
-            duckdb_aggregate_function_set_destructor(
-                func,
-                Some(FfiState::<SequenceState>::destroy_callback),
-            );
-
-            duckdb_add_aggregate_function_to_set(set, func);
-            duckdb_destroy_aggregate_function(&mut { func });
-        }
-
-        let result = duckdb_register_aggregate_function_set(con, set);
-        if result != DuckDBSuccess {
-            eprintln!("behavioral: failed to register sequence_match_events function set");
-        }
-
-        duckdb_destroy_aggregate_function_set(&mut { set });
+    let result = unsafe {
+        AggregateFunctionSetBuilder::new("sequence_match_events")
+            .returns_logical(LogicalType::list(TypeId::Timestamp))
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+                let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.state_size(FfiState::<SequenceState>::size_callback)
+                    .init(FfiState::<SequenceState>::init_callback)
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+                    .destructor(FfiState::<SequenceState>::destroy_callback)
+            })
+            .register(con)
+    };
+    if let Err(e) = result {
+        eprintln!("behavioral: failed to register sequence_match_events function set: {e}");
     }
 }
 

@@ -5,12 +5,12 @@
 //!
 //! # Architecture
 //!
-//! All modules except [`sessionize`] use the `quack-rs` v0.4.0 SDK for safe
-//! state management and vector I/O:
+//! All modules except [`sessionize`] use the `quack-rs` v0.5.0 SDK for
+//! registration, state management, and vector I/O:
 //!
 //! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function
-//!   sets with N overloads, automatically calling
-//!   `duckdb_aggregate_function_set_name` on each.
+//!   sets with N overloads. Supports both simple returns (`.returns(TypeId)`) and
+//!   parameterized returns (`.returns_logical(LogicalType)`) for `LIST(T)` types.
 //! - [`quack_rs::aggregate::FfiState<T>`] — `#[repr(C)]` wrapper providing safe
 //!   init/destroy lifecycle and null-checked `with_state_mut()` accessors.
 //! - [`quack_rs::vector::VectorReader`] — safe vector reading (`read_bool()`,
@@ -21,12 +21,11 @@
 //! - [`quack_rs::vector::complex::ListVector`] — safe LIST vector output
 //!   (`reserve()`, `set_size()`, `set_entry()`, `child_writer()`).
 //! - [`quack_rs::types::LogicalType::list()`] — RAII construction of `LIST(T)`
-//!   types for function registration.
+//!   types for `returns_logical()` and function registration.
 //!
-//! Functions returning `LIST(T)` (`retention`, `sequence_match_events`) use raw
-//! `libduckdb-sys` for function set registration only — the builder's
-//! `.returns(TypeId)` cannot express parameterized types. All other operations
-//! (state, input, output) use quack-rs.
+//! All 6 aggregate functions use `AggregateFunctionSetBuilder` for registration,
+//! including `retention` and `sequence_match_events` which use
+//! `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
 //!
 //! The [`sessionize`] module is the sole exception: it requires window function
 //! registration via the C API, which `quack-rs` does not support. It uses raw
