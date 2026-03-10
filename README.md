@@ -229,7 +229,6 @@ E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
 
 | Function | Status |
 |---|---|
-| `sessionize` | Complete |
 | `retention` | Complete |
 | `window_funnel` (6 modes) | Complete |
 | `sequence_match` | Complete |
@@ -237,6 +236,7 @@ E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
 | `sequence_match_events` | Complete |
 | `sequence_next_node` | Complete |
 | 32-condition support | Complete |
+| `sessionize` | Extension-only (no ClickHouse equivalent) |
 
 ## Building
 

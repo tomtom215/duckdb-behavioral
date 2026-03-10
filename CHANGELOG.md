@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vector I/O, and function set registration
 - 18 new `AggregateTestHarness` unit tests for combine config-propagation
   across all 5 aggregate functions (435 → 453 tests)
-- `quack-rs` SDK lessons (48-55) in LESSONS.md
+- `quack-rs` SDK lessons (66-73) in LESSONS.md
 
 ### Changed
 
@@ -30,46 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.2.0] — 2026-02-15
-
-### Added
-
-- Listed in [DuckDB Community Extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/behavioral)
-  repository ([PR #1306](https://github.com/duckdb/community-extensions/pull/1306),
-  merged 2026-02-15). Install with `INSTALL behavioral FROM community; LOAD behavioral;`
-- Updated all documentation to reflect community extension availability as the
-  recommended installation method
-- `'timestamp_dedup'` mode string for the extension-only timestamp-based
-  deduplication mode in `window_funnel`
-- Mandatory session protocol and anti-pattern list in CLAUDE.md
-- ClickHouse parity scope table and known semantic differences documentation
-
-### Changed
-
-- **`'strict_deduplication'` mode mapping**: Now correctly maps to `STRICT`
-  (0x01), matching ClickHouse where `'strict'` and `'strict_deduplication'`
-  are aliases. The timestamp-based dedup behavior is now available under
-  `'timestamp_dedup'`.
-
-### Fixed
-
-- GitHub Pages theme switcher: replaced fragile programmatic click on hidden
-  mdBook theme list with direct localStorage and class manipulation, preventing
-  breakage across mdBook versions
-- iOS Safari theme toggle: added touch-action:manipulation for fast taps and
-  300ms debounce to prevent double-fire from touch + click events
-- Tables cut off on mobile: added JS table wrappers (display:table inside
-  scrollable div), visible WebKit scrollbar styling, changed parent overflow
-  from hidden to clip so child scroll containers work properly
-- Mermaid diagrams squished on narrow viewports: removed max-width:100% on
-  SVGs below 768px so diagrams scroll horizontally instead of scaling down
-  until text becomes unreadable and subgraph titles get clipped
-- Print button: overridden to call window.print() on current page instead of
-  navigating to print.html, preventing print dialog from re-triggering on
-  page refresh
-- Added @media print styles for proper table/diagram rendering when printing
-
-## [0.2.0] - 2026-02-14
+## [0.2.0] - 2026-02-15
 
 ### Added
 
@@ -93,8 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance attestation
 - Community extension infrastructure (`description.yml`, `Makefile`,
   `extension-ci-tools` submodule)
+- Listed in [DuckDB Community Extensions](https://github.com/duckdb/community-extensions/tree/main/extensions/behavioral)
+  repository ([PR #1306](https://github.com/duckdb/community-extensions/pull/1306),
+  merged 2026-02-15). Install with `INSTALL behavioral FROM community; LOAD behavioral;`
+- `'timestamp_dedup'` mode string for the extension-only timestamp-based
+  deduplication mode in `window_funnel`
+- ClickHouse parity scope table and known semantic differences documentation
 
 ### Changed
+
+- **`'strict_deduplication'` mode mapping**: Now correctly maps to `STRICT`
+  (0x01), matching ClickHouse where `'strict'` and `'strict_deduplication'`
+  are aliases. The timestamp-based dedup behavior is now available under
+  `'timestamp_dedup'`.
 
 - **BREAKING**: All public state structs marked `#[non_exhaustive]` to allow
   future field additions without semver-breaking changes. Affected structs:

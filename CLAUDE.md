@@ -739,7 +739,7 @@ refresh, and GitHub Pages improvements. No Rust source code changes.
 3. **Swatinem/rust-cache v2.7.8 → v2.8.2**: CI workflow cache action.
 4. **actions/setup-python v5.6.0 → v6.2.0**: CI workflow Python setup.
 5. **actions/attest-build-provenance v2.2.3 → v3.2.0**: Release attestation.
-6. **actions/download-artifact v4.2.1 → v7.0.0**: Release artifact download.
+6. **actions/download-artifact v4.2.1 → v8.0.0**: Release artifact download.
 7. **dtolnay/rust-toolchain**: Skipped — uses branch refs, not version tags.
 
 **GitHub Pages improvements:**

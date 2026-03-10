@@ -17,7 +17,7 @@ ensure code quality across multiple dimensions.
 | **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
 | **fmt** | Formatting verification | `cargo fmt --check` |
 | **doc** | Documentation builds without warnings | `cargo doc` with `-Dwarnings` |
-| **msrv** | Minimum Supported Rust Version (1.80) | `cargo check` with pinned toolchain |
+| **msrv** | Minimum Supported Rust Version (1.84.1) | `cargo check` with pinned toolchain |
 | **bench-compile** | Benchmarks compile (no execution) | `cargo bench --no-run` |
 | **deny** | License, advisory, and source auditing | `cargo-deny` |
 | **semver** | Semver compatibility check | `cargo-semver-checks` |
@@ -84,7 +84,7 @@ release with SHA256 checksums and build provenance attestations.
 
 **Supply chain security:**
 - SHA256 checksums for all artifacts
-- GitHub artifact attestation via `actions/attest-build-provenance@v2`
+- GitHub artifact attestation via `actions/attest-build-provenance@v3`
 - Immutable artifacts with 30-day retention
 - Build provenance tied to specific git commit
 

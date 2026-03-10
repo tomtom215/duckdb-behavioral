@@ -30,11 +30,15 @@
 //! if the gap between `left.last_ts` and `right.first_ts` exceeds the threshold.
 //! This enables O(n log n) windowed evaluation via segment trees.
 
-/// State for the sessionize aggregate.
+/// State for the sessionize aggregate (per-segment session counting).
 ///
-/// Designed for O(1) `combine()` with `DuckDB`'s segment tree windowing.
-/// Each state represents a contiguous range of ordered timestamps and
-/// tracks the number of session boundaries within that range.
+/// This implementation counts sessions per segment. For correct results
+/// with `DuckDB`'s segment tree windowing (which combines segments), use
+/// [`SessionizeBoundaryState`] instead — it tracks boundary crossings
+/// for O(1) combine with correct semantics.
+///
+/// Retained as public API for users who need direct session counting
+/// on pre-partitioned data without segment tree combine.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SessionizeState {

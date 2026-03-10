@@ -45,7 +45,7 @@ graph TB
     end
 
     subgraph "Extension Entry Point"
-        EP[behavioral_init_c_api<br/>src/lib.rs]
+        EP[entry_point! macro<br/>src/lib.rs]
     end
 
     subgraph "FFI Bridge — src/ffi/"
@@ -121,10 +121,11 @@ graph TB
   (`state_size`, `init`, `update`, `combine`, `finalize`). Every `unsafe` block
   has a `// SAFETY:` comment documenting the invariants it relies on.
 
-- **Entry point** (`src/lib.rs`): A custom C entry point
-  (`behavioral_init_c_api`) that bypasses the `duckdb` Rust crate's connection
-  wrapper entirely, using `duckdb_connect` directly from the extension access
-  struct. This eliminates struct layout fragility across DuckDB versions.
+- **Entry point** (`src/lib.rs`): Uses the `quack_rs::entry_point!` macro,
+  which handles API initialization, connection management via
+  `duckdb_connect`/`duckdb_disconnect`, and error reporting. This replaces
+  ~80 lines of hand-rolled unsafe code and eliminates struct layout fragility
+  across DuckDB versions.
 
 ### Why This Matters
 
