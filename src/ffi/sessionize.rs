@@ -122,6 +122,9 @@ unsafe extern "C" fn state_update(
         for i in 0..row_count {
             let state_ptr = *states.add(i);
             let ffi_state = &mut *(state_ptr as *mut FfiState);
+            if ffi_state.inner.is_null() {
+                continue;
+            }
             let state = &mut *ffi_state.inner;
 
             // NULL timestamps: mark state so finalize emits NULL for this row

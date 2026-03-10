@@ -100,12 +100,13 @@ unsafe extern "C" fn state_update(
             .map(|c| VectorReader::new(input, c))
             .collect();
 
+        let mut conditions = Vec::with_capacity(col_count);
         for i in 0..row_count {
             let Some(state) = FfiState::<RetentionState>::with_state_mut(*states.add(i)) else {
                 continue;
             };
 
-            let mut conditions = Vec::with_capacity(col_count);
+            conditions.clear();
             for reader in &readers {
                 let valid = reader.is_valid(i);
                 let value = if valid { reader.read_bool(i) } else { false };
