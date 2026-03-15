@@ -28,7 +28,7 @@ What actually happened. Include any error messages.
 
 ## Environment
 
-- **DuckDB version**: (e.g., v1.4.4)
+- **DuckDB version**: (e.g., v1.5.0)
 - **Extension version**: (e.g., v0.2.0 or built from source)
 - **OS**: (e.g., Ubuntu 24.04, macOS 15, Windows 11)
 - **Architecture**: (e.g., x86_64, aarch64)

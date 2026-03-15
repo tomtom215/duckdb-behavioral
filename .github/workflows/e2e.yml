@@ -22,7 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
-  DUCKDB_VERSION: "v1.4.4"
+  DUCKDB_VERSION: "v1.5.0"
 
 jobs:
   e2e-test:
