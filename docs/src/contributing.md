@@ -8,7 +8,7 @@ Guidelines for contributing to `duckdb-behavioral`.
 
 - Rust 1.84.1+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.4.4 (for E2E testing)
+- DuckDB CLI v1.5.0 (for E2E testing)
 
 ### Building
 
@@ -46,7 +46,7 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
 - **Pure Rust core**: Business logic in top-level modules (`sessionize.rs`,
   `retention.rs`, etc.) with zero FFI dependencies.
 - **FFI bridge via quack-rs SDK**: DuckDB C API registration confined to
-  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.5.0
+  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.6.0
   for safe builders (including `returns_logical(LogicalType)` for
   `LIST(T)` returns), state management (`FfiState<T>`), vector I/O
   (`VectorReader`/`VectorWriter`), LIST output (`ListVector`), and type

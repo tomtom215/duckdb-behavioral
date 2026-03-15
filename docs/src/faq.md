@@ -42,7 +42,7 @@ duckdb -unsigned -c "LOAD 'target/release/libbehavioral.so'; SELECT ..."
 ### The extension fails to load. What should I check?
 
 1. **DuckDB version mismatch**: The community extension is built for DuckDB
-   v1.4.4. If you are using a different DuckDB version, the extension may not
+   v1.5.0. If you are using a different DuckDB version, the extension may not
    be available for that version yet. For locally-built extensions, the C API
    version must match (currently `v1.2.0`).
 

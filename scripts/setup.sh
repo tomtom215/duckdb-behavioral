@@ -106,7 +106,7 @@ find_duckdb() {
 }
 
 install_duckdb() {
-    log_info "DuckDB CLI not found. Installing v1.4.4..."
+    log_info "DuckDB CLI not found. Installing v1.5.0..."
 
     local os
     local arch
@@ -115,13 +115,13 @@ install_duckdb() {
 
     local url=""
     if [[ "${os}" == "linux" && "${arch}" == "x86_64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-linux-amd64.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-linux-amd64.zip"
     elif [[ "${os}" == "linux" && "${arch}" == "aarch64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-linux-aarch64.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-linux-aarch64.zip"
     elif [[ "${os}" == "darwin" && "${arch}" == "x86_64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-osx-universal.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-osx-universal.zip"
     elif [[ "${os}" == "darwin" && "${arch}" == "arm64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.4.4/duckdb_cli-osx-universal.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-osx-universal.zip"
     else
         log_err "Unsupported platform: ${os}/${arch}"
         return 1

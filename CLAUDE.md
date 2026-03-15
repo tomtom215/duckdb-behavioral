@@ -59,7 +59,7 @@ src/
    submodules handle DuckDB C API registration only.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
-   provide high-level aggregate function registration. We use `quack-rs` v0.5.0
+   provide high-level aggregate function registration. We use `quack-rs` v0.6.0
    ([crates.io](https://crates.io/crates/quack-rs)) which wraps the raw C API with safe builders
    (`AggregateFunctionSetBuilder`), state management (`FfiState<T>`), vector I/O
    (`VectorReader`/`VectorWriter` including `write_varchar`), complex type helpers
@@ -150,20 +150,24 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs` v0.5.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
+- `quack-rs` v0.6.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
   for DuckDB loadable extensions. Provides `entry_point!` macro,
   `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
   `FfiState<T>`, `VectorReader`/`VectorWriter` (including `write_varchar`),
   `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
   and `AggregateTestHarness` for combine testing. Re-exports `libduckdb-sys`
   with `loadable-extension` feature.
-- `libduckdb-sys = "=1.4.4"` with `loadable-extension` feature — Kept explicitly
+- `libduckdb-sys = "=1.10500.0"` with `loadable-extension` feature — Kept explicitly
   for `sessionize` FFI (window function not supported by quack-rs). Re-exported
   by quack-rs but pinned explicitly for the raw window function callbacks.
+  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.0 →
+  crate v1.10500.x).
 
 **Dev-only** (unit tests and benchmarks):
-- `duckdb = "=1.4.4"` with `bundled` feature — Used in `#[cfg(test)]` modules
+- `duckdb = "=1.10500.0"` with `bundled` feature — Used in `#[cfg(test)]` modules
   for `Connection::open_in_memory()`. Not linked into the release extension.
+  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.0 →
+  crate v1.10500.x).
 - `criterion = "0.8"` with `html_reports` feature — Statistical benchmarking
 - `proptest = "1"` — Property-based testing
 
@@ -189,7 +193,7 @@ Every change MUST meet these requirements:
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 5 aggregate functions
 - **1 doc-test** for the pattern parser
-- **27 E2E tests** against real DuckDB v1.4.4 CLI covering all 7 functions
+- **27 E2E tests** against real DuckDB v1.5.0 CLI covering all 7 functions
   with multiple scenarios (basic, timeout, modes, GROUP BY, no-match, NULL
   inputs, empty tables, all funnel modes, 5+ conditions, all 8
   direction/base combinations)
@@ -378,7 +382,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
   to it produces garbage instead of NULL. `VectorWriter::set_null()` handles this
   automatically.
 
-- **Extension metadata version is C API version, not DuckDB version**: DuckDB v1.4.4
+- **Extension metadata version is C API version, not DuckDB version**: DuckDB v1.5.0
   uses C API version `v1.2.0`. The `append_extension_metadata.py -dv` flag must use
   the C API version, not the release version.
 

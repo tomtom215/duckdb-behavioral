@@ -86,7 +86,7 @@ versions.
 
 ### quack-rs SDK
 
-The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.5.0,
+The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.6.0,
 a Rust SDK for DuckDB loadable extensions. It provides:
 
 - **`AggregateFunctionSetBuilder`**: Safe registration of function sets with
