@@ -1,6 +1,14 @@
 <p align="center">
-  <img src="images/banner.svg" alt="duckdb-behavioral" width="560">
+  <img class="logo-light" src="images/banner.svg" alt="duckdb-behavioral" width="560">
+  <img class="logo-dark" src="images/banner-dark.svg" alt="duckdb-behavioral" width="560">
 </p>
+
+<div class="badges">
+<a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
+<a href="https://github.com/tomtom215/duckdb-behavioral/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+<a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.84.1-blue.svg" alt="MSRV: 1.84.1"></a>
+</div>
 
 # duckdb-behavioral
 
