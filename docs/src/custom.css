@@ -9,15 +9,46 @@
     max-width: var(--content-max-width);
 }
 
-/* Code block styling */
-pre {
-    border-radius: 4px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+/* ── Monospace font stack ─────────────────────────────────────────────
+ * JetBrains Mono for code readability, with progressive fallbacks.
+ * Loaded via Google Fonts in book.toml additional-css or browser cache.
+ */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap');
+
+code, kbd, pre, samp {
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code",
+                 "SF Mono", "Consolas", "Liberation Mono", monospace;
+    font-size: 0.875em;
 }
 
-code {
-    font-size: 0.9em;
+/* ── Theme-aware logo ─────────────────────────────────────────────────
+ * Show light banner on light themes, dark banner on dark themes.
+ * Controlled by theme-toggle.js which adds/removes classes.
+ */
+.logo-light {
+    display: block;
+}
+.logo-dark {
+    display: none;
+}
+
+.navy .logo-light,
+.coal .logo-light,
+.ayu .logo-light {
+    display: none;
+}
+
+.navy .logo-dark,
+.coal .logo-dark,
+.ayu .logo-dark {
+    display: block;
+}
+
+/* Code block styling */
+pre {
+    border-radius: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* ── Inline code readability ───────────────────────────────────────────
@@ -122,6 +153,21 @@ table tbody td {
 
 table tbody tr:last-child td {
     border-bottom: none;
+}
+
+/* Alternating row stripes for readability */
+.light table tbody tr:nth-child(even) {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.navy table tbody tr:nth-child(even),
+.coal table tbody tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Row hover highlight */
+table tbody tr:hover {
+    background-color: rgba(128, 128, 128, 0.08) !important;
 }
 
 /* Performance numbers emphasis — prevent wrapping in data cells */
@@ -525,6 +571,140 @@ blockquote {
     .mermaid svg {
         min-width: 400px;
     }
+}
+
+/* ── Admonition / Callout Styling ───────────────────────────────────
+ * Styled blockquotes that start with specific markers create visual
+ * callout boxes for tips, warnings, and notes.
+ */
+
+/* Tip callout (green accent) */
+blockquote.tip,
+blockquote[data-type="tip"] {
+    border-left-color: #28a745;
+    background-color: rgba(40, 167, 69, 0.08);
+}
+
+/* Warning callout (amber accent) */
+blockquote.warning,
+blockquote[data-type="warning"] {
+    border-left-color: #d29922;
+    background-color: rgba(210, 153, 34, 0.08);
+}
+
+/* Info callout (blue accent) */
+blockquote.info,
+blockquote[data-type="info"] {
+    border-left-color: #0969da;
+    background-color: rgba(9, 105, 218, 0.08);
+}
+
+/* ── Focus/highlight animation for linked headings ───────────────── */
+.content main h2:target,
+.content main h3:target,
+.content main h4:target {
+    animation: target-highlight 2s ease-out;
+}
+
+@keyframes target-highlight {
+    0% { background-color: rgba(255, 220, 0, 0.3); }
+    100% { background-color: transparent; }
+}
+
+/* ── Smooth scrolling for anchor links ───────────────────────────── */
+html {
+    scroll-behavior: smooth;
+}
+
+/* ── Copy button polish for code blocks ──────────────────────────── */
+.content main pre {
+    position: relative;
+}
+
+/* ── Better link styling ─────────────────────────────────────────── */
+.content main a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+}
+
+.content main a:hover {
+    text-decoration-thickness: 2px;
+}
+
+/* ── Horizontal rule styling ─────────────────────────────────────── */
+.content main hr {
+    border: none;
+    border-top: 1px solid var(--table-border-color);
+    margin: 2em 0;
+}
+
+/* ── Keyboard shortcut styling ───────────────────────────────────── */
+kbd {
+    display: inline-block;
+    padding: 0.2em 0.4em;
+    font-size: 0.85em;
+    line-height: 1;
+    color: #1a1a1a;
+    background-color: #f6f8fa;
+    border: 1px solid #d0d7de;
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    font-family: inherit;
+}
+
+.navy kbd,
+.coal kbd {
+    color: #e6edf3;
+    background-color: #30363d;
+    border-color: #484f58;
+}
+
+/* ── Badge styling ───────────────────────────────────────────────────
+ * Inline status badges used in documentation tables and descriptions.
+ */
+.badge {
+    display: inline-block;
+    padding: 0.15em 0.5em;
+    font-size: 0.8em;
+    font-weight: 600;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.badge-complete {
+    color: white;
+    background-color: #27ae60;
+}
+
+.badge-window {
+    color: white;
+    background-color: #2980b9;
+}
+
+.badge-aggregate {
+    color: white;
+    background-color: #8e44ad;
+}
+
+.badge-new {
+    color: white;
+    background-color: #e67e22;
+}
+
+/* ── Header badge row (shields.io style badges on intro page) ──────── */
+.badges {
+    text-align: center;
+    margin: 0.5em 0 1.5em;
+}
+
+.badges a {
+    text-decoration: none !important;
+}
+
+.badges img {
+    margin: 0 2px;
+    vertical-align: middle;
 }
 
 /* ── Print styles ────────────────────────────────────────────────────

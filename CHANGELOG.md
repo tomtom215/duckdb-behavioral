@@ -16,8 +16,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — eliminating the last raw function set registration code
 - 18 new `AggregateTestHarness` unit tests for combine config-propagation
   across all 5 aggregate functions (435 → 453 tests)
+- **SQL Cookbook** documentation with 25+ practical recipes organized by function
+  category (funnels, sessions, retention, patterns, user flows, combined analysis)
+- **Quick Reference** one-page cheat sheet covering all functions, pattern syntax,
+  NULL handling, limits, and common translations
+- **6 standalone example SQL scripts** in `examples/` directory — self-contained,
+  runnable demonstrations of each function category
+- **Developer quality check script** (`scripts/check.sh`) — runs all quality checks
+  (fmt, clippy, test, doc, bench) with colored output and `--quick` mode
+- **Question issue template** (`.github/ISSUE_TEMPLATE/question.md`) for usage
+  questions with documentation checklist
+- Enhanced mdBook CSS: admonition/callout styling, heading highlight animation,
+  smooth scrolling, better link styling, keyboard shortcut styling, horizontal
+  rule polish
 
 ### Changed
+
+- **README overhaul**: Added documentation badge, nav bar, "Choosing the Right
+  Function" guide, expanded examples section (8 patterns), integrations section
+  (Python, Node.js, dbt, Parquet), and verification one-liners in Quick Start
+- **CONTRIBUTING.md rewrite**: Added project architecture diagram, quality check
+  table, PR checklist, documentation files reference, and `scripts/check.sh`
+  instructions
+- **mdBook SUMMARY.md**: Added SQL Cookbook and Quick Reference to Getting Started
+  section
 
 - Entry point (`src/lib.rs`) now uses `quack_rs::entry_point!` macro instead
   of ~80 lines of hand-rolled unsafe code
