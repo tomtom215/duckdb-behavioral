@@ -8,6 +8,8 @@
 
 - [Installation & Quick Start](./getting-started.md)
 - [Use Cases & Examples](./use-cases.md)
+- [SQL Cookbook](./cookbook.md)
+- [Quick Reference](./quick-reference.md)
 - [FAQ](./faq.md)
 
 # Function Reference

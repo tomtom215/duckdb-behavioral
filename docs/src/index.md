@@ -249,11 +249,13 @@ For a comprehensive technical overview, see the
 
 | Section | Contents |
 |---|---|
-| [Engineering Overview](./engineering.md) | Technical depth, architecture, quality standards, domain significance |
 | [Getting Started](./getting-started.md) | Installation, loading, troubleshooting, your first analysis |
 | [Function Reference](./functions/sessionize.md) | Detailed docs for all 7 functions with examples |
 | [Use Cases](./use-cases.md) | Five complete real-world examples with sample data and queries |
+| [SQL Cookbook](./cookbook.md) | 25+ practical SQL recipes for common analytics patterns |
+| [Quick Reference](./quick-reference.md) | One-page cheat sheet for all functions and patterns |
 | [FAQ](./faq.md) | Common questions about loading, patterns, modes, NULLs |
+| [Engineering Overview](./engineering.md) | Technical depth, architecture, quality standards, domain significance |
 | [Architecture](./internals/architecture.md) | Module structure, design decisions, FFI bridge |
 | [Performance](./internals/performance.md) | Benchmarks, algorithmic complexity, optimization history |
 | [ClickHouse Compatibility](./internals/clickhouse-compatibility.md) | Syntax mapping, semantic parity matrix |

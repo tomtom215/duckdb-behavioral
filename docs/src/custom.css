@@ -527,6 +527,93 @@ blockquote {
     }
 }
 
+/* ── Admonition / Callout Styling ───────────────────────────────────
+ * Styled blockquotes that start with specific markers create visual
+ * callout boxes for tips, warnings, and notes.
+ */
+
+/* Tip callout (green accent) */
+blockquote.tip,
+blockquote[data-type="tip"] {
+    border-left-color: #28a745;
+    background-color: rgba(40, 167, 69, 0.08);
+}
+
+/* Warning callout (amber accent) */
+blockquote.warning,
+blockquote[data-type="warning"] {
+    border-left-color: #d29922;
+    background-color: rgba(210, 153, 34, 0.08);
+}
+
+/* Info callout (blue accent) */
+blockquote.info,
+blockquote[data-type="info"] {
+    border-left-color: #0969da;
+    background-color: rgba(9, 105, 218, 0.08);
+}
+
+/* ── Focus/highlight animation for linked headings ───────────────── */
+.content main h2:target,
+.content main h3:target,
+.content main h4:target {
+    animation: target-highlight 2s ease-out;
+}
+
+@keyframes target-highlight {
+    0% { background-color: rgba(255, 220, 0, 0.3); }
+    100% { background-color: transparent; }
+}
+
+/* ── Smooth scrolling for anchor links ───────────────────────────── */
+html {
+    scroll-behavior: smooth;
+}
+
+/* ── Copy button polish for code blocks ──────────────────────────── */
+.content main pre {
+    position: relative;
+}
+
+/* ── Better link styling ─────────────────────────────────────────── */
+.content main a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+}
+
+.content main a:hover {
+    text-decoration-thickness: 2px;
+}
+
+/* ── Horizontal rule styling ─────────────────────────────────────── */
+.content main hr {
+    border: none;
+    border-top: 1px solid var(--table-border-color);
+    margin: 2em 0;
+}
+
+/* ── Keyboard shortcut styling ───────────────────────────────────── */
+kbd {
+    display: inline-block;
+    padding: 0.2em 0.4em;
+    font-size: 0.85em;
+    line-height: 1;
+    color: #1a1a1a;
+    background-color: #f6f8fa;
+    border: 1px solid #d0d7de;
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    font-family: inherit;
+}
+
+.navy kbd,
+.coal kbd {
+    color: #e6edf3;
+    background-color: #30363d;
+    border-color: #484f58;
+}
+
 /* ── Print styles ────────────────────────────────────────────────────
  * When actually printing (Cmd+P / Ctrl+P), tables and diagrams should
  * show full content without scroll containers. Navigation elements
