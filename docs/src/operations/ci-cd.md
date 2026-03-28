@@ -24,6 +24,7 @@ ensure code quality across multiple dimensions.
 | **coverage** | Code coverage reporting | `cargo-tarpaulin` + Codecov |
 | **cross-platform** | Linux + macOS test matrix | `cargo test` on both OSes |
 | **extension-build** | Community extension packaging | `make configure && make release` |
+| **ci-gate** | Required status check gate | Evaluates all job results |
 
 ### CodeQL (`codeql.yml`)
 
@@ -33,7 +34,7 @@ pull request, and on a weekly schedule (Monday 06:00 UTC). Uses the
 
 - **Triggers**: push to main, PRs, weekly cron
 - **Language**: Rust
-- **Action version**: `github/codeql-action` v4.32.3 (SHA-pinned)
+- **Action version**: `github/codeql-action` v4.33.0 (SHA-pinned)
 - **Permissions**: `security-events: write` (required to upload SARIF results)
 
 **Prerequisite — Disable Default Setup:**
@@ -84,7 +85,7 @@ release with SHA256 checksums and build provenance attestations.
 
 **Supply chain security:**
 - SHA256 checksums for all artifacts
-- GitHub artifact attestation via `actions/attest-build-provenance@v3`
+- GitHub artifact attestation via `actions/attest-build-provenance@v4`
 - Immutable artifacts with 30-day retention
 - Build provenance tied to specific git commit
 

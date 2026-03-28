@@ -385,8 +385,8 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 | Metric | Value |
 |---|---|
 | Unit tests | 453 + 1 doc-test |
-| E2E tests | 27 (against real DuckDB CLI) |
-| Property-based tests | 26 (proptest) |
+| E2E tests | 11 workflow steps (2 platforms) + 59 SQL queries (against real DuckDB CLI) |
+| Property-based tests | 29 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
 | Clippy warnings | 0 (pedantic + nursery + cargo lint groups) |
 | CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |

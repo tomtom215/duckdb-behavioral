@@ -41,7 +41,7 @@ cargo fmt -- --check           # Format check
 
 ```
 src/
-├── lib.rs                  # Entry point (quack_rs::entry_point! macro)
+├── lib.rs                  # Entry point (quack_rs::entry_point_v2! macro)
 ├── common/
 │   ├── event.rs            # Shared Event type (16-byte bitmask, Copy)
 │   └── timestamp.rs        # Interval-to-microseconds conversion
@@ -54,7 +54,7 @@ src/
 ├── sequence.rs             # Pattern matching state management
 ├── sequence_next_node.rs   # Next event value after pattern match
 └── ffi/
-    ├── mod.rs              # register_all_raw() dispatcher
+    ├── mod.rs              # register_all() dispatcher via Registrar trait
     └── *.rs                # Per-function FFI callbacks
 ```
 

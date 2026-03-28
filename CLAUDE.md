@@ -28,7 +28,7 @@ It can also be built from source, producing a `.so`/`.dylib` that DuckDB loads a
 
 ```
 src/
-├── lib.rs                  # Entry point via quack_rs::entry_point! macro
+├── lib.rs                  # Entry point via quack_rs::entry_point_v2! macro
 ├── common/
 │   ├── mod.rs
 │   ├── event.rs            # Event type (u32 bitmask conditions, Copy) shared by window_funnel, sequence_*
@@ -43,7 +43,7 @@ src/
 ├── sequence.rs             # Sequence match/count/events state (wraps pattern engine)
 ├── sequence_next_node.rs   # Sequence next node state (sequential matching, Arc<str> values)
 └── ffi/
-    ├── mod.rs              # register_all_raw() — dispatches to all FFI modules
+    ├── mod.rs              # register_all() — dispatches to all FFI modules via Registrar trait
     ├── sessionize.rs       # FFI callbacks for sessionize (raw libduckdb-sys — window function)
     ├── retention.rs        # FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     ├── window_funnel.rs    # FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
@@ -133,7 +133,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.2.0 --abi-type C_STRUCT \
+  -p linux_amd64 -dv v1.2.0 -ev v0.3.0 --abi-type C_STRUCT \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -155,7 +155,8 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 
 **Runtime** (linked into the `.so`/`.dylib`):
 - `quack-rs` v0.7.1 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
-  for DuckDB loadable extensions. Provides `entry_point!` macro,
+  for DuckDB loadable extensions. Provides `entry_point_v2!` macro,
+  `Connection`/`Registrar` trait for version-agnostic registration,
   `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
   `FfiState<T>`, `VectorReader`/`VectorWriter` (including `write_varchar`),
   `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
@@ -197,10 +198,11 @@ Every change MUST meet these requirements:
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 5 aggregate functions
 - **1 doc-test** for the pattern parser
-- **27 E2E tests** against real DuckDB v1.5.1 CLI covering all 7 functions
-  with multiple scenarios (basic, timeout, modes, GROUP BY, no-match, NULL
-  inputs, empty tables, all funnel modes, 5+ conditions, all 8
-  direction/base combinations)
+- **E2E tests** against real DuckDB v1.5.1 CLI: 11 workflow test steps
+  (2 platforms) plus 7 SQL integration test files with 59 queries covering
+  all 7 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
+  no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
+  all 8 direction/base combinations)
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
   cardinality benchmarks, and throughput reporting up to 1B elements
@@ -288,7 +290,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **Edge cases**: Threshold boundaries, NULL handling, empty inputs
 - **Combine correctness**: Empty combine, boundary detection, associativity,
   config propagation via `AggregateTestHarness`
-- **Property-based tests**: 26 proptest tests verifying algebraic properties
+- **Property-based tests**: 29 proptest tests verifying algebraic properties
   (associativity, commutativity, identity, idempotency, monotonicity)
   including 10 tests exercising 32-condition paths
 - **Mutation-testing-guided tests**: 51 tests from cargo-mutants analysis
@@ -304,7 +306,9 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 
 Run with `cargo test`. All 453 tests + 1 doc-test run in <1 second.
 
-**E2E tests** (27 cases, against real DuckDB CLI):
+**E2E tests** (against real DuckDB CLI):
+- 11 workflow test steps per platform (Linux + macOS) in `e2e.yml`
+- 7 SQL integration test files with 59 queries in `test/sql/`
 - Covers all 7 functions with basic usage, timeouts, all 6 modes, GROUP BY,
   no-match, NULL inputs, empty tables, 5+ conditions, all direction x base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`
@@ -338,7 +342,7 @@ GitHub Actions workflows in `.github/workflows/`:
    - For `LIST(T)` output, use `.returns_logical(LogicalType::list(TypeId::...))` on the
      builder, and `ListVector` + `VectorWriter` for child data in finalize
    - **CRITICAL**: `combine_in_place` must propagate ALL configuration fields (not just events)
-4. Register in `src/ffi/mod.rs` `register_all_raw()`
+4. Register in `src/ffi/mod.rs` `register_all()` via `Registrar` trait
 5. Add `pub mod new_function;` to `src/lib.rs`
 6. Add benchmark in `benches/`
 7. Write unit tests + `AggregateTestHarness` combine config-propagation tests

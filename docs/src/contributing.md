@@ -70,7 +70,7 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
      builder, and `ListVector` + `VectorWriter` for child data in finalize.
    - **CRITICAL**: `combine_in_place` must propagate **all** configuration fields from
      the source state (not just events).
-4. Register in `src/ffi/mod.rs` `register_all_raw()`.
+4. Register in `src/ffi/mod.rs` `register_all()`.
 5. Add `pub mod new_function;` to `src/lib.rs`.
 6. Add a benchmark in `benches/`.
 7. Write unit tests + `AggregateTestHarness` combine config-propagation tests.

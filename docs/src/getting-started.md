@@ -433,7 +433,7 @@ previous runs by Criterion.
 
 ```
 src/
-  lib.rs                  # Entry point via quack_rs::entry_point! macro
+  lib.rs                  # Entry point via quack_rs::entry_point_v2! macro
   common/
     event.rs              # Shared Event type (16-byte bitmask)
     timestamp.rs          # Interval-to-microseconds conversion
@@ -446,7 +446,7 @@ src/
   sequence.rs             # Pattern matching state management
   sequence_next_node.rs   # Next event value after pattern match
   ffi/
-    mod.rs                # register_all_raw() dispatcher
+    mod.rs                # register_all() dispatcher
     sessionize.rs         # Sessionize FFI callbacks
     retention.rs          # Retention FFI callbacks
     window_funnel.rs      # Window funnel FFI callbacks
