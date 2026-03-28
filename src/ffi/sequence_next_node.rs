@@ -43,33 +43,34 @@ impl quack_rs::aggregate::AggregateState for SequenceNextNodeState {}
 ///
 /// # Safety
 ///
-/// Requires a valid `duckdb_connection` handle.
-pub unsafe fn register_sequence_next_node(con: duckdb_connection) {
-    let result = unsafe {
-        AggregateFunctionSetBuilder::new("sequence_next_node")
-            .returns(TypeId::Varchar)
-            .overloads(MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS, |n, builder| {
-                let mut b = builder
-                    .param(TypeId::Varchar) // direction
-                    .param(TypeId::Varchar) // base
-                    .param(TypeId::Timestamp) // timestamp
-                    .param(TypeId::Varchar) // event_column
-                    .param(TypeId::Boolean); // base_condition
-                for _ in 0..n {
-                    b = b.param(TypeId::Boolean); // event conditions
-                }
-                b.state_size(FfiState::<SequenceNextNodeState>::size_callback)
-                    .init(FfiState::<SequenceNextNodeState>::init_callback)
-                    .update(state_update)
-                    .combine(state_combine)
-                    .finalize(state_finalize)
-                    .destructor(FfiState::<SequenceNextNodeState>::destroy_callback)
-            })
-            .register(con)
-    };
-    if let Err(e) = result {
-        eprintln!("behavioral: failed to register sequence_next_node function set: {e}");
-    }
+/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
+///
+/// # Errors
+///
+/// Returns an error if function registration fails.
+pub unsafe fn register_sequence_next_node(
+    con: &impl quack_rs::connection::Registrar,
+) -> Result<(), quack_rs::error::ExtensionError> {
+    let builder = AggregateFunctionSetBuilder::new("sequence_next_node")
+        .returns(TypeId::Varchar)
+        .overloads(MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS, |n, builder| {
+            let mut b = builder
+                .param(TypeId::Varchar) // direction
+                .param(TypeId::Varchar) // base
+                .param(TypeId::Timestamp) // timestamp
+                .param(TypeId::Varchar) // event_column
+                .param(TypeId::Boolean); // base_condition
+            for _ in 0..n {
+                b = b.param(TypeId::Boolean); // event conditions
+            }
+            b.state_size(FfiState::<SequenceNextNodeState>::size_callback)
+                .init(FfiState::<SequenceNextNodeState>::init_callback)
+                .update(state_update)
+                .combine(state_combine)
+                .finalize(state_finalize)
+                .destructor(FfiState::<SequenceNextNodeState>::destroy_callback)
+        });
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns

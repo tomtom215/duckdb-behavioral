@@ -24,7 +24,7 @@ cargo fmt -- --check           # Format check
 
 - Rust 1.84.1+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.5.0 (for E2E testing)
+- DuckDB CLI v1.5.1 (for E2E testing)
 
 ## Key Principles
 
@@ -41,7 +41,7 @@ cargo fmt -- --check           # Format check
 
 ```
 src/
-├── lib.rs                  # Entry point (quack_rs::entry_point! macro)
+├── lib.rs                  # Entry point (quack_rs::entry_point_v2! macro)
 ├── common/
 │   ├── event.rs            # Shared Event type (16-byte bitmask, Copy)
 │   └── timestamp.rs        # Interval-to-microseconds conversion
@@ -54,7 +54,7 @@ src/
 ├── sequence.rs             # Pattern matching state management
 ├── sequence_next_node.rs   # Next event value after pattern match
 └── ffi/
-    ├── mod.rs              # register_all_raw() dispatcher
+    ├── mod.rs              # register_all() dispatcher via Registrar trait
     └── *.rs                # Per-function FFI callbacks
 ```
 

@@ -8,7 +8,7 @@ business logic and DuckDB's C API.
 
 ```
 src/
-  lib.rs                       Entry point via quack_rs::entry_point! macro
+  lib.rs                       Entry point via quack_rs::entry_point_v2! macro
   common/
     mod.rs
     event.rs                   Event type (u32 bitmask, Copy, 16 bytes)
@@ -23,7 +23,7 @@ src/
   sequence.rs                  Sequence match/count/events state management
   sequence_next_node.rs        Next event value after pattern match (Arc<str>)
   ffi/
-    mod.rs                     register_all_raw() dispatcher
+    mod.rs                     register_all() dispatcher
     sessionize.rs              FFI callbacks (raw libduckdb-sys — window function)
     retention.rs               FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     window_funnel.rs           FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
@@ -78,15 +78,14 @@ function set.
 
 ### Entry Point via quack-rs
 
-The extension uses the `quack_rs::entry_point!` macro to generate the
-`behavioral_init_c_api` symbol. The macro handles API initialization,
-connection management via `duckdb_connect`/`duckdb_disconnect`, and error
-reporting — replacing ~80 lines of hand-rolled unsafe code from earlier
-versions.
+The extension uses the `quack_rs::entry_point_v2!` macro with the
+`Connection`/`Registrar` trait pattern. Functions are registered via
+`con.register_aggregate_set(builder)`. This replaces ~80 lines of
+hand-rolled unsafe code from earlier versions.
 
 ### quack-rs SDK
 
-The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.6.0,
+The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.7.1,
 a Rust SDK for DuckDB loadable extensions. It provides:
 
 - **`AggregateFunctionSetBuilder`**: Safe registration of function sets with

@@ -31,7 +31,7 @@ platform where Rust and DuckDB are available.
 
 - Rust 1.84.1 or later (`rustup` recommended)
 - A C compiler (gcc, clang, or MSVC -- needed for DuckDB system bindings)
-- DuckDB CLI v1.5.0 (for running queries)
+- DuckDB CLI v1.5.1 (for running queries)
 
 **Build steps:**
 
@@ -289,14 +289,14 @@ matched Home -> Product sequence.
 **"file was built for DuckDB C API version '...' but we can only load extensions built for DuckDB C API '...'"**
 
 The extension is built against DuckDB C API version `v1.2.0` (used by DuckDB
-v1.5.0). You must use a DuckDB CLI version that matches. Check your version
+v1.5.1). You must use a DuckDB CLI version that matches. Check your version
 with:
 
 ```bash
 duckdb --version
 ```
 
-If you see a different version, either install DuckDB v1.5.0 or rebuild the
+If you see a different version, either install DuckDB v1.5.1 or rebuild the
 extension against your DuckDB version (this requires updating the
 `libduckdb-sys` dependency in `Cargo.toml`).
 
@@ -433,7 +433,7 @@ previous runs by Criterion.
 
 ```
 src/
-  lib.rs                  # Entry point via quack_rs::entry_point! macro
+  lib.rs                  # Entry point via quack_rs::entry_point_v2! macro
   common/
     event.rs              # Shared Event type (16-byte bitmask)
     timestamp.rs          # Interval-to-microseconds conversion
@@ -446,7 +446,7 @@ src/
   sequence.rs             # Pattern matching state management
   sequence_next_node.rs   # Next event value after pattern match
   ffi/
-    mod.rs                # register_all_raw() dispatcher
+    mod.rs                # register_all() dispatcher
     sessionize.rs         # Sessionize FFI callbacks
     retention.rs          # Retention FFI callbacks
     window_funnel.rs      # Window funnel FFI callbacks

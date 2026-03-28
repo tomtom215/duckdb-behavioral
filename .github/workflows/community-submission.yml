@@ -215,7 +215,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: community-submission
 
@@ -252,7 +252,7 @@ jobs:
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: community-submission-build
 
@@ -458,9 +458,9 @@ jobs:
 
           ### Testing
 
-          - 453 unit tests + 1 doc-test
-          - 27 E2E tests against real DuckDB v1.5.0
-          - 7 SQL integration test files in test/sql/
+          - 453 unit tests + 1 doc-test (29 proptest)
+          - 11 E2E workflow test steps per platform against real DuckDB v1.5.1
+          - 7 SQL integration test files (59 queries) in test/sql/
           - Criterion.rs benchmarks up to 1 billion elements
 
           ### Excluded platforms

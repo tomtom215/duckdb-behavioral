@@ -8,7 +8,7 @@ Guidelines for contributing to `duckdb-behavioral`.
 
 - Rust 1.84.1+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.5.0 (for E2E testing)
+- DuckDB CLI v1.5.1 (for E2E testing)
 
 ### Building
 
@@ -46,7 +46,7 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
 - **Pure Rust core**: Business logic in top-level modules (`sessionize.rs`,
   `retention.rs`, etc.) with zero FFI dependencies.
 - **FFI bridge via quack-rs SDK**: DuckDB C API registration confined to
-  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.6.0
+  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.7.1
   for safe builders (including `returns_logical(LogicalType)` for
   `LIST(T)` returns), state management (`FfiState<T>`), vector I/O
   (`VectorReader`/`VectorWriter`), LIST output (`ListVector`), and type
@@ -70,7 +70,7 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
      builder, and `ListVector` + `VectorWriter` for child data in finalize.
    - **CRITICAL**: `combine_in_place` must propagate **all** configuration fields from
      the source state (not just events).
-4. Register in `src/ffi/mod.rs` `register_all_raw()`.
+4. Register in `src/ffi/mod.rs` `register_all()`.
 5. Add `pub mod new_function;` to `src/lib.rs`.
 6. Add a benchmark in `benches/`.
 7. Write unit tests + `AggregateTestHarness` combine config-propagation tests.

@@ -27,28 +27,29 @@ impl quack_rs::aggregate::AggregateState for SequenceState {}
 ///
 /// # Safety
 ///
-/// Requires a valid `duckdb_connection` handle.
-pub unsafe fn register_sequence_match(con: duckdb_connection) {
-    let result = unsafe {
-        AggregateFunctionSetBuilder::new("sequence_match")
-            .returns(TypeId::Boolean)
-            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-                let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
-                for _ in 0..n {
-                    b = b.param(TypeId::Boolean);
-                }
-                b.state_size(FfiState::<SequenceState>::size_callback)
-                    .init(FfiState::<SequenceState>::init_callback)
-                    .update(sequence_state_update)
-                    .combine(sequence_state_combine)
-                    .finalize(match_state_finalize)
-                    .destructor(FfiState::<SequenceState>::destroy_callback)
-            })
-            .register(con)
-    };
-    if let Err(e) = result {
-        eprintln!("behavioral: failed to register sequence_match function set: {e}");
-    }
+/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
+///
+/// # Errors
+///
+/// Returns an error if function registration fails.
+pub unsafe fn register_sequence_match(
+    con: &impl quack_rs::connection::Registrar,
+) -> Result<(), quack_rs::error::ExtensionError> {
+    let builder = AggregateFunctionSetBuilder::new("sequence_match")
+        .returns(TypeId::Boolean)
+        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+            let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+            for _ in 0..n {
+                b = b.param(TypeId::Boolean);
+            }
+            b.state_size(FfiState::<SequenceState>::size_callback)
+                .init(FfiState::<SequenceState>::init_callback)
+                .update(sequence_state_update)
+                .combine(sequence_state_combine)
+                .finalize(match_state_finalize)
+                .destructor(FfiState::<SequenceState>::destroy_callback)
+        });
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 /// Registers the `sequence_count` function with `DuckDB`.
@@ -57,28 +58,29 @@ pub unsafe fn register_sequence_match(con: duckdb_connection) {
 ///
 /// # Safety
 ///
-/// Requires a valid `duckdb_connection` handle.
-pub unsafe fn register_sequence_count(con: duckdb_connection) {
-    let result = unsafe {
-        AggregateFunctionSetBuilder::new("sequence_count")
-            .returns(TypeId::BigInt)
-            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-                let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
-                for _ in 0..n {
-                    b = b.param(TypeId::Boolean);
-                }
-                b.state_size(FfiState::<SequenceState>::size_callback)
-                    .init(FfiState::<SequenceState>::init_callback)
-                    .update(sequence_state_update)
-                    .combine(sequence_state_combine)
-                    .finalize(count_state_finalize)
-                    .destructor(FfiState::<SequenceState>::destroy_callback)
-            })
-            .register(con)
-    };
-    if let Err(e) = result {
-        eprintln!("behavioral: failed to register sequence_count function set: {e}");
-    }
+/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
+///
+/// # Errors
+///
+/// Returns an error if function registration fails.
+pub unsafe fn register_sequence_count(
+    con: &impl quack_rs::connection::Registrar,
+) -> Result<(), quack_rs::error::ExtensionError> {
+    let builder = AggregateFunctionSetBuilder::new("sequence_count")
+        .returns(TypeId::BigInt)
+        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+            let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+            for _ in 0..n {
+                b = b.param(TypeId::Boolean);
+            }
+            b.state_size(FfiState::<SequenceState>::size_callback)
+                .init(FfiState::<SequenceState>::init_callback)
+                .update(sequence_state_update)
+                .combine(sequence_state_combine)
+                .finalize(count_state_finalize)
+                .destructor(FfiState::<SequenceState>::destroy_callback)
+        });
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 // -- sequence_match finalize --

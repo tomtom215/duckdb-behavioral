@@ -187,7 +187,7 @@ Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time
    time.
 
 No performance optimization targets. 11 E2E tests added against real DuckDB
-v1.5.0 CLI.
+v1.5.1 CLI.
 
 ### NFA Fast Paths
 

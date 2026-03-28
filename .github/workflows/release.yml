@@ -136,7 +136,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: release-${{ matrix.target }}
 
@@ -208,7 +208,7 @@ jobs:
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: release-test-${{ matrix.platform }}
 
@@ -235,7 +235,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
 
@@ -268,7 +268,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
         with:
           tag_name: ${{ needs.validate.outputs.version }}
           name: ${{ env.EXTENSION_NAME }} ${{ needs.validate.outputs.version }}

@@ -5,7 +5,7 @@
 //!
 //! # Architecture
 //!
-//! All modules except [`sessionize`] use the `quack-rs` v0.6.0 SDK for
+//! All modules except [`sessionize`] use the `quack-rs` v0.7.1 SDK for
 //! registration, state management, and vector I/O:
 //!
 //! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function
@@ -29,7 +29,13 @@
 //!
 //! The [`sessionize`] module is the sole exception: it requires window function
 //! registration via the C API, which `quack-rs` does not support. It uses raw
-//! `libduckdb-sys` calls directly.
+//! `libduckdb-sys` calls directly via [`Connection::as_raw_connection()`].
+//!
+//! # Entry Point
+//!
+//! Registration uses the [`quack_rs::entry_point_v2!`] macro, which provides a
+//! [`Connection`] implementing the [`Registrar`](quack_rs::connection::Registrar) trait — a version-agnostic API
+//! for registering extension components across `DuckDB` 1.4.x and 1.5.x.
 
 pub mod retention;
 pub mod sequence;
@@ -38,23 +44,41 @@ pub mod sequence_next_node;
 pub mod sessionize;
 pub mod window_funnel;
 
-/// Registers all behavioral analytics functions using a raw `duckdb_connection` handle.
+use quack_rs::connection::Connection;
+use quack_rs::error::ExtensionError;
+
+/// Registers all behavioral analytics functions using a [`Connection`] handle.
 ///
-/// This function is called from the `quack_rs::entry_point!` macro closure in `lib.rs`.
+/// This function is called from the `quack_rs::entry_point_v2!` macro closure
+/// in `lib.rs`. It uses the [`Registrar`](quack_rs::connection::Registrar) trait for aggregate function
+/// registration and falls back to the raw connection handle for the `sessionize`
+/// window function (not supported by the `Registrar` API).
 ///
 /// # Safety
 ///
-/// The caller must ensure `raw_con` is a valid `duckdb_connection` handle.
-pub fn register_all_raw(raw_con: libduckdb_sys::duckdb_connection) {
-    // Safety: The raw connection handle is valid — obtained via duckdb_connect
-    // in the entry_point! macro and will be disconnected after registration.
+/// The caller must ensure `con` holds a valid `duckdb_connection` handle.
+///
+/// # Errors
+///
+/// Returns an error if any function registration fails.
+pub unsafe fn register_all(con: &Connection) -> Result<(), ExtensionError> {
+    // Safety: The Connection holds a valid handle — obtained via duckdb_connect
+    // in the entry_point_v2! macro and will be disconnected after registration.
+
+    // Sessionize requires raw window function FFI (not supported by Registrar).
     unsafe {
-        sessionize::register_sessionize(raw_con);
-        retention::register_retention(raw_con);
-        window_funnel::register_window_funnel(raw_con);
-        sequence::register_sequence_match(raw_con);
-        sequence::register_sequence_count(raw_con);
-        sequence_match_events::register_sequence_match_events(raw_con);
-        sequence_next_node::register_sequence_next_node(raw_con);
+        sessionize::register_sessionize(con.as_raw_connection());
     }
+
+    // All aggregate functions use the Registrar trait for registration.
+    unsafe {
+        retention::register_retention(con)?;
+        window_funnel::register_window_funnel(con)?;
+        sequence::register_sequence_match(con)?;
+        sequence::register_sequence_count(con)?;
+        sequence_match_events::register_sequence_match_events(con)?;
+        sequence_next_node::register_sequence_next_node(con)?;
+    }
+
+    Ok(())
 }

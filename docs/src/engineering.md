@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 453 unit tests, 27 E2E tests, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 453 unit tests, 59 E2E SQL queries across 7 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -45,11 +45,11 @@ graph TB
     end
 
     subgraph "Extension Entry Point"
-        EP[entry_point! macro<br/>src/lib.rs]
+        EP[entry_point_v2! macro<br/>src/lib.rs]
     end
 
     subgraph "FFI Bridge — src/ffi/"
-        REG[register_all_raw]
+        REG[register_all]
         FS[sessionize.rs]
         FR[retention.rs]
         FW[window_funnel.rs]
@@ -121,11 +121,10 @@ graph TB
   (`state_size`, `init`, `update`, `combine`, `finalize`). Every `unsafe` block
   has a `// SAFETY:` comment documenting the invariants it relies on.
 
-- **Entry point** (`src/lib.rs`): Uses the `quack_rs::entry_point!` macro,
-  which handles API initialization, connection management via
-  `duckdb_connect`/`duckdb_disconnect`, and error reporting. This replaces
-  ~80 lines of hand-rolled unsafe code and eliminates struct layout fragility
-  across DuckDB versions.
+- **Entry point** (`src/lib.rs`): Uses the `quack_rs::entry_point_v2!` macro
+  with the `Connection`/`Registrar` trait pattern. Functions are registered via
+  `con.register_aggregate_set(builder)`. This replaces ~80 lines of hand-rolled
+  unsafe code and eliminates struct layout fragility across DuckDB versions.
 
 ### Why This Matters
 
@@ -151,8 +150,8 @@ This architecture enables:
 graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
-        L2["E2E Tests (27)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
-        L1["Unit Tests (453)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (26 proptest), mutation-guided (51)"]
+        L2["E2E Tests (59 queries, 7 test files)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
+        L1["Unit Tests (453)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -172,13 +171,13 @@ Organized by category within each module:
   at type boundaries (`u32::MAX`, `i64::MIN`)
 - **Combine correctness** -- empty-into-empty, empty-into-populated,
   populated-into-empty, associativity verification, configuration propagation
-- **Property-based tests (26 proptest)** -- algebraic properties required by
+- **Property-based tests (29 proptest)** -- algebraic properties required by
   DuckDB's segment tree: combine associativity, commutativity, identity element,
   idempotency, monotonicity
 - **Mutation-testing-guided tests (51)** -- tests written specifically to kill
   mutants that survived initial test suites
 
-**Level 2: E2E Tests (27 tests)**
+**Level 2: E2E Tests (59 SQL queries across 7 test files)**
 
 Integration tests against a real DuckDB CLI instance that validate the complete
 chain: extension loading, function registration, SQL execution, and result
@@ -312,7 +311,7 @@ these analyses can run as interactive queries rather than batch jobs.
 
 DuckDB's Rust crate does not provide high-level aggregate function
 registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
-SDK (v0.6.0) which wraps the raw C API with safe builders
+SDK (v0.7.1) which wraps the raw C API with safe builders
 (including `returns_logical(LogicalType)` for `LIST(T)` return types),
 state management, vector I/O, and LIST output helpers. All 6 aggregate
 functions use the builder for registration. The `sessionize` function
@@ -407,8 +406,8 @@ incorrect results that passed all unit tests but failed E2E validation.
 |---|---|
 | Unit tests | 453 |
 | Doc-tests | 1 |
-| E2E tests | 27 |
-| Property-based tests | 26 (proptest) |
+| E2E SQL queries | 59 (across 7 test files) |
+| Property-based tests | 29 (proptest) |
 | Mutation-guided tests | 51 |
 | Mutation kill rate | 88.4% (130/147) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
@@ -427,7 +426,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Layer | Technology | Purpose |
 |---|---|---|
 | Language | Rust (stable, MSRV 1.84.1) | Memory safety, zero-cost abstractions, `unsafe` confinement |
-| Database | DuckDB 1.5.0 | Analytical SQL engine, segment tree windowing |
+| Database | DuckDB 1.5.1 | Analytical SQL engine, segment tree windowing |
 | FFI | libduckdb-sys (C API) | Raw aggregate function registration |
 | Benchmarking | Criterion.rs | Statistical benchmarking with confidence intervals |
 | Property testing | proptest | Algebraic property verification |
