@@ -133,7 +133,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.3.0 --abi-type C_STRUCT \
+  -p linux_amd64 -dv v1.5.1 -ev v0.4.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -390,9 +390,10 @@ Hard-won knowledge from developing this extension. Consult before making changes
   to it produces garbage instead of NULL. `VectorWriter::set_null()` handles this
   automatically.
 
-- **Extension metadata version is C API version, not DuckDB version**: DuckDB v1.5.1
-  uses C API version `v1.2.0`. The `append_extension_metadata.py -dv` flag must use
-  the C API version, not the release version.
+- **Extension metadata version uses DuckDB release version**: The
+  `append_extension_metadata.py -dv` flag takes the DuckDB release version
+  (e.g., `v1.5.1`). The community extension Makefile sets this automatically
+  from `TARGET_DUCKDB_VERSION`. The ABI type is `C_STRUCT_UNSTABLE`.
 
 - **`sessionize` cannot use quack-rs**: DuckDB's public C Extension API does not
   expose window function registration hooks. This module stays on raw `libduckdb-sys`.
