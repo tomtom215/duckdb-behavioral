@@ -34,7 +34,7 @@
 //! # Entry Point
 //!
 //! Registration uses the [`quack_rs::entry_point_v2!`] macro, which provides a
-//! [`Connection`] implementing the [`Registrar`] trait — a version-agnostic API
+//! [`Connection`] implementing the [`Registrar`](quack_rs::connection::Registrar) trait — a version-agnostic API
 //! for registering extension components across `DuckDB` 1.4.x and 1.5.x.
 
 pub mod retention;
@@ -50,7 +50,7 @@ use quack_rs::error::ExtensionError;
 /// Registers all behavioral analytics functions using a [`Connection`] handle.
 ///
 /// This function is called from the `quack_rs::entry_point_v2!` macro closure
-/// in `lib.rs`. It uses the [`Registrar`] trait for aggregate function
+/// in `lib.rs`. It uses the [`Registrar`](quack_rs::connection::Registrar) trait for aggregate function
 /// registration and falls back to the raw connection handle for the `sessionize`
 /// window function (not supported by the `Registrar` API).
 ///

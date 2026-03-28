@@ -35,7 +35,7 @@ const MAX_CONDITIONS: usize = 32;
 ///
 /// # Safety
 ///
-/// Requires a valid connection implementing the [`Registrar`] trait.
+/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
 ///
 /// # Errors
 ///

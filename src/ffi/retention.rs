@@ -32,7 +32,7 @@ impl quack_rs::aggregate::AggregateState for RetentionState {}
 ///
 /// # Safety
 ///
-/// Requires a valid connection implementing the [`Registrar`] trait.
+/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
 ///
 /// # Errors
 ///
