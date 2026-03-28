@@ -7,15 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-28
+
 ### Added
 
-- Migrated FFI layer to `quack-rs` v0.5.0 ([crates.io](https://crates.io/crates/quack-rs)) SDK
-  for safe state management, vector I/O, and function set registration
-- All 6 aggregate functions now use `AggregateFunctionSetBuilder` for registration
-- `retention` and `sequence_match_events` use `returns_logical(LogicalType::list(...))`
-  — eliminating the last raw function set registration code
-- 18 new `AggregateTestHarness` unit tests for combine config-propagation
-  across all 5 aggregate functions (435 → 453 tests)
 - **SQL Cookbook** documentation with 25+ practical recipes organized by function
   category (funnels, sessions, retention, patterns, user flows, combined analysis)
 - **Quick Reference** one-page cheat sheet covering all functions, pattern syntax,
@@ -29,9 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced mdBook CSS: admonition/callout styling, heading highlight animation,
   smooth scrolling, better link styling, keyboard shortcut styling, horizontal
   rule polish
+- 18 new `AggregateTestHarness` unit tests for combine config-propagation
+  across all 5 aggregate functions (435 → 453 tests)
 
 ### Changed
 
+- **DuckDB v1.5.1 support** — upgraded `libduckdb-sys` from `1.10500.0` to
+  `1.10501.0` and `duckdb` (dev) from `1.10500.0` to `1.10501.0`. This
+  restores community extension compatibility (previously only supported v1.4.4)
+- **quack-rs v0.7.1** — upgraded from v0.6.0. Includes ARM64/aarch64 build fix,
+  five new `duckdb-1-5` feature modules (catalog, client_context, config_option,
+  copy_function, table_description), new `TypeId` variants, and
+  `ScalarFunctionBuilder` enhancements (varargs, volatile, bind, init)
+- **CI dependency updates** — `Swatinem/rust-cache` v2.8.2→v2.9.1,
+  `github/codeql-action` v4.32.6→v4.33.0, `actions/download-artifact`
+  v8.0.0→v8.0.1, `taiki-e/install-action` updated,
+  `softprops/action-gh-release` v2.5.0→v2.6.1
+- **Transitive dependency updates** — `tar` 0.4.44→0.4.45
 - **README overhaul**: Added documentation badge, nav bar, "Choosing the Right
   Function" guide, expanded examples section (8 patterns), integrations section
   (Python, Node.js, dbt, Parquet), and verification one-liners in Quick Start
@@ -40,9 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instructions
 - **mdBook SUMMARY.md**: Added SQL Cookbook and Quick Reference to Getting Started
   section
-
-- Entry point (`src/lib.rs`) now uses `quack_rs::entry_point!` macro instead
-  of ~80 lines of hand-rolled unsafe code
+- **`entry_point_v2!` migration** — entry point now uses `quack_rs::entry_point_v2!`
+  with `&Connection` / `Registrar` trait instead of raw `duckdb_connection`. All 6
+  aggregate functions register via `con.register_aggregate_set(builder)` with proper
+  `Result` error propagation. `sessionize` uses `con.as_raw_connection()` for window
+  function FFI
+- Migrated FFI layer to `quack-rs` SDK for safe state management, vector I/O,
+  and function set registration
 - MSRV bumped from 1.80 to 1.84.1 (required by quack-rs)
 - FFI modules use `FfiState<T>`, `VectorReader`, `VectorWriter` from quack-rs
 - LIST output uses `ListVector` + `VectorWriter` instead of raw pointer arithmetic
@@ -51,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `retention` registration: ~45 lines of raw loop → 15-line builder chain
 - `sequence_match_events` registration: ~55 lines of raw loop → 15-line builder chain
 - `sessionize` FFI remains hand-rolled (window function limitation in quack-rs)
+- E2E tests now run against DuckDB v1.5.1 CLI (previously v1.5.0)
 
 ### Removed
 
@@ -151,6 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tomtom215/duckdb-behavioral/releases/tag/v0.1.0

@@ -35,28 +35,29 @@ const MAX_CONDITIONS: usize = 32;
 ///
 /// # Safety
 ///
-/// Requires a valid `duckdb_connection` handle.
-pub unsafe fn register_sequence_match_events(con: duckdb_connection) {
-    let result = unsafe {
-        AggregateFunctionSetBuilder::new("sequence_match_events")
-            .returns_logical(LogicalType::list(TypeId::Timestamp))
-            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-                let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
-                for _ in 0..n {
-                    b = b.param(TypeId::Boolean);
-                }
-                b.state_size(FfiState::<SequenceState>::size_callback)
-                    .init(FfiState::<SequenceState>::init_callback)
-                    .update(state_update)
-                    .combine(state_combine)
-                    .finalize(state_finalize)
-                    .destructor(FfiState::<SequenceState>::destroy_callback)
-            })
-            .register(con)
-    };
-    if let Err(e) = result {
-        eprintln!("behavioral: failed to register sequence_match_events function set: {e}");
-    }
+/// Requires a valid connection implementing the [`Registrar`] trait.
+///
+/// # Errors
+///
+/// Returns an error if function registration fails.
+pub unsafe fn register_sequence_match_events(
+    con: &impl quack_rs::connection::Registrar,
+) -> Result<(), quack_rs::error::ExtensionError> {
+    let builder = AggregateFunctionSetBuilder::new("sequence_match_events")
+        .returns_logical(LogicalType::list(TypeId::Timestamp))
+        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+            let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+            for _ in 0..n {
+                b = b.param(TypeId::Boolean);
+            }
+            b.state_size(FfiState::<SequenceState>::size_callback)
+                .init(FfiState::<SequenceState>::init_callback)
+                .update(state_update)
+                .combine(state_combine)
+                .finalize(state_finalize)
+                .destructor(FfiState::<SequenceState>::destroy_callback)
+        });
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (VARCHAR, TIMESTAMP,

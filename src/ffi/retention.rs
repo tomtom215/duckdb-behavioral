@@ -32,28 +32,29 @@ impl quack_rs::aggregate::AggregateState for RetentionState {}
 ///
 /// # Safety
 ///
-/// Requires a valid `duckdb_connection` handle.
-pub unsafe fn register_retention(con: duckdb_connection) {
-    let result = unsafe {
-        AggregateFunctionSetBuilder::new("retention")
-            .returns_logical(LogicalType::list(TypeId::Boolean))
-            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-                let mut b = builder;
-                for _ in 0..n {
-                    b = b.param(TypeId::Boolean);
-                }
-                b.state_size(FfiState::<RetentionState>::size_callback)
-                    .init(FfiState::<RetentionState>::init_callback)
-                    .update(state_update)
-                    .combine(state_combine)
-                    .finalize(state_finalize)
-                    .destructor(FfiState::<RetentionState>::destroy_callback)
-            })
-            .register(con)
-    };
-    if let Err(e) = result {
-        eprintln!("behavioral: failed to register retention function set: {e}");
-    }
+/// Requires a valid connection implementing the [`Registrar`] trait.
+///
+/// # Errors
+///
+/// Returns an error if function registration fails.
+pub unsafe fn register_retention(
+    con: &impl quack_rs::connection::Registrar,
+) -> Result<(), quack_rs::error::ExtensionError> {
+    let builder = AggregateFunctionSetBuilder::new("retention")
+        .returns_logical(LogicalType::list(TypeId::Boolean))
+        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+            let mut b = builder;
+            for _ in 0..n {
+                b = b.param(TypeId::Boolean);
+            }
+            b.state_size(FfiState::<RetentionState>::size_callback)
+                .init(FfiState::<RetentionState>::init_callback)
+                .update(state_update)
+                .combine(state_combine)
+                .finalize(state_finalize)
+                .destructor(FfiState::<RetentionState>::destroy_callback)
+        });
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with N BOOLEAN columns (as registered).

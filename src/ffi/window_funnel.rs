@@ -33,47 +33,48 @@ impl quack_rs::aggregate::AggregateState for WindowFunnelState {}
 ///
 /// # Safety
 ///
-/// Requires a valid `duckdb_connection` handle.
-pub unsafe fn register_window_funnel(con: duckdb_connection) {
+/// Requires a valid connection implementing the [`Registrar`] trait.
+///
+/// # Errors
+///
+/// Returns an error if function registration fails.
+pub unsafe fn register_window_funnel(
+    con: &impl quack_rs::connection::Registrar,
+) -> Result<(), quack_rs::error::ExtensionError> {
     // Register both overload groups under the same function set name.
     // DuckDB distinguishes them by parameter types.
-    let result = unsafe {
-        AggregateFunctionSetBuilder::new("window_funnel")
-            .returns(TypeId::Integer)
-            // Group 1: WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)
-            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-                let mut b = builder.param(TypeId::Interval).param(TypeId::Timestamp);
-                for _ in 0..n {
-                    b = b.param(TypeId::Boolean);
-                }
-                b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                    .init(FfiState::<WindowFunnelState>::init_callback)
-                    .update(state_update)
-                    .combine(state_combine)
-                    .finalize(state_finalize)
-                    .destructor(FfiState::<WindowFunnelState>::destroy_callback)
-            })
-            // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
-            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-                let mut b = builder
-                    .param(TypeId::Interval)
-                    .param(TypeId::Varchar)
-                    .param(TypeId::Timestamp);
-                for _ in 0..n {
-                    b = b.param(TypeId::Boolean);
-                }
-                b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                    .init(FfiState::<WindowFunnelState>::init_callback)
-                    .update(state_update_with_mode)
-                    .combine(state_combine)
-                    .finalize(state_finalize)
-                    .destructor(FfiState::<WindowFunnelState>::destroy_callback)
-            })
-            .register(con)
-    };
-    if let Err(e) = result {
-        eprintln!("behavioral: failed to register window_funnel function set: {e}");
-    }
+    let builder = AggregateFunctionSetBuilder::new("window_funnel")
+        .returns(TypeId::Integer)
+        // Group 1: WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)
+        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+            let mut b = builder.param(TypeId::Interval).param(TypeId::Timestamp);
+            for _ in 0..n {
+                b = b.param(TypeId::Boolean);
+            }
+            b.state_size(FfiState::<WindowFunnelState>::size_callback)
+                .init(FfiState::<WindowFunnelState>::init_callback)
+                .update(state_update)
+                .combine(state_combine)
+                .finalize(state_finalize)
+                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
+        })
+        // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
+        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
+            let mut b = builder
+                .param(TypeId::Interval)
+                .param(TypeId::Varchar)
+                .param(TypeId::Timestamp);
+            for _ in 0..n {
+                b = b.param(TypeId::Boolean);
+            }
+            b.state_size(FfiState::<WindowFunnelState>::size_callback)
+                .init(FfiState::<WindowFunnelState>::init_callback)
+                .update(state_update_with_mode)
+                .combine(state_combine)
+                .finalize(state_finalize)
+                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
+        });
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
