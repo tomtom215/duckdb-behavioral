@@ -88,6 +88,7 @@
 
             setTheme(isDark() ? LIGHT : DARK);
             updateButton(btn);
+            updateLogos();
         });
 
         updateButton(btn);
@@ -96,6 +97,7 @@
         // prefers-color-scheme media query handler in mdBook's own JS)
         new MutationObserver(function () {
             updateButton(btn);
+            updateLogos();
         }).observe(document.documentElement, {
             attributes: true,
             attributeFilter: ['class']
@@ -144,12 +146,33 @@
         }
     }
 
+    // ── Logo theme switching ────────────────────────────────────────────
+    // Show light logo on light themes, dark logo on dark themes.
+    // CSS handles the display:block/none based on theme class, but we
+    // need to ensure the initial state is correct on page load.
+
+    function updateLogos() {
+        // CSS rules in custom.css handle the actual show/hide based on
+        // the theme class on <html>. This function just ensures the
+        // class is applied immediately on load (before CSS transitions).
+        var dark = isDark();
+        var lightLogos = document.querySelectorAll('.logo-light');
+        var darkLogos = document.querySelectorAll('.logo-dark');
+        for (var i = 0; i < lightLogos.length; i++) {
+            lightLogos[i].style.display = dark ? 'none' : 'block';
+        }
+        for (var j = 0; j < darkLogos.length; j++) {
+            darkLogos[j].style.display = dark ? 'block' : 'none';
+        }
+    }
+
     // ── Initialization ─────────────────────────────────────────────────
 
     function init() {
         setupThemeToggle();
         setupPrintOverride();
         wrapTables();
+        updateLogos();
     }
 
     if (document.readyState === 'loading') {

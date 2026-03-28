@@ -1,6 +1,14 @@
 <p align="center">
-  <img src="images/banner.svg" alt="duckdb-behavioral" width="560">
+  <img class="logo-light" src="images/banner.svg" alt="duckdb-behavioral" width="560">
+  <img class="logo-dark" src="images/banner-dark.svg" alt="duckdb-behavioral" width="560">
 </p>
+
+<div class="badges">
+<a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
+<a href="https://github.com/tomtom215/duckdb-behavioral/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+<a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.84.1-blue.svg" alt="MSRV: 1.84.1"></a>
+</div>
 
 # duckdb-behavioral
 
@@ -249,11 +257,13 @@ For a comprehensive technical overview, see the
 
 | Section | Contents |
 |---|---|
-| [Engineering Overview](./engineering.md) | Technical depth, architecture, quality standards, domain significance |
 | [Getting Started](./getting-started.md) | Installation, loading, troubleshooting, your first analysis |
 | [Function Reference](./functions/sessionize.md) | Detailed docs for all 7 functions with examples |
 | [Use Cases](./use-cases.md) | Five complete real-world examples with sample data and queries |
+| [SQL Cookbook](./cookbook.md) | 25+ practical SQL recipes for common analytics patterns |
+| [Quick Reference](./quick-reference.md) | One-page cheat sheet for all functions and patterns |
 | [FAQ](./faq.md) | Common questions about loading, patterns, modes, NULLs |
+| [Engineering Overview](./engineering.md) | Technical depth, architecture, quality standards, domain significance |
 | [Architecture](./internals/architecture.md) | Module structure, design decisions, FFI bridge |
 | [Performance](./internals/performance.md) | Benchmarks, algorithmic complexity, optimization history |
 | [ClickHouse Compatibility](./internals/clickhouse-compatibility.md) | Syntax mapping, semantic parity matrix |

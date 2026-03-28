@@ -1,6 +1,6 @@
 [book]
 title = "duckdb-behavioral"
-description = "Behavioral Analytics Functions for DuckDB"
+description = "Behavioral Analytics Functions for DuckDB — Sessions, Funnels, Retention, Pattern Matching"
 authors = ["Tom F."]
 language = "en"
 src = "src"
@@ -18,6 +18,8 @@ editable = false
 default-theme = "light"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/tomtom215/duckdb-behavioral"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/tomtom215/duckdb-behavioral/edit/main/docs/{path}"
 additional-css = ["src/custom.css"]
 additional-js = ["src/theme-toggle.js"]
 no-section-label = false
@@ -29,3 +31,4 @@ level = 1
 [output.html.search]
 enable = true
 limit-results = 20
+use-hierarchical-headings = true

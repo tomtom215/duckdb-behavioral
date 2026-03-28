@@ -9,9 +9,21 @@
 <p align="center">
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
+  <a href="https://crates.io/crates/duckdb-behavioral"><img src="https://img.shields.io/crates/v/duckdb-behavioral.svg" alt="Crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.84.1-blue.svg" alt="MSRV: 1.84.1"></a>
+  <a href="https://tomtom215.github.io/duckdb-behavioral/"><img src="https://img.shields.io/badge/docs-mdBook-blue.svg" alt="Documentation"></a>
 </p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#functions">Functions</a> &bull;
+  <a href="#examples">Examples</a> &bull;
+  <a href="#performance">Performance</a> &bull;
+  <a href="https://tomtom215.github.io/duckdb-behavioral/">Documentation</a>
+</p>
+
+---
 
 Provides `sessionize`, `retention`, `window_funnel`, `sequence_match`,
 `sequence_count`, `sequence_match_events`, and `sequence_next_node` as a loadable
@@ -30,6 +42,8 @@ behavioral analytics parity.**
 
 - [Quick Start](#quick-start)
 - [Functions](#functions)
+- [Examples](#examples)
+- [Integrations](#integrations)
 - [Performance](#performance)
 - [Community Extension](#community-extension)
 - [Quality](#quality)
@@ -51,30 +65,21 @@ LOAD behavioral;
 Or build from source:
 
 ```bash
-# Build the extension
 cargo build --release
-
-# Load in DuckDB (locally-built extensions require -unsigned)
 duckdb -unsigned -cmd "LOAD 'target/release/libbehavioral.so';"
 ```
 
-```sql
--- Assign session IDs with a 30-minute inactivity gap
-SELECT user_id, event_time,
-  sessionize(event_time, INTERVAL '30 minutes') OVER (
-    PARTITION BY user_id ORDER BY event_time
-  ) as session_id
-FROM events;
+**Verify it works** — run these one-liners after loading:
 
--- Track conversion funnel steps within a 1-hour window
-SELECT user_id,
-  window_funnel(INTERVAL '1 hour', event_time,
-    event_type = 'page_view',
-    event_type = 'add_to_cart',
-    event_type = 'purchase'
-  ) as furthest_step
-FROM events
-GROUP BY user_id;
+```sql
+-- Session IDs (should return 1)
+SELECT sessionize(TIMESTAMP '2024-01-01 10:00:00', INTERVAL '30 minutes') OVER () as session_id;
+
+-- Retention (should return [true, false])
+SELECT retention(true, false);
+
+-- Funnel progress (should return 2)
+SELECT window_funnel(INTERVAL '1 hour', TIMESTAMP '2024-01-01', true, true, false);
 ```
 
 ## Functions
@@ -92,6 +97,209 @@ GROUP BY user_id;
 All functions support **2 to 32 boolean conditions**, matching ClickHouse's limit.
 Detailed documentation, examples, and edge case behavior for each function:
 [Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)
+
+### Choosing the Right Function
+
+| I want to... | Use |
+|---|---|
+| Break events into sessions by inactivity gap | `sessionize` |
+| Check if users returned in later time periods | `retention` |
+| Measure how far users get through ordered steps | `window_funnel` |
+| Detect whether a pattern of events occurred | `sequence_match` |
+| Count how many times a pattern occurred | `sequence_count` |
+| Get timestamps of each matched pattern step | `sequence_match_events` |
+| Find what happened immediately after/before a pattern | `sequence_next_node` |
+
+## Examples
+
+### Conversion Funnel
+
+Track how far users progress through a purchase flow within 1 hour:
+
+```sql
+SELECT user_id,
+  window_funnel(INTERVAL '1 hour', event_time,
+    event_type = 'page_view',
+    event_type = 'add_to_cart',
+    event_type = 'checkout',
+    event_type = 'purchase'
+  ) as furthest_step
+FROM events
+GROUP BY user_id;
+```
+
+### Session Analysis
+
+Assign session IDs with a 30-minute inactivity gap, then compute metrics:
+
+```sql
+WITH sessionized AS (
+    SELECT user_id, event_time,
+      sessionize(event_time, INTERVAL '30 minutes') OVER (
+        PARTITION BY user_id ORDER BY event_time
+      ) as session_id
+    FROM events
+)
+SELECT user_id, session_id,
+  COUNT(*) as page_views,
+  MIN(event_time) as session_start,
+  MAX(event_time) as session_end
+FROM sessionized
+GROUP BY user_id, session_id;
+```
+
+### Weekly Retention
+
+Measure week-over-week retention for signup cohorts:
+
+```sql
+SELECT cohort_week,
+  COUNT(*) as cohort_size,
+  SUM(CASE WHEN r[1] THEN 1 ELSE 0 END) as week_0,
+  SUM(CASE WHEN r[2] THEN 1 ELSE 0 END) as week_1,
+  SUM(CASE WHEN r[3] THEN 1 ELSE 0 END) as week_2
+FROM (
+  SELECT user_id, cohort_week,
+    retention(
+      activity_date >= cohort_week AND activity_date < cohort_week + INTERVAL '7 days',
+      activity_date >= cohort_week + INTERVAL '7 days' AND activity_date < cohort_week + INTERVAL '14 days',
+      activity_date >= cohort_week + INTERVAL '14 days' AND activity_date < cohort_week + INTERVAL '21 days'
+    ) as r
+  FROM activity GROUP BY user_id, cohort_week
+)
+GROUP BY cohort_week ORDER BY cohort_week;
+```
+
+### Pattern Detection with Time Constraints
+
+Find users who viewed then purchased within 1 hour:
+
+```sql
+SELECT user_id,
+  sequence_match('(?1).*(?t<=3600)(?2)', event_time,
+    event_type = 'page_view',
+    event_type = 'purchase'
+  ) as converted_within_hour
+FROM events GROUP BY user_id;
+```
+
+### Funnel Drop-off Report
+
+Aggregate funnel results into a conversion report:
+
+```sql
+WITH funnels AS (
+  SELECT user_id,
+    window_funnel(INTERVAL '1 hour', event_time,
+      event_type = 'page_view', event_type = 'add_to_cart',
+      event_type = 'checkout', event_type = 'purchase'
+    ) as step
+  FROM events GROUP BY user_id
+)
+SELECT step as reached_step,
+  COUNT(*) as users,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) as pct
+FROM funnels GROUP BY step ORDER BY step;
+```
+
+### User Flow Analysis
+
+Discover what page users visit after Home → Product:
+
+```sql
+SELECT
+  sequence_next_node('forward', 'first_match', event_time, page,
+    page = 'Home', page = 'Home', page = 'Product'
+  ) as next_page,
+  COUNT(*) as user_count
+FROM events GROUP BY ALL ORDER BY user_count DESC;
+```
+
+### Pattern Frequency
+
+Count how many times users repeat a view → cart cycle:
+
+```sql
+SELECT user_id,
+  sequence_count('(?1).*(?2)', event_time,
+    event_type = 'page_view',
+    event_type = 'add_to_cart'
+  ) as view_cart_cycles
+FROM events GROUP BY user_id ORDER BY view_cart_cycles DESC;
+```
+
+### Matched Event Timestamps
+
+Get the exact timestamps when each funnel step was satisfied:
+
+```sql
+SELECT user_id,
+  sequence_match_events('(?1).*(?2).*(?3)', event_time,
+    event_type = 'page_view',
+    event_type = 'add_to_cart',
+    event_type = 'purchase'
+  ) as step_timestamps
+FROM events GROUP BY user_id;
+```
+
+For 5 complete real-world examples with sample data, see
+[Use Cases](https://tomtom215.github.io/duckdb-behavioral/use-cases.html).
+For a comprehensive recipe collection, see
+[SQL Cookbook](https://tomtom215.github.io/duckdb-behavioral/cookbook.html).
+
+## Integrations
+
+### Python
+
+```python
+import duckdb
+
+conn = duckdb.connect()
+conn.execute("INSTALL behavioral FROM community")
+conn.execute("LOAD behavioral")
+
+df = conn.execute("""
+    SELECT user_id,
+      window_funnel(INTERVAL '1 hour', event_time,
+        event_type = 'view', event_type = 'cart', event_type = 'purchase'
+      ) as steps
+    FROM events GROUP BY user_id
+""").fetchdf()
+```
+
+### Node.js
+
+```javascript
+const duckdb = require('duckdb');
+const db = new duckdb.Database(':memory:');
+
+db.run("INSTALL behavioral FROM community");
+db.run("LOAD behavioral");
+```
+
+### dbt
+
+```yaml
+# profiles.yml
+my_project:
+  outputs:
+    dev:
+      type: duckdb
+      extensions:
+        - name: behavioral
+          repo: community
+```
+
+### Parquet / CSV / JSON
+
+```sql
+-- Query any file format directly
+SELECT user_id,
+  window_funnel(INTERVAL '1 hour', event_time,
+    event_type = 'view', event_type = 'purchase')
+FROM read_parquet('events/*.parquet')
+GROUP BY user_id;
+```
 
 ## Performance
 
@@ -220,10 +428,14 @@ cargo build --release
 ## Development
 
 ```bash
-cargo test                  # Unit tests + doc-tests
+cargo test                  # Unit tests + doc-tests (453 + 1)
 cargo clippy --all-targets  # Zero warnings required
-cargo fmt                   # Format
+cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks
+cargo doc --no-deps         # Build API documentation
+
+# Run all quality checks at once
+./scripts/check.sh
 
 # Build extension via community Makefile
 git submodule update --init
@@ -239,6 +451,8 @@ for the full SemVer rules applied to SQL function signatures.
 - **[Getting Started](https://tomtom215.github.io/duckdb-behavioral/getting-started.html)** — installation, loading, troubleshooting
 - **[Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)** — detailed docs for all 7 functions
 - **[Use Cases](https://tomtom215.github.io/duckdb-behavioral/use-cases.html)** — 5 complete real-world examples with sample data
+- **[SQL Cookbook](https://tomtom215.github.io/duckdb-behavioral/cookbook.html)** — practical recipes for common analytics patterns
+- **[Quick Reference](https://tomtom215.github.io/duckdb-behavioral/quick-reference.html)** — one-page cheat sheet for all functions and patterns
 - **[Engineering Overview](https://tomtom215.github.io/duckdb-behavioral/engineering.html)** — architecture, testing philosophy, design trade-offs
 - **[Performance](https://tomtom215.github.io/duckdb-behavioral/internals/performance.html)** — benchmarks, optimization history, methodology
 - **[ClickHouse Compatibility](https://tomtom215.github.io/duckdb-behavioral/internals/clickhouse-compatibility.html)** — syntax mapping, semantic parity
