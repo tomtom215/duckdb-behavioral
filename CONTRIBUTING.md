@@ -24,7 +24,7 @@ cargo fmt -- --check           # Format check
 
 - Rust 1.84.1+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.5.1 (for E2E testing)
+- DuckDB CLI v1.5.2 (for E2E testing)
 
 ## Key Principles
 

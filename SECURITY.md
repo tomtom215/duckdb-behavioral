@@ -31,8 +31,8 @@ safe Rust. Every `unsafe` block has a `// SAFETY:` documentation comment.
 
 ### Dependency Audit
 
-The extension has exactly **two** runtime dependencies (`quack-rs = "0.7.1"`
-and `libduckdb-sys = "=1.10501.0"`, both pinned exactly). All dependencies are
+The extension has exactly **two** runtime dependencies (`quack-rs = "0.12.0"`
+and `libduckdb-sys = "=1.10502.0"`, both pinned exactly). All dependencies are
 audited via `cargo-deny` in CI for known advisories and license compliance.
 
 ### Build Integrity

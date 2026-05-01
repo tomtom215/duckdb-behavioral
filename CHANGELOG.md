@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **DuckDB v1.5.2 support** — upgraded `libduckdb-sys` from `1.10501.0` to
+  `1.10502.0` and `duckdb` (dev) from `1.10501.0` to `1.10502.0`
+- **quack-rs v0.12.0** — upgraded from v0.7.1. Public APIs used by this crate
+  (`AggregateFunctionSetBuilder`, `FfiState`, `VectorReader`/`VectorWriter`,
+  `ListVector`, `LogicalType::list`, `AggregateTestHarness`,
+  `Connection`/`Registrar` trait, `entry_point_v2!`) are unchanged. New
+  capabilities introduced upstream during this range — `StructReader`/
+  `StructWriter`, `ChunkWriter`, `MapVector`, `Value` RAII wrapper,
+  `scalar_callback!` / `table_scan_callback!` panic-safe macros, expanded
+  `LogicalType` introspection, `tls`/`warning`/`secrets` modules — are
+  available but not consumed: the extension's aggregate-only surface area
+  doesn't exercise them
+- **CI dependency updates** — `EmbarkStudios/cargo-deny-action` v2.0.15→v2.0.17,
+  `taiki-e/install-action` →v2.75.27, `actions/deploy-pages` v4.0.5→v5.0.0,
+  `actions/upload-pages-artifact` v4.0.0→v5.0.0,
+  `actions/upload-artifact` v7.0.0→v7.0.1, `github/codeql-action` v4.33.0→v4.35.3,
+  `codecov/codecov-action` v5.5.2→v6.0.0,
+  `softprops/action-gh-release` v2.6.1→v3.0.0
+- E2E tests now run against DuckDB v1.5.2 CLI (previously v1.5.1)
+
 ## [0.4.0] - 2026-03-28
 
 ### Changed

@@ -199,11 +199,11 @@ unsafe extern "C" fn state_finalize(
         let mut writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
-            let idx = (offset as usize + i) as idx_t;
+            let idx = offset as usize + i;
 
             let Some(state) = FfiState::<SequenceNextNodeState>::with_state_mut(*source.add(i))
             else {
-                writer.set_null(idx as usize);
+                writer.set_null(idx);
                 continue;
             };
 
@@ -213,10 +213,10 @@ unsafe extern "C" fn state_finalize(
                     // storage formats via duckdb_vector_assign_string_element_len,
                     // which accepts a length parameter — no null terminator or
                     // CString conversion needed.
-                    writer.write_varchar(idx as usize, &value);
+                    writer.write_varchar(idx, &value);
                 }
                 None => {
-                    writer.set_null(idx as usize);
+                    writer.set_null(idx);
                 }
             }
         }
