@@ -384,7 +384,7 @@ jobs:
           cp description.yml "submission/extensions/${{ env.EXTENSION_NAME }}/description.yml"
 
       - name: Upload submission artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: community-extension-submission
           path: submission/
@@ -459,7 +459,7 @@ jobs:
           ### Testing
 
           - 453 unit tests + 1 doc-test (29 proptest)
-          - 11 E2E workflow test steps per platform against real DuckDB v1.5.1
+          - 11 E2E workflow test steps per platform against real DuckDB v1.5.2
           - 7 SQL integration test files (59 queries) in test/sql/
           - Criterion.rs benchmarks up to 1 billion elements
 

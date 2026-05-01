@@ -11,7 +11,7 @@
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
   <a href="https://crates.io/crates/duckdb-behavioral"><img src="https://img.shields.io/crates/v/duckdb-behavioral.svg" alt="Crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.84.1-blue.svg" alt="MSRV: 1.84.1"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.86-blue.svg" alt="MSRV: 1.86"></a>
   <a href="https://tomtom215.github.io/duckdb-behavioral/"><img src="https://img.shields.io/badge/docs-mdBook-blue.svg" alt="Documentation"></a>
 </p>
 
@@ -414,7 +414,7 @@ E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
 
 ## Building
 
-**Prerequisites**: Rust 1.84.1+ (MSRV), a C compiler (for DuckDB sys bindings)
+**Prerequisites**: Rust 1.86+ (MSRV), a C compiler (for DuckDB sys bindings)
 
 ```bash
 # Build the extension (release mode)
@@ -460,7 +460,7 @@ for the full SemVer rules applied to SQL function signatures.
 
 ## Requirements
 
-- Rust 1.84.1+ (MSRV)
+- Rust 1.86+ (MSRV)
 - DuckDB 1.5.1 (pinned dependency)
 - Python 3.x (for extension metadata tooling)
 

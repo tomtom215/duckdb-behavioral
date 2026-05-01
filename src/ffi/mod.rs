@@ -5,7 +5,7 @@
 //!
 //! # Architecture
 //!
-//! All modules except [`sessionize`] use the `quack-rs` v0.7.1 SDK for
+//! All modules except [`sessionize`] use the `quack-rs` v0.12 SDK for
 //! registration, state management, and vector I/O:
 //!
 //! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function

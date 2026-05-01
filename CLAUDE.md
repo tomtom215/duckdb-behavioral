@@ -59,7 +59,7 @@ src/
    submodules handle DuckDB C API registration only.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
-   provide high-level aggregate function registration. We use `quack-rs` v0.7.1
+   provide high-level aggregate function registration. We use `quack-rs` v0.12.0
    ([crates.io](https://crates.io/crates/quack-rs)) which wraps the raw C API with safe builders
    (`AggregateFunctionSetBuilder`), state management (`FfiState<T>`), vector I/O
    (`VectorReader`/`VectorWriter` including `write_varchar`), complex type helpers
@@ -133,7 +133,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.1 -ev v0.4.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.2 -ev v0.5.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -154,7 +154,7 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs` v0.7.1 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
+- `quack-rs` v0.12.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
   for DuckDB loadable extensions. Provides `entry_point_v2!` macro,
   `Connection`/`Registrar` trait for version-agnostic registration,
   `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
@@ -162,17 +162,17 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
   and `AggregateTestHarness` for combine testing. Re-exports `libduckdb-sys`
   with `loadable-extension` feature.
-- `libduckdb-sys = "=1.10501.0"` with `loadable-extension` feature — Kept explicitly
+- `libduckdb-sys = "=1.10502.0"` with `loadable-extension` feature — Kept explicitly
   for `sessionize` FFI (window function not supported by quack-rs). Re-exported
   by quack-rs but pinned explicitly for the raw window function callbacks.
-  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.1 →
-  crate v1.10501.x).
+  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.2 →
+  crate v1.10502.x).
 
 **Dev-only** (unit tests and benchmarks):
-- `duckdb = "=1.10501.0"` with `bundled` feature — Used in `#[cfg(test)]` modules
+- `duckdb = "=1.10502.0"` with `bundled` feature — Used in `#[cfg(test)]` modules
   for `Connection::open_in_memory()`. Not linked into the release extension.
-  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.1 →
-  crate v1.10501.x).
+  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.2 →
+  crate v1.10502.x).
 - `criterion = "0.8"` with `html_reports` feature — Statistical benchmarking
 - `proptest = "1"` — Property-based testing
 
@@ -198,7 +198,7 @@ Every change MUST meet these requirements:
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 5 aggregate functions
 - **1 doc-test** for the pattern parser
-- **E2E tests** against real DuckDB v1.5.1 CLI: 11 workflow test steps
+- **E2E tests** against real DuckDB v1.5.2 CLI: 11 workflow test steps
   (2 platforms) plus 7 SQL integration test files with 59 queries covering
   all 7 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
   no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
@@ -206,8 +206,11 @@ Every change MUST meet these requirements:
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
   cardinality benchmarks, and throughput reporting up to 1B elements
-- **Mutation testing**: 88.4% kill rate via cargo-mutants (130 caught / 17 missed)
-- **MSRV 1.84.1** verified in CI
+- **Mutation testing**: 88.4% kill rate baseline via cargo-mutants
+  (130 caught / 17 missed) measured on the v0.4.x codebase. cargo-mutants
+  27.0.0 now identifies ~465 candidate mutations on the v0.5.0 source —
+  a re-measurement is tracked as a separate session
+- **MSRV 1.86** verified in CI (raised from 1.84.1; required by `libduckdb-sys`/`duckdb` 1.85.1 and `criterion` 0.8.2 1.86)
 - All public items have documentation
 - Release profile: LTO, single codegen unit, abort on panic, stripped symbols
 
@@ -353,11 +356,18 @@ GitHub Actions workflows in `.github/workflows/`:
 The entry point uses `quack-rs` which depends on `libduckdb-sys`. When updating:
 
 1. Update `libduckdb-sys` version in `[dependencies]` and `duckdb` in `[dev-dependencies]`
-2. Check if `duckdb_rs_extension_api_init` minimum version string needs updating
-   (currently `"v1.2.0"` -- find the new C API version from `duckdb-loadable-macros`)
-3. Update `append_extension_metadata.py -dv` to match the new C API version
-4. Run full unit test suite (`cargo test`)
-5. **MANDATORY**: E2E test -- build release, load in DuckDB CLI, verify all 7 functions
+2. Update `TARGET_DUCKDB_VERSION` and `DUCKDB_TEST_VERSION` in `Makefile`
+3. Update `DUCKDB_VERSION` in `.github/workflows/e2e.yml`
+4. Update `DUCKDB_RELEASE_VERSION` in `scripts/setup.sh`
+5. Update DuckDB-version references in docs (`CLAUDE.md`, `README.md`,
+   `docs/src/**/*.md`, `CONTRIBUTING.md`, `SECURITY.md`)
+6. Check whether the new `libduckdb-sys`/`duckdb`/`criterion` MSRVs raise
+   the project MSRV; if so, update `rust-version` in `Cargo.toml`,
+   `MSRV (X.Y)` in `.github/workflows/ci.yml`, and badges/text in docs
+7. Run full unit test suite (`cargo test`)
+8. **MANDATORY**: E2E test -- build release, append metadata with the new
+   `-dv vX.Y.Z` (DuckDB release version, exact-match against the loading
+   CLI), and verify all 7 functions in DuckDB CLI
 
 ### Performance optimization session
 
@@ -392,7 +402,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
 
 - **Extension metadata version uses DuckDB release version**: The
   `append_extension_metadata.py -dv` flag takes the DuckDB release version
-  (e.g., `v1.5.1`). The community extension Makefile sets this automatically
+  (e.g., `v1.5.2`). The community extension Makefile sets this automatically
   from `TARGET_DUCKDB_VERSION`. The ABI type is `C_STRUCT_UNSTABLE`.
 
 - **`sessionize` cannot use quack-rs**: DuckDB's public C Extension API does not

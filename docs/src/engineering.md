@@ -311,7 +311,7 @@ these analyses can run as interactive queries rather than batch jobs.
 
 DuckDB's Rust crate does not provide high-level aggregate function
 registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
-SDK (v0.7.1) which wraps the raw C API with safe builders
+SDK (v0.12.0) which wraps the raw C API with safe builders
 (including `returns_logical(LogicalType)` for `LIST(T)` return types),
 state management, vector I/O, and LIST output helpers. All 6 aggregate
 functions use the builder for registration. The `sessionize` function
@@ -412,7 +412,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Mutation kill rate | 88.4% (130/147) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
 | Unsafe block count | Confined to `src/ffi/` (6 files) |
-| MSRV | Rust 1.84.1 |
+| MSRV | Rust 1.86 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements |
 | CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
@@ -425,7 +425,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Language | Rust (stable, MSRV 1.84.1) | Memory safety, zero-cost abstractions, `unsafe` confinement |
+| Language | Rust (stable, MSRV 1.86) | Memory safety, zero-cost abstractions, `unsafe` confinement |
 | Database | DuckDB 1.5.1 | Analytical SQL engine, segment tree windowing |
 | FFI | libduckdb-sys (C API) | Raw aggregate function registration |
 | Benchmarking | Criterion.rs | Statistical benchmarking with confidence intervals |
