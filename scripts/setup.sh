@@ -29,13 +29,14 @@ set -euo pipefail
 # Configuration
 # ============================================================
 
-# C API version (NOT DuckDB release version). This must match what DuckDB
-# reports in its extension loading error messages. Found in
-# duckdb-loadable-macros source: DEFAULT_DUCKDB_VERSION = "v1.2.0"
-readonly C_API_VERSION="v1.2.0"
+# DuckDB release version stamped into extension metadata. Must match the
+# version of the DuckDB CLI loading the extension (DuckDB compares this
+# field exactly and refuses to load on a mismatch). Mirrors the Makefile's
+# TARGET_DUCKDB_VERSION used by the official `make release` build.
+readonly DUCKDB_RELEASE_VERSION="v1.5.2"
 
 # Extension version from Cargo.toml
-readonly EXT_VERSION="v0.1.0"
+readonly EXT_VERSION="v0.5.0"
 
 # Extension name
 readonly EXT_NAME="behavioral"
@@ -106,7 +107,7 @@ find_duckdb() {
 }
 
 install_duckdb() {
-    log_info "DuckDB CLI not found. Installing v1.5.0..."
+    log_info "DuckDB CLI not found. Installing v1.5.2..."
 
     local os
     local arch
@@ -115,13 +116,13 @@ install_duckdb() {
 
     local url=""
     if [[ "${os}" == "linux" && "${arch}" == "x86_64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-linux-amd64.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-linux-amd64.zip"
     elif [[ "${os}" == "linux" && "${arch}" == "aarch64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-linux-aarch64.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-linux-aarch64.zip"
     elif [[ "${os}" == "darwin" && "${arch}" == "x86_64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-osx-universal.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-osx-universal.zip"
     elif [[ "${os}" == "darwin" && "${arch}" == "arm64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.0/duckdb_cli-osx-universal.zip"
+        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-osx-universal.zip"
     else
         log_err "Unsupported platform: ${os}/${arch}"
         return 1
@@ -250,7 +251,7 @@ build_extension() {
     log_ok "Built: ${RELEASE_LIB}"
 
     # Copy and append metadata
-    log_info "Appending extension metadata (C API ${C_API_VERSION})..."
+    log_info "Appending extension metadata (DuckDB ${DUCKDB_RELEASE_VERSION})..."
 
     local platform
     platform="$(detect_platform)"
@@ -261,9 +262,9 @@ build_extension() {
         -l "${EXT_FILE}" \
         -n "${EXT_NAME}" \
         -p "${platform}" \
-        -dv "${C_API_VERSION}" \
+        -dv "${DUCKDB_RELEASE_VERSION}" \
         -ev "${EXT_VERSION}" \
-        --abi-type C_STRUCT \
+        --abi-type C_STRUCT_UNSTABLE \
         -o "${EXT_FILE}" 2>&1; then
         log_err "Metadata append failed"
         return 1

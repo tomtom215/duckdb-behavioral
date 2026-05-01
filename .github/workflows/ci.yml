@@ -243,15 +243,15 @@ jobs:
 
   # ── MSRV verification ────────────────────────────────────────────────
   msrv:
-    name: MSRV (1.84.1)
+    name: MSRV (1.86)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: dtolnay/rust-toolchain@1.84.1
+      - uses: dtolnay/rust-toolchain@1.86
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          key: msrv-1.84.1
+          key: msrv-1.86
       - name: Check MSRV compilation
         id: msrv-check
         run: cargo check --all-targets
@@ -259,9 +259,9 @@ jobs:
         if: always()
         run: |
           if [ "${{ steps.msrv-check.outcome }}" = "success" ]; then
-            echo "### ✅ MSRV 1.84.1 compilation verified" >> "$GITHUB_STEP_SUMMARY"
+            echo "### ✅ MSRV 1.86 compilation verified" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### ❌ MSRV 1.84.1 compilation failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "### ❌ MSRV 1.86 compilation failed" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # ── Benchmark compilation ────────────────────────────────────────────

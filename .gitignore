@@ -42,6 +42,7 @@ target/criterion/
 
 # Mutation testing output
 mutants.out/
+mutants.out.old/
 
 # mdBook build output
 docs/book/

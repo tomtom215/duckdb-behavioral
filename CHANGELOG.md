@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-01
+
 ### Changed
 
 - **DuckDB v1.5.2 support** — upgraded `libduckdb-sys` from `1.10501.0` to
@@ -21,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LogicalType` introspection, `tls`/`warning`/`secrets` modules — are
   available but not consumed: the extension's aggregate-only surface area
   doesn't exercise them
+- **MSRV bumped from 1.84.1 to 1.86** — required by the new `libduckdb-sys`
+  / `duckdb` (1.85.1) and `criterion` 0.8.2 (1.86) crate metadata. CI's
+  `cargo check --all-targets` MSRV gate enforces 1.86
+- **`extension-ci-tools` submodule** updated to latest upstream
 - **CI dependency updates** — `EmbarkStudios/cargo-deny-action` v2.0.15→v2.0.17,
   `taiki-e/install-action` →v2.75.27, `actions/deploy-pages` v4.0.5→v5.0.0,
   `actions/upload-pages-artifact` v4.0.0→v5.0.0,
@@ -28,6 +34,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `codecov/codecov-action` v5.5.2→v6.0.0,
   `softprops/action-gh-release` v2.6.1→v3.0.0
 - E2E tests now run against DuckDB v1.5.2 CLI (previously v1.5.1)
+- **Transitive crate refresh** via `cargo update` — notably `rand` 0.8.5→0.8.6,
+  `rustls-webpki` 0.103.10→0.103.13. `cargo deny check` reports clean
+  advisories, bans, licenses, and sources
+
+### Fixed
+
+- **`scripts/setup.sh` was using a wrong `-dv` value for DuckDB metadata**
+  — the `C_API_VERSION="v1.2.0"` constant produced an extension that
+  DuckDB v1.5.x rejects with "file was built specifically for DuckDB
+  version 'v1.2.0'". Replaced with `DUCKDB_RELEASE_VERSION="v1.5.2"`
+  matching the Makefile `TARGET_DUCKDB_VERSION` convention, and aligned
+  `--abi-type` to `C_STRUCT_UNSTABLE` (matches `make release`)
+- **Stale `EXT_VERSION` in `scripts/setup.sh`** — was pinned at `v0.1.0`,
+  now tracks the current release version (`v0.5.0`)
+- **Stale DuckDB CLI install URL in `scripts/setup.sh`** — was pinned at
+  `v1.5.0`, now installs `v1.5.2` to match `TARGET_DUCKDB_VERSION`
+- **Dead `as idx_t` round-trip cast** in `src/ffi/sequence_next_node.rs`
+  finalize callback (the `idx` was cast to `idx_t` then immediately back
+  to `usize` four times)
+- **`deny.toml` license allowances** that no longer matched any picked
+  license in the dep graph (`BSD-2-Clause`, `CC0-1.0`); `cargo deny check`
+  now reports zero `license-not-encountered` warnings
+
+### Documentation
+
+Audited and updated all version/MSRV references across `README.md`,
+`CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, all of `docs/src/**.md`,
+all `.github/workflows/*.yml`, `Makefile`, `description.yml`, and the
+issue templates so every cross-reference is consistent with the
+`v0.5.0` / DuckDB `v1.5.2` / quack-rs `v0.12.0` / MSRV `1.86` baseline.
+
+### Subsumes
+
+This release closes the following dependabot pull requests, which were
+all bumping deps to versions at or below those landed here: #58, #61,
+#62, #64, #65, #66, #67.
 
 ## [0.4.0] - 2026-03-28
 
@@ -196,7 +238,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.1.0...v0.2.0

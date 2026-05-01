@@ -133,7 +133,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.2 -ev v0.4.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.2 -ev v0.5.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -206,8 +206,11 @@ Every change MUST meet these requirements:
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
   cardinality benchmarks, and throughput reporting up to 1B elements
-- **Mutation testing**: 88.4% kill rate via cargo-mutants (130 caught / 17 missed)
-- **MSRV 1.84.1** verified in CI
+- **Mutation testing**: 88.4% kill rate baseline via cargo-mutants
+  (130 caught / 17 missed) measured on the v0.4.x codebase. cargo-mutants
+  27.0.0 now identifies ~465 candidate mutations on the v0.5.0 source —
+  a re-measurement is tracked as a separate session
+- **MSRV 1.86** verified in CI (raised from 1.84.1; required by `libduckdb-sys`/`duckdb` 1.85.1 and `criterion` 0.8.2 1.86)
 - All public items have documentation
 - Release profile: LTO, single codegen unit, abort on panic, stripped symbols
 
@@ -353,11 +356,18 @@ GitHub Actions workflows in `.github/workflows/`:
 The entry point uses `quack-rs` which depends on `libduckdb-sys`. When updating:
 
 1. Update `libduckdb-sys` version in `[dependencies]` and `duckdb` in `[dev-dependencies]`
-2. Check if `duckdb_rs_extension_api_init` minimum version string needs updating
-   (currently `"v1.2.0"` -- find the new C API version from `duckdb-loadable-macros`)
-3. Update `append_extension_metadata.py -dv` to match the new C API version
-4. Run full unit test suite (`cargo test`)
-5. **MANDATORY**: E2E test -- build release, load in DuckDB CLI, verify all 7 functions
+2. Update `TARGET_DUCKDB_VERSION` and `DUCKDB_TEST_VERSION` in `Makefile`
+3. Update `DUCKDB_VERSION` in `.github/workflows/e2e.yml`
+4. Update `DUCKDB_RELEASE_VERSION` in `scripts/setup.sh`
+5. Update DuckDB-version references in docs (`CLAUDE.md`, `README.md`,
+   `docs/src/**/*.md`, `CONTRIBUTING.md`, `SECURITY.md`)
+6. Check whether the new `libduckdb-sys`/`duckdb`/`criterion` MSRVs raise
+   the project MSRV; if so, update `rust-version` in `Cargo.toml`,
+   `MSRV (X.Y)` in `.github/workflows/ci.yml`, and badges/text in docs
+7. Run full unit test suite (`cargo test`)
+8. **MANDATORY**: E2E test -- build release, append metadata with the new
+   `-dv vX.Y.Z` (DuckDB release version, exact-match against the loading
+   CLI), and verify all 7 functions in DuckDB CLI
 
 ### Performance optimization session
 

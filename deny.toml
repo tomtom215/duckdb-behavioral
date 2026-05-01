@@ -10,12 +10,15 @@ all-features = false
 ignore = []
 
 [licenses]
+# Allow list kept tight — only licenses cargo-deny actually picks for some
+# crate in the dep graph. (cargo-deny picks the first allowed alternate of
+# multi-licensed crates, e.g. `BSD-2-Clause OR Apache-2.0 OR MIT` resolves
+# to MIT here, which is why BSD-2-Clause is not in the list.) Verified with
+# `cargo deny check` — zero "license-not-encountered" warnings.
 allow = [
     "MIT",
     "Apache-2.0",
-    "BSD-2-Clause",
     "BSD-3-Clause",
-    "CC0-1.0",
     "CDLA-Permissive-2.0",
     "ISC",
     "Unicode-3.0",

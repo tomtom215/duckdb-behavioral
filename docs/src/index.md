@@ -7,7 +7,7 @@
 <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
 <a href="https://github.com/tomtom215/duckdb-behavioral/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-<a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.84.1-blue.svg" alt="MSRV: 1.84.1"></a>
+<a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.86-blue.svg" alt="MSRV: 1.86"></a>
 </div>
 
 # duckdb-behavioral
@@ -275,7 +275,7 @@ For a comprehensive technical overview, see the
 ## Requirements
 
 - **DuckDB 1.5.1** (C API version v1.2.0)
-- **Rust 1.84.1+** (MSRV) for building from source
+- **Rust 1.86+** (MSRV) for building from source
 - A C compiler for DuckDB system bindings
 
 ## Source Code

@@ -22,7 +22,7 @@ cargo fmt -- --check           # Format check
 
 ## Development Requirements
 
-- Rust 1.84.1+ (the project's MSRV)
+- Rust 1.86+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
 - DuckDB CLI v1.5.2 (for E2E testing)
 
