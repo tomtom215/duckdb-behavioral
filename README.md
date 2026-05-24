@@ -11,7 +11,7 @@
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
   <a href="https://crates.io/crates/duckdb-behavioral"><img src="https://img.shields.io/crates/v/duckdb-behavioral.svg" alt="Crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.86-blue.svg" alt="MSRV: 1.86"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.87-blue.svg" alt="MSRV: 1.87"></a>
   <a href="https://tomtom215.github.io/duckdb-behavioral/"><img src="https://img.shields.io/badge/docs-mdBook-blue.svg" alt="Documentation"></a>
 </p>
 
@@ -389,7 +389,7 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 | Property-based tests | 29 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
 | Clippy warnings | 0 (pedantic + nursery + cargo lint groups) |
-| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
+| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Benchmark files | 7 (Criterion.rs, up to 1 billion elements) |
 | Release platforms | 4 (Linux x86_64/ARM64, macOS x86_64/ARM64) |
 
@@ -414,7 +414,7 @@ E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
 
 ## Building
 
-**Prerequisites**: Rust 1.86+ (MSRV), a C compiler (for DuckDB sys bindings)
+**Prerequisites**: Rust 1.87+ (MSRV), a C compiler (for DuckDB sys bindings)
 
 ```bash
 # Build the extension (release mode)
@@ -460,8 +460,8 @@ for the full SemVer rules applied to SQL function signatures.
 
 ## Requirements
 
-- Rust 1.86+ (MSRV)
-- DuckDB 1.5.1 (pinned dependency)
+- Rust 1.87+ (MSRV)
+- DuckDB 1.5.3 (pinned dependency)
 - Python 3.x (for extension metadata tooling)
 
 ## License

@@ -34,8 +34,8 @@ The extension has exactly **two** runtime dependencies:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `quack-rs` | `=0.12.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
-| `libduckdb-sys` | `=1.10502.0` | DuckDB C API bindings (re-exported by quack-rs; kept explicitly for `sessionize` window function FFI) |
+| `quack-rs` | `=0.13.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
+| `libduckdb-sys` | `=1.10503.1` | DuckDB C API bindings (re-exported by quack-rs; kept explicitly for `sessionize` window function FFI) |
 
 Both versions are **pinned exactly** to prevent silent dependency updates.
 `quack-rs` provides `entry_point_v2!`, `Connection`/`Registrar` trait,
@@ -54,7 +54,6 @@ release extension binary:
 | `duckdb` | In-memory connection for unit tests |
 | `criterion` | Benchmarking framework |
 | `proptest` | Property-based testing |
-| `rand` | Random data generation for benchmarks |
 
 ### License Compliance
 
@@ -89,7 +88,7 @@ to pin all transitive dependency versions.
 Release artifacts include:
 
 1. **SHA256 checksums** (`SHA256SUMS.txt`) for every release artifact
-2. **GitHub artifact attestations** via `actions/attest-build-provenance@v3`,
+2. **GitHub artifact attestations** via `actions/attest-build-provenance@v4`,
    which provides a cryptographic link between the artifact and the GitHub
    Actions build that produced it
 3. **Immutable build logs** in GitHub Actions with full command output
@@ -101,7 +100,7 @@ Release artifacts include:
 sha256sum -c SHA256SUMS.txt
 
 # Verify GitHub attestation (requires gh CLI)
-gh attestation verify behavioral-v0.2.0-linux_amd64.tar.gz \
+gh attestation verify behavioral-v0.6.0-linux_amd64.tar.gz \
   --repo tomtom215/duckdb-behavioral
 ```
 

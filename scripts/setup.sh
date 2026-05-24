@@ -33,10 +33,10 @@ set -euo pipefail
 # version of the DuckDB CLI loading the extension (DuckDB compares this
 # field exactly and refuses to load on a mismatch). Mirrors the Makefile's
 # TARGET_DUCKDB_VERSION used by the official `make release` build.
-readonly DUCKDB_RELEASE_VERSION="v1.5.2"
+readonly DUCKDB_RELEASE_VERSION="v1.5.3"
 
 # Extension version from Cargo.toml
-readonly EXT_VERSION="v0.5.0"
+readonly EXT_VERSION="v0.6.0"
 
 # Extension name
 readonly EXT_NAME="behavioral"
@@ -107,22 +107,23 @@ find_duckdb() {
 }
 
 install_duckdb() {
-    log_info "DuckDB CLI not found. Installing v1.5.2..."
+    log_info "DuckDB CLI not found. Installing ${DUCKDB_RELEASE_VERSION}..."
 
     local os
     local arch
     os="$(uname -s | tr '[:upper:]' '[:lower:]')"
     arch="$(uname -m)"
 
+    local base="https://github.com/duckdb/duckdb/releases/download/${DUCKDB_RELEASE_VERSION}"
     local url=""
     if [[ "${os}" == "linux" && "${arch}" == "x86_64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-linux-amd64.zip"
+        url="${base}/duckdb_cli-linux-amd64.zip"
     elif [[ "${os}" == "linux" && "${arch}" == "aarch64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-linux-aarch64.zip"
+        url="${base}/duckdb_cli-linux-aarch64.zip"
     elif [[ "${os}" == "darwin" && "${arch}" == "x86_64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-osx-universal.zip"
+        url="${base}/duckdb_cli-osx-universal.zip"
     elif [[ "${os}" == "darwin" && "${arch}" == "arm64" ]]; then
-        url="https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-osx-universal.zip"
+        url="${base}/duckdb_cli-osx-universal.zip"
     else
         log_err "Unsupported platform: ${os}/${arch}"
         return 1
