@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-24
+
+### Changed
+
+- **DuckDB v1.5.3 support** — upgraded `libduckdb-sys` from `1.10502.0` to
+  `1.10503.1` and `duckdb` (dev) from `1.10502.0` to `1.10503.1`. Restores
+  community-extension compatibility with the current DuckDB release line (the
+  registry had de-listed the extension for targeting an older version)
+- **quack-rs v0.13.0** — upgraded from v0.12.0. The public APIs used by this
+  crate (`AggregateFunctionSetBuilder`, `FfiState`, `VectorReader`/`VectorWriter`,
+  `ListVector`, `LogicalType::list`, `AggregateTestHarness`,
+  `Connection`/`Registrar` trait, `entry_point_v2!`) are unchanged: the crate
+  compiles against the new SDK with **zero source changes**. New upstream
+  capabilities in this range — the `error_data`, `expression`, `file_system`,
+  `appender`, `selection_vector`, and `instance_cache` modules, plus
+  `TypeId::Variant` / `TypeId::Geometry` behind the `duckdb-1-5-3` feature —
+  are available but not consumed: the extension's aggregate-only surface area
+  doesn't exercise them
+- **MSRV bumped from 1.86 to 1.87** — quack-rs v0.13.0 corrected its declared
+  MSRV to 1.87.0 to match `libduckdb-sys`. CI's `cargo check --all-targets`
+  MSRV gate now pins 1.87
+- E2E tests now run against DuckDB v1.5.3 CLI (previously v1.5.2)
+
+### Fixed
+
+- **Version drift in `scripts/setup.sh`** — the DuckDB CLI download URLs
+  hardcoded `v1.5.2` in four places instead of deriving from the
+  `DUCKDB_RELEASE_VERSION` constant. Refactored to build every URL from the
+  single constant, removing a recurring source of stale references
+
+### Documentation
+
+Audited and updated all version/MSRV references across `README.md`,
+`CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, all of `docs/src/**.md`,
+all `.github/workflows/*.yml`, `Makefile`, `description.yml`, and the
+issue templates so every cross-reference is consistent with the
+`v0.6.0` / DuckDB `v1.5.3` / quack-rs `v0.13.0` / MSRV `1.87` baseline.
+
 ## [0.5.0] - 2026-05-01
 
 ### Changed
@@ -238,7 +276,8 @@ all bumping deps to versions at or below those landed here: #58, #61,
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.2.0...v0.3.0

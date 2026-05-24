@@ -29,9 +29,9 @@ platform where Rust and DuckDB are available.
 
 **Prerequisites:**
 
-- Rust 1.86 or later (`rustup` recommended)
+- Rust 1.87 or later (`rustup` recommended)
 - A C compiler (gcc, clang, or MSVC -- needed for DuckDB system bindings)
-- DuckDB CLI v1.5.2 (for running queries)
+- DuckDB CLI v1.5.3 (for running queries)
 
 **Build steps:**
 
@@ -64,7 +64,7 @@ cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.2.0 --abi-type C_STRUCT \
+  -p linux_amd64 -dv v1.5.3 -ev v0.6.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 ```
 
@@ -288,15 +288,15 @@ matched Home -> Product sequence.
 
 **"file was built for DuckDB C API version '...' but we can only load extensions built for DuckDB C API '...'"**
 
-The extension is built against DuckDB C API version `v1.2.0` (used by DuckDB
-v1.5.2). You must use a DuckDB CLI version that matches. Check your version
+The extension is stamped with the DuckDB release version it was built against
+(`v1.5.3`). You must use a DuckDB CLI version that matches. Check your version
 with:
 
 ```bash
 duckdb --version
 ```
 
-If you see a different version, either install DuckDB v1.5.2 or rebuild the
+If you see a different version, either install DuckDB v1.5.3 or rebuild the
 extension against your DuckDB version (this requires updating the
 `libduckdb-sys` dependency in `Cargo.toml`).
 
