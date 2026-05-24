@@ -103,7 +103,7 @@ sequence_next_node('direction', 'base', timestamp_col, value_col,
 
 **Directions:** `'forward'`, `'backward'`
 
-**Bases:** `'head'` (alias: `'first_match'`), `'tail'` (alias: `'last_match'`)
+**Bases:** `'head'`, `'tail'` (first/last `base_condition` event), `'first_match'`, `'last_match'` (first/last complete match) — four distinct strategies, 8 direction × base combinations
 
 ---
 

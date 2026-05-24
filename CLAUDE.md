@@ -196,7 +196,8 @@ Every change MUST meet these requirements:
 - **453 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
-  config-propagation tests for all 5 aggregate functions
+  config-propagation tests for all 6 aggregate functions (across 5 FFI test
+  modules -- `sequence_match` and `sequence_count` share one state type)
 - **1 doc-test** for the pattern parser
 - **E2E tests** against real DuckDB v1.5.3 CLI: 11 workflow test steps
   (2 platforms) plus 7 SQL integration test files with 59 queries covering
@@ -322,7 +323,7 @@ Run with `cargo test`. All 453 tests + 1 doc-test run in <1 second.
 GitHub Actions workflows in `.github/workflows/`:
 
 - **ci.yml**: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver,
-  coverage, cross-platform (Linux + macOS), extension-build
+  coverage, cross-platform (Linux + macOS), extension-build, ci-gate (13 jobs)
 - **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
 - **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,

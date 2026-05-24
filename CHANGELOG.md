@@ -45,6 +45,30 @@ all `.github/workflows/*.yml`, `Makefile`, `description.yml`, and the
 issue templates so every cross-reference is consistent with the
 `v0.6.0` / DuckDB `v1.5.3` / quack-rs `v0.13.0` / MSRV `1.87` baseline.
 
+A full accuracy pass over every doc against the source also corrected
+several pre-existing defects unrelated to the version bump:
+
+- **Broken metadata-append examples** in `docs/src/getting-started.md` and
+  `docs/src/contributing.md` stamped `-dv v1.2.0 ... --abi-type C_STRUCT`,
+  which produces an extension DuckDB 1.5.x rejects on load. Corrected to the
+  real `-dv v1.5.3 ... --abi-type C_STRUCT_UNSTABLE` convention.
+- **CI job lists** in `README.md` and `docs/src/engineering.md` claimed "13
+  CI jobs" but enumerated only 12 (omitting `ci-gate`); both now list all 13.
+- **`sequence_next_node` bases** in `docs/src/quick-reference.md` wrongly
+  described `head`/`tail` as aliases of `first_match`/`last_match`; they are
+  four distinct strategies (corrected to match the function reference).
+- **Spurious `rand` dev-dependency** removed from the `docs/src/operations/security.md`
+  dependency table — `rand` is only transitive; benchmarks generate data
+  deterministically.
+- **`attest-build-provenance@v3`** in `docs/src/operations/security.md`
+  corrected to `@v4` (matching `release.yml`), and a stale `v0.2.0`
+  verification example bumped to `v0.6.0`.
+- Cleared stale "DuckDB 1.5.1" and "C API version v1.2.0" references in
+  `README.md`, `docs/src/index.md`, `docs/src/engineering.md`,
+  `docs/src/faq.md`, and `docs/src/getting-started.md`.
+- Aligned the `AggregateTestHarness` config-propagation claim in `CLAUDE.md`
+  to "all 6 aggregate functions" (across 5 FFI test modules).
+
 ## [0.5.0] - 2026-05-01
 
 ### Changed

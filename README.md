@@ -389,7 +389,7 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 | Property-based tests | 29 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
 | Clippy warnings | 0 (pedantic + nursery + cargo lint groups) |
-| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
+| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Benchmark files | 7 (Criterion.rs, up to 1 billion elements) |
 | Release platforms | 4 (Linux x86_64/ARM64, macOS x86_64/ARM64) |
 

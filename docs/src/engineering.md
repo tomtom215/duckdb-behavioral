@@ -415,7 +415,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | MSRV | Rust 1.87 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements |
-| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench, deny, semver, coverage, cross-platform, extension-build) |
+| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Documented negative results | 5 (radix sort, branchless, string pool, compiled pattern, first-condition pre-check) |
 | ClickHouse parity | Complete (7/7 functions, all modes, 32 conditions) |
 
