@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 453 unit tests, 59 E2E SQL queries across 7 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 453 unit tests, 7 in-process integration tests (real extension load), 59 E2E SQL queries across 7 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -189,6 +189,13 @@ missed:
 3. `window_funnel` returning incorrect results (combine not propagating
    configuration)
 
+As of quack-rs 0.14.0, this same load → register → execute chain also runs
+**in-process inside `cargo test`** (`tests/extension_load.rs`, 7 tests). It
+builds the real release `cdylib`, appends the DuckDB metadata footer, and
+`LOAD`s it via `quack_rs::testing::InMemoryDb::open_unsigned()` — so the entire
+class of FFI-registration bugs above is now caught by the regular test suite,
+not only by the CLI-based E2E job in CI.
+
 **Level 3: Mutation Testing (88.4% kill rate)**
 
 `cargo-mutants` systematically replaces operators, removes branches, and
@@ -311,7 +318,7 @@ these analyses can run as interactive queries rather than batch jobs.
 
 DuckDB's Rust crate does not provide high-level aggregate function
 registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
-SDK (v0.13.0) which wraps the raw C API with safe builders
+SDK (v0.14.0) which wraps the raw C API with safe builders
 (including `returns_logical(LogicalType)` for `LIST(T)` return types),
 state management, vector I/O, and LIST output helpers. All 6 aggregate
 functions use the builder for registration. The `sessionize` function

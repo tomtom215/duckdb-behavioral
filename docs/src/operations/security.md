@@ -34,7 +34,7 @@ The extension has exactly **two** runtime dependencies:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `quack-rs` | `=0.13.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
+| `quack-rs` | `=0.14.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
 | `libduckdb-sys` | `=1.10503.1` | DuckDB C API bindings (re-exported by quack-rs; kept explicitly for `sessionize` window function FFI) |
 
 Both versions are **pinned exactly** to prevent silent dependency updates.
@@ -52,6 +52,7 @@ release extension binary:
 | Crate | Purpose |
 |-------|---------|
 | `duckdb` | In-memory connection for unit tests |
+| `quack-rs` (`bundled-test`) | `InMemoryDb` for the in-process extension-load integration test |
 | `criterion` | Benchmarking framework |
 | `proptest` | Property-based testing |
 
@@ -100,7 +101,7 @@ Release artifacts include:
 sha256sum -c SHA256SUMS.txt
 
 # Verify GitHub attestation (requires gh CLI)
-gh attestation verify behavioral-v0.6.0-linux_amd64.tar.gz \
+gh attestation verify behavioral-v0.7.0-linux_amd64.tar.gz \
   --repo tomtom215/duckdb-behavioral
 ```
 

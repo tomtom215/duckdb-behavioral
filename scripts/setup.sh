@@ -36,7 +36,7 @@ set -euo pipefail
 readonly DUCKDB_RELEASE_VERSION="v1.5.3"
 
 # Extension version from Cargo.toml
-readonly EXT_VERSION="v0.6.0"
+readonly EXT_VERSION="v0.7.0"
 
 # Extension name
 readonly EXT_NAME="behavioral"

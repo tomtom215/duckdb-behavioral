@@ -18,7 +18,7 @@ Brief description of what this PR does and why.
 
 ## Testing
 
-- [ ] `cargo test` passes (453 unit tests + 1 doc-test)
+- [ ] `cargo test` passes (453 unit + 7 integration + 1 doc-test)
 - [ ] `cargo clippy --all-targets` produces zero warnings
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo doc --no-deps` builds without warnings
