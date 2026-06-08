@@ -85,7 +85,7 @@ hand-rolled unsafe code from earlier versions.
 
 ### quack-rs SDK
 
-The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.13.0,
+The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.14.0,
 a Rust SDK for DuckDB loadable extensions. It provides:
 
 - **`AggregateFunctionSetBuilder`**: Safe registration of function sets with

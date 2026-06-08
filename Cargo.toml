@@ -3,7 +3,7 @@
 
 [package]
 name = "duckdb-behavioral"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.87"
 authors = ["Tom F <tomtom215@users.noreply.github.com>"]
@@ -20,11 +20,16 @@ name = "behavioral"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-quack-rs = "=0.13.0"
+quack-rs = "=0.14.0"
 libduckdb-sys = { version = "=1.10503.1", features = ["loadable-extension"] }
 
 [dev-dependencies]
 duckdb = { version = "=1.10503.1", features = ["bundled"] }
+# `bundled-test` exposes `quack_rs::testing::InMemoryDb`, used by the in-process
+# extension-load integration test (`tests/extension_load.rs`). Its `duckdb/bundled`
+# requirement unifies with the `duckdb` dev-dependency above, so no extra DuckDB
+# build. This feature is dev-only and never reaches the release `.so`.
+quack-rs = { version = "=0.14.0", features = ["bundled-test"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1"
 

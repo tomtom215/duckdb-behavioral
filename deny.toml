@@ -26,6 +26,17 @@ allow = [
 ]
 confidence-threshold = 0.8
 
+# `tiny-keccak` is licensed CC0-1.0 (a public-domain dedication). It is a
+# transitive *lockfile* entry only — reachable solely through `ahash`'s optional,
+# never-enabled `compile-time-rng` feature, so it appears in no buildable graph
+# (`cargo tree -i tiny-keccak`, even `--all-features`, shows nothing) and never
+# ships in the extension (the release `.so` links only `libduckdb-sys` +
+# `quack-rs`). Newer cargo-deny still surfaces it from `Cargo.lock`; scope the
+# CC0-1.0 allowance to this one crate rather than globally.
+[[licenses.exceptions]]
+crate = "tiny-keccak"
+allow = ["CC0-1.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"

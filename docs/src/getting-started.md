@@ -64,7 +64,7 @@ cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.3 -ev v0.6.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.3 -ev v0.7.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 ```
 

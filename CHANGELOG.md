@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-07
+
+### Changed
+
+- **quack-rs v0.14.0** — upgraded from v0.13.0. Every public API this crate uses
+  (`AggregateFunctionSetBuilder`, `FfiState`, `VectorReader`/`VectorWriter`,
+  `ListVector`, `LogicalType::list`, `returns_logical`, `AggregateTestHarness`,
+  `Connection`/`Registrar`, `entry_point_v2!`) is unchanged: the extension
+  compiles against the new SDK with **zero changes to existing source**. v0.14.0
+  is purely additive — it adds `wasm32-unknown-emscripten` (DuckDB-WASM) support,
+  a `bundled-test-prebuilt` test feature, and `InMemoryDb::open_unsigned()`. MSRV
+  stays 1.87; DuckDB stays v1.5.3 (`libduckdb-sys`/`duckdb` `1.10503.1`, already
+  the latest).
+
+### Added
+
+- **In-process extension-load integration test** (`tests/extension_load.rs`, 7
+  tests). Builds the real release `cdylib`, appends the DuckDB metadata footer
+  (a Rust port of `append_extension_metadata.py`), and `LOAD`s it into an
+  in-memory DuckDB via quack-rs 0.14.0's
+  `testing::InMemoryDb::open_unsigned()`, then exercises **all seven functions**
+  through live SQL. This runs inside `cargo test` with no external `duckdb` CLI
+  and closes the long-standing gap where unit tests could pass while the FFI
+  registration path was broken (the segfault-on-load / silent-non-registration /
+  wrong-result class of bugs). Adds the `quack-rs` `bundled-test` dev-feature,
+  which unifies with the existing `duckdb/bundled` dev-dependency — no extra
+  DuckDB build.
+
+### Security
+
+- **Dependency refresh via `cargo update`** — notably `tar` 0.4.45 → 0.4.46
+  (resolves **GHSA-3pv8-6f4r-ffg2**, "PAX header desynchronization"; `tar` is a
+  build-time dependency of `libduckdb-sys`), plus `cc` 1.2.61 → 1.2.63 and
+  `shlex` 1.3.0 → 2.0.1, and routine bumps across the dev/transitive tree
+  (`arrow` 58.1 → 58.3, `tokio`, `wasm-bindgen`, `zerocopy`, …). All direct
+  dependencies are at their latest versions; the sole held-back transitive crate
+  is `comfy-table` (constrained by the `duckdb` dev-dependency). All bumped
+  crates declare an MSRV ≤ 1.85, so the project MSRV stays 1.87.
+- **`deny.toml`** — added a tightly-scoped `CC0-1.0` license exception for
+  `tiny-keccak`, a phantom `Cargo.lock` entry behind `ahash`'s optional,
+  never-enabled `compile-time-rng` feature (absent from every buildable graph and
+  from the shipped `.so`). This lets current `cargo-deny` releases pass the
+  license gate, future-proofing CI against the pinned action updating.
+
+### Documentation
+
+- Updated every version reference to the `v0.7.0` / quack-rs `v0.14.0` baseline
+  (DuckDB `v1.5.3` and MSRV `1.87` unchanged) across `README.md`, `CLAUDE.md`,
+  `SECURITY.md`, `description.yml`, `scripts/setup.sh`, `docs/src/**.md`, the
+  issue/PR templates, and the community-submission workflow, and documented the
+  new in-process integration-test layer.
+
 ## [0.6.0] - 2026-05-24
 
 ### Changed

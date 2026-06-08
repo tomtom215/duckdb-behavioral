@@ -59,7 +59,7 @@ src/
    submodules handle DuckDB C API registration only.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
-   provide high-level aggregate function registration. We use `quack-rs` v0.13.0
+   provide high-level aggregate function registration. We use `quack-rs` v0.14.0
    ([crates.io](https://crates.io/crates/quack-rs)) which wraps the raw C API with safe builders
    (`AggregateFunctionSetBuilder`), state management (`FfiState<T>`), vector I/O
    (`VectorReader`/`VectorWriter` including `write_varchar`), complex type helpers
@@ -69,6 +69,8 @@ src/
    including `retention` and `sequence_match_events` which use
    `returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
    `sessionize` remains fully hand-rolled (window function limitation in quack-rs).
+   The `bundled-test` dev-feature additionally provides `testing::InMemoryDb`,
+   used by the in-process extension-load integration test (see [Testing](#testing)).
 
 3. **Function sets for variadic signatures**: Since `duckdb_aggregate_function_set_varargs`
    doesn't exist, we register function sets with 31 overloads (2-32 boolean parameters)
@@ -111,7 +113,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all unit tests (453 tests + 1 doc-test)
+# Run all tests (453 unit + 7 integration + 1 doc-test)
 cargo test
 
 # Run clippy (must produce zero warnings)
@@ -133,7 +135,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.3 -ev v0.6.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.3 -ev v0.7.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -154,7 +156,7 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs` v0.13.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
+- `quack-rs` v0.14.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
   for DuckDB loadable extensions. Provides `entry_point_v2!` macro,
   `Connection`/`Registrar` trait for version-agnostic registration,
   `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
@@ -173,6 +175,11 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   for `Connection::open_in_memory()`. Not linked into the release extension.
   Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.3 →
   crate v1.10503.x).
+- `quack-rs` v0.14.0 with `bundled-test` feature — Provides `testing::InMemoryDb`
+  (incl. `open_unsigned()`) for the in-process extension-load integration test
+  (`tests/extension_load.rs`). Its `duckdb/bundled` requirement unifies with the
+  `duckdb` dev-dependency above (no extra DuckDB build); dev-only, never in the
+  release `.so`.
 - `criterion = "0.8"` with `html_reports` feature — Statistical benchmarking
 - `proptest = "1"` — Property-based testing
 
@@ -199,6 +206,11 @@ Every change MUST meet these requirements:
   config-propagation tests for all 6 aggregate functions (across 5 FFI test
   modules -- `sequence_match` and `sequence_count` share one state type)
 - **1 doc-test** for the pattern parser
+- **7 in-process integration tests** (`tests/extension_load.rs`): build the real
+  release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
+  in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
+  exercise all 7 functions through live SQL — the registration/FFI path unit
+  tests cannot reach, now covered inside `cargo test` (no external CLI)
 - **E2E tests** against real DuckDB v1.5.3 CLI: 11 workflow test steps
   (2 platforms) plus 7 SQL integration test files with 59 queries covering
   all 7 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
@@ -209,10 +221,10 @@ Every change MUST meet these requirements:
   cardinality benchmarks, and throughput reporting up to 1B elements
 - **Mutation testing**: 88.4% kill rate baseline via cargo-mutants
   (130 caught / 17 missed) measured on the v0.4.x codebase. cargo-mutants
-  27.0.0 now identifies ~465 candidate mutations on the v0.6.0 source
+  27.0.0 now identifies ~465 candidate mutations on the v0.7.0 source
   (unchanged from v0.5.0) — a re-measurement is tracked as a separate session
-- **MSRV 1.87** verified in CI (raised from 1.86; required by `quack-rs` v0.13.0,
-  whose corrected MSRV aligns with `libduckdb-sys`)
+- **MSRV 1.87** verified in CI (raised from 1.86 at `quack-rs` v0.13.0;
+  v0.14.0 keeps the declared MSRV of 1.87.0, which aligns with `libduckdb-sys`)
 - All public items have documentation
 - Release profile: LTO, single codegen unit, abort on panic, stripped symbols
 
@@ -309,7 +321,18 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
-Run with `cargo test`. All 453 tests + 1 doc-test run in <1 second.
+Run with `cargo test`. The 453 unit tests run in <1 second (the doc-test in
+~2s). The 7 in-process integration tests add ~15s on a cold run — they build and
+`LOAD` the real release `cdylib` — and are near-instant once that artifact is
+cached.
+
+**In-process integration tests** (`tests/extension_load.rs`, run by `cargo test`):
+- Build the release `cdylib`, append the DuckDB metadata footer (a Rust port of
+  `append_extension_metadata.py`), and `LOAD` it via
+  `quack_rs::testing::InMemoryDb::open_unsigned()` (quack-rs 0.14.0)
+- Assert all 7 functions register and return correct results through live SQL —
+  catching the load/registration/wrong-result class of FFI bugs that unit tests
+  cannot, without needing the external `duckdb` CLI
 
 **E2E tests** (against real DuckDB CLI):
 - 11 workflow test steps per platform (Linux + macOS) in `e2e.yml`

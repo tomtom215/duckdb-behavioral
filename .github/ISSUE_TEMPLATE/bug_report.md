@@ -29,7 +29,7 @@ What actually happened. Include any error messages.
 ## Environment
 
 - **DuckDB version**: (e.g., v1.5.3)
-- **Extension version**: (e.g., v0.6.0 or built from source)
+- **Extension version**: (e.g., v0.7.0 or built from source)
 - **OS**: (e.g., Ubuntu 24.04, macOS 15, Windows 11)
 - **Architecture**: (e.g., x86_64, aarch64)
 - **Loaded with**: `-unsigned` flag / community extension
