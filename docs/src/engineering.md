@@ -320,9 +320,11 @@ DuckDB's Rust crate does not provide high-level aggregate function
 registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
 SDK (v0.14.0) which wraps the raw C API with safe builders
 (including `returns_logical(LogicalType)` for `LIST(T)` return types),
-state management, vector I/O, and LIST output helpers. All 6 aggregate
-functions use the builder for registration. The `sessionize` function
-uses raw `libduckdb-sys` due to window function limitations in quack-rs.
+state management, vector I/O, and LIST output helpers. All 7 aggregate
+functions use quack-rs builders for registration: the six variadic functions
+via `AggregateFunctionSetBuilder`, and `sessionize` via
+`AggregateFunctionBuilder` (a single fixed signature — DuckDB windows any
+aggregate, so no window-specific registration exists).
 Each aggregate implements five callback functions:
 
 ```mermaid

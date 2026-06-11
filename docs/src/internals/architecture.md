@@ -24,7 +24,7 @@ src/
   sequence_next_node.rs        Next event value after pattern match (Arc<str>)
   ffi/
     mod.rs                     register_all() dispatcher
-    sessionize.rs              FFI callbacks (raw libduckdb-sys — window function)
+    sessionize.rs              FFI via quack-rs AggregateFunctionBuilder (fixed signature)
     retention.rs               FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     window_funnel.rs           FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
     sequence.rs                FFI via quack-rs builder for sequence_match/count
@@ -104,10 +104,12 @@ a Rust SDK for DuckDB loadable extensions. It provides:
 - **`AggregateTestHarness`**: Unit-test harness for verifying combine
   config-propagation without E2E testing.
 
-All 6 aggregate functions use `AggregateFunctionSetBuilder` for registration,
-including `retention` and `sequence_match_events` which use
-`.returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
-`sessionize` remains fully hand-rolled (window function limitation in quack-rs).
+All 7 aggregate functions use quack-rs builders for registration: the six
+variadic functions via `AggregateFunctionSetBuilder` (including `retention`
+and `sequence_match_events`, which use
+`.returns_logical(LogicalType::list(...))` for their `LIST(T)` return types),
+and `sessionize` via `AggregateFunctionBuilder` — DuckDB windows any
+aggregate, so no window-specific registration exists.
 The `duckdb` crate is used only in `#[cfg(test)]` for unit tests.
 
 ## Event Representation

@@ -23,13 +23,14 @@
 //! - [`quack_rs::types::LogicalType::list()`] — RAII construction of `LIST(T)`
 //!   types for `returns_logical()` and function registration.
 //!
-//! All 6 aggregate functions use `AggregateFunctionSetBuilder` for registration,
-//! including `retention` and `sequence_match_events` which use
-//! `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
-//!
-//! The [`sessionize`] module is the sole exception: it requires window function
-//! registration via the C API, which `quack-rs` does not support. It uses raw
-//! `libduckdb-sys` calls directly via [`Connection::as_raw_connection()`].
+//! All aggregate functions use quack-rs builders for registration: the six
+//! variadic functions use `AggregateFunctionSetBuilder` (including `retention`
+//! and `sequence_match_events`, which use
+//! `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return
+//! types), and [`sessionize`] uses
+//! [`quack_rs::aggregate::AggregateFunctionBuilder`] for its single fixed
+//! signature. No module in this crate registers through raw `libduckdb-sys`
+//! calls anymore.
 //!
 //! # Entry Point
 //!
@@ -50,9 +51,8 @@ use quack_rs::error::ExtensionError;
 /// Registers all behavioral analytics functions using a [`Connection`] handle.
 ///
 /// This function is called from the `quack_rs::entry_point_v2!` macro closure
-/// in `lib.rs`. It uses the [`Registrar`](quack_rs::connection::Registrar) trait for aggregate function
-/// registration and falls back to the raw connection handle for the `sessionize`
-/// window function (not supported by the `Registrar` API).
+/// in `lib.rs`. Every function registers through the
+/// [`Registrar`](quack_rs::connection::Registrar) trait.
 ///
 /// # Safety
 ///
@@ -64,14 +64,8 @@ use quack_rs::error::ExtensionError;
 pub unsafe fn register_all(con: &Connection) -> Result<(), ExtensionError> {
     // Safety: The Connection holds a valid handle — obtained via duckdb_connect
     // in the entry_point_v2! macro and will be disconnected after registration.
-
-    // Sessionize requires raw window function FFI (not supported by Registrar).
     unsafe {
-        sessionize::register_sessionize(con.as_raw_connection());
-    }
-
-    // All aggregate functions use the Registrar trait for registration.
-    unsafe {
+        sessionize::register_sessionize(con)?;
         retention::register_retention(con)?;
         window_funnel::register_window_funnel(con)?;
         sequence::register_sequence_match(con)?;
