@@ -210,6 +210,11 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Dev/test builds link a prebuilt libduckdb (quack-rs `bundled-test-prebuilt`).
+      # Scoped to this job only — build-test below exercises the pristine
+      # release path via `make release`.
+      DUCKDB_DOWNLOAD_LIB: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: dtolnay/rust-toolchain@stable

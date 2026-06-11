@@ -69,7 +69,7 @@ src/
    including `retention` and `sequence_match_events` which use
    `returns_logical(LogicalType::list(...))` for their `LIST(T)` return types.
    `sessionize` remains fully hand-rolled (window function limitation in quack-rs).
-   The `bundled-test` dev-feature additionally provides `testing::InMemoryDb`,
+   The `bundled-test-prebuilt` dev-feature additionally provides `testing::InMemoryDb`,
    used by the in-process extension-load integration test (see [Testing](#testing)).
 
 3. **Function sets for variadic signatures**: Since `duckdb_aggregate_function_set_varargs`
@@ -113,8 +113,12 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (453 unit + 7 integration + 1 doc-test)
-cargo test
+# Run all tests (453 unit + 7 integration + 1 doc-test).
+# DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
+# (downloaded once, cached in target/duckdb-download/) instead of compiling
+# DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
+# (plus LD_LIBRARY_PATH=<dir> on Linux). Never set these for release builds.
+DUCKDB_DOWNLOAD_LIB=1 cargo test
 
 # Run clippy (must produce zero warnings)
 cargo clippy --all-targets
@@ -171,15 +175,21 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   crate v1.10503.x).
 
 **Dev-only** (unit tests and benchmarks):
-- `duckdb = "=1.10503.1"` with `bundled` feature — Used in `#[cfg(test)]` modules
+- `duckdb = "=1.10503.1"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
   for `Connection::open_in_memory()`. Not linked into the release extension.
+  Dev/test builds link a **prebuilt libduckdb** downloaded by `libduckdb-sys`
+  (`DUCKDB_DOWNLOAD_LIB=1`, cached in `target/duckdb-download/`) instead of
+  compiling DuckDB's C++ tree from source. CI sets the env var workflow-wide;
+  locally run `DUCKDB_DOWNLOAD_LIB=1 cargo test`, or set
+  `DUCKDB_LIB_DIR=/path/to/libduckdb` (plus `LD_LIBRARY_PATH` on Linux) to use
+  an already-downloaded library. Never set either variable for release builds.
   Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.3 →
   crate v1.10503.x).
-- `quack-rs` v0.14.0 with `bundled-test` feature — Provides `testing::InMemoryDb`
-  (incl. `open_unsigned()`) for the in-process extension-load integration test
-  (`tests/extension_load.rs`). Its `duckdb/bundled` requirement unifies with the
-  `duckdb` dev-dependency above (no extra DuckDB build); dev-only, never in the
-  release `.so`.
+- `quack-rs` v0.14.0 with `bundled-test-prebuilt` feature — Provides
+  `testing::InMemoryDb` (incl. `open_unsigned()`) for the in-process
+  extension-load integration test (`tests/extension_load.rs`). Links the same
+  prebuilt libduckdb as the `duckdb` dev-dependency above (no DuckDB C++
+  build); dev-only, never in the release `.so`.
 - `criterion = "0.8"` with `html_reports` feature — Statistical benchmarking
 - `proptest = "1"` — Property-based testing
 

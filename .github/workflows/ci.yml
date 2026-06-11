@@ -21,6 +21,11 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
+  # Dev/test builds link a prebuilt libduckdb downloaded by libduckdb-sys
+  # instead of compiling DuckDB's C++ tree from source (quack-rs
+  # `bundled-test-prebuilt`). Overridden to "0" in extension-build, which
+  # exercises the pristine release path.
+  DUCKDB_DOWNLOAD_LIB: "1"
 
 jobs:
   # ── Fast lint checks (run first, fail fast) ───────────────────────────
@@ -416,6 +421,9 @@ jobs:
     name: Extension build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Exercise the pristine release path: no prebuilt-libduckdb download.
+      DUCKDB_DOWNLOAD_LIB: "0"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
