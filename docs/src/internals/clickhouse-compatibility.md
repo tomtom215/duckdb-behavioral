@@ -25,6 +25,7 @@ All six ClickHouse behavioral parametric functions are implemented:
 | `sequenceMatch(pattern)(timestamp, cond1, ...)` | `sequence_match(pattern, timestamp, cond1, ...)` | Complete |
 | `sequenceCount(pattern)(timestamp, cond1, ...)` | `sequence_count(pattern, timestamp, cond1, ...)` | Complete |
 | N/A (duckdb-behavioral extension) | `sequence_match_events(pattern, timestamp, cond1, ...)` | Extension |
+| N/A (duckdb-behavioral extension) | `window_funnel_events(window[, mode], timestamp, cond1, ...)` | Extension |
 | `sequenceNextNode(dir, base)(ts, val, base_cond, ev1, ...)` | `sequence_next_node(dir, base, ts, val, base_cond, ev1, ...)` | Complete |
 
 ### Non-Behavioral Parametric Functions (Out of Scope)
@@ -155,6 +156,7 @@ analytics functions:
 |---|---|
 | `sessionize` | Window function for session ID assignment (no ClickHouse equivalent) |
 | `sequence_match_events` | Returns matched timestamps as `LIST(TIMESTAMP)` |
+| `window_funnel_events` | Returns the best funnel chain's step timestamps as `LIST(TIMESTAMP)` (ClickHouse's `windowFunnel` has no timestamp-returning companion) |
 | `'timestamp_dedup'` mode | Timestamp-based deduplication in `window_funnel` |
 | `(?t!=N)` time constraint | Not-equal operator in sequence patterns |
 | No experimental flags | `sequence_next_node` works without `SET allow_experimental_funnel_functions = 1` |

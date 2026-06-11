@@ -84,28 +84,30 @@ pub unsafe fn register_window_funnel(
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update(
+// Shared with `window_funnel_events`, which differs only in finalize.
+pub(super) unsafe extern "C" fn state_update(
     info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     // No mode parameter: INTERVAL(0), TIMESTAMP(1), BOOLEAN(2..N)
     unsafe {
-        update_impl(info, input, states, false);
+        update_impl(info, input, states, false, "window_funnel");
     }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, VARCHAR,
 // TIMESTAMP, BOOLEAN...) as registered. The VARCHAR at column 1 contains the mode
 // string. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update_with_mode(
+// Shared with `window_funnel_events`, which differs only in finalize.
+pub(super) unsafe extern "C" fn state_update_with_mode(
     info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     // With mode parameter: INTERVAL(0), VARCHAR(1), TIMESTAMP(2), BOOLEAN(3..N)
     unsafe {
-        update_impl(info, input, states, true);
+        update_impl(info, input, states, true, "window_funnel");
     }
 }
 
@@ -120,15 +122,19 @@ unsafe extern "C" fn state_update_with_mode(
 /// aborts the query via [`AggregateFunctionInfo::set_error`] instead of
 /// silently producing wrong results.
 ///
+/// `func` names the SQL function in error messages (`window_funnel` or
+/// `window_funnel_events`).
+///
 /// # Safety
 ///
 /// Requires a valid `info` handle plus valid `input` data chunk and `states`
 /// aggregate state pointers.
-unsafe fn update_impl(
+pub(super) unsafe fn update_impl(
     info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
     has_mode: bool,
+    func: &str,
 ) {
     unsafe {
         let info = AggregateFunctionInfo::new(info);
@@ -174,15 +180,15 @@ unsafe fn update_impl(
                 match interval_to_micros(iv.months, iv.days, iv.micros) {
                     Some(window_us) if window_us >= 0 => state.window_size_us = window_us,
                     Some(_) => {
-                        info.set_error("window_funnel: INTERVAL window must be non-negative");
+                        info.set_error(&format!("{func}: INTERVAL window must be non-negative"));
                         return;
                     }
                     None => {
-                        info.set_error(
-                            "window_funnel: invalid INTERVAL window: month-based intervals \
+                        info.set_error(&format!(
+                            "{func}: invalid INTERVAL window: month-based intervals \
                              are ambiguous (28-31 days) and the total must fit in signed \
-                             64-bit microseconds; use day/hour/minute/second units instead",
-                        );
+                             64-bit microseconds; use day/hour/minute/second units instead"
+                        ));
                         return;
                     }
                 }
@@ -196,7 +202,7 @@ unsafe fn update_impl(
                         Ok(mode) => state.mode = mode,
                         Err(unknown) => {
                             info.set_error(&format!(
-                                "window_funnel: unknown mode '{unknown}'; valid modes are {VALID_MODES}"
+                                "{func}: unknown mode '{unknown}'; valid modes are {VALID_MODES}"
                             ));
                             return;
                         }
@@ -222,7 +228,8 @@ unsafe fn update_impl(
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
 // combine_in_place propagates window_size_us and mode from source to target
 // when target has defaults (Session 10 bug fix).
-unsafe extern "C" fn state_combine(
+// Shared with `window_funnel_events`, which differs only in finalize.
+pub(super) unsafe extern "C" fn state_combine(
     _info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     target: *mut duckdb_aggregate_state,

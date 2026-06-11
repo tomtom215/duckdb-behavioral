@@ -44,6 +44,7 @@ pub mod sequence_match_events;
 pub mod sequence_next_node;
 pub mod sessionize;
 pub mod window_funnel;
+pub mod window_funnel_events;
 
 use quack_rs::connection::Connection;
 use quack_rs::error::ExtensionError;
@@ -68,6 +69,7 @@ pub unsafe fn register_all(con: &Connection) -> Result<(), ExtensionError> {
         sessionize::register_sessionize(con)?;
         retention::register_retention(con)?;
         window_funnel::register_window_funnel(con)?;
+        window_funnel_events::register_window_funnel_events(con)?;
         sequence::register_sequence_match(con)?;
         sequence::register_sequence_count(con)?;
         sequence_match_events::register_sequence_match_events(con)?;

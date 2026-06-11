@@ -170,7 +170,7 @@ fn load_extension() -> InMemoryDb {
     db
 }
 
-/// The extension loads without error and registers all seven functions in the
+/// The extension loads without error and registers all eight functions in the
 /// catalog. A missing registration here is exactly the class of bug that passed
 /// the unit suite while shipping a broken extension.
 #[test]
@@ -180,6 +180,7 @@ fn loads_and_registers_all_functions() {
         "sessionize",
         "retention",
         "window_funnel",
+        "window_funnel_events",
         "sequence_match",
         "sequence_count",
         "sequence_match_events",
@@ -277,6 +278,61 @@ fn window_funnel_aggregate() {
         )
         .unwrap();
     assert_eq!(strict, 3);
+}
+
+#[test]
+fn window_funnel_events_aggregate() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE fe(user_id INTEGER, ts TIMESTAMP, event VARCHAR);
+         INSERT INTO fe VALUES
+            (1,'2024-01-01 00:00:00','view'),(1,'2024-01-01 00:05:00','cart'),(1,'2024-01-01 00:10:00','purchase'),
+            (2,'2024-01-01 00:00:00','view'),(2,'2024-01-01 05:00:00','cart'),
+            (3,'2024-01-01 00:00:00','cart');",
+    )
+    .unwrap();
+    // Complete chain: one timestamp per matched step.
+    let full: String = db
+        .query_one(
+            "SELECT CAST(window_funnel_events(INTERVAL '1 hour', ts, \
+                event='view', event='cart', event='purchase') AS VARCHAR) \
+             FROM fe WHERE user_id = 1",
+        )
+        .unwrap();
+    assert_eq!(
+        full,
+        "['2024-01-01 00:00:00', '2024-01-01 00:05:00', '2024-01-01 00:10:00']"
+    );
+    // Out-of-window second step: only the entry is matched.
+    let partial: String = db
+        .query_one(
+            "SELECT CAST(window_funnel_events(INTERVAL '1 hour', ts, \
+                event='view', event='cart', event='purchase') AS VARCHAR) \
+             FROM fe WHERE user_id = 2",
+        )
+        .unwrap();
+    assert_eq!(partial, "['2024-01-01 00:00:00']");
+    // No entry condition: empty list.
+    let empty: String = db
+        .query_one(
+            "SELECT CAST(window_funnel_events(INTERVAL '1 hour', ts, \
+                event='view', event='cart', event='purchase') AS VARCHAR) \
+             FROM fe WHERE user_id = 3",
+        )
+        .unwrap();
+    assert_eq!(empty, "[]");
+    // Mode overload binds and behaves (strict_order).
+    let with_mode: String = db
+        .query_one(
+            "SELECT CAST(window_funnel_events(INTERVAL '1 hour', 'strict_order', ts, \
+                event='view', event='cart', event='purchase') AS VARCHAR) \
+             FROM fe WHERE user_id = 1",
+        )
+        .unwrap();
+    assert_eq!(
+        with_mode,
+        "['2024-01-01 00:00:00', '2024-01-01 00:05:00', '2024-01-01 00:10:00']"
+    );
 }
 
 #[test]

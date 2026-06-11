@@ -47,6 +47,7 @@ src/
     ├── sessionize.rs       # FFI via quack-rs AggregateFunctionBuilder (single fixed signature)
     ├── retention.rs        # FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     ├── window_funnel.rs    # FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
+    ├── window_funnel_events.rs   # FFI sharing window_funnel update/combine + LIST(TIMESTAMP) finalize
     ├── sequence.rs         # FFI via quack-rs builder for sequence_match + sequence_count
     ├── sequence_match_events.rs  # FFI via quack-rs builder + returns_logical(LIST(TIMESTAMP)) + ListVector
     └── sequence_next_node.rs     # FFI via quack-rs builder + VectorWriter::write_varchar
@@ -65,8 +66,8 @@ src/
    (`VectorReader`/`VectorWriter` including `write_varchar`), complex type helpers
    (`ListVector`, `LogicalType::list()`), parameterized return type support
    (`returns_logical(LogicalType)`), and `AggregateTestHarness` for combine
-   testing. All 7 aggregate functions use quack-rs builders for registration --
-   the six variadic functions via `AggregateFunctionSetBuilder` (including
+   testing. All 8 aggregate functions use quack-rs builders for registration --
+   the seven variadic functions via `AggregateFunctionSetBuilder` (including
    `retention` and `sequence_match_events`, which use
    `returns_logical(LogicalType::list(...))` for their `LIST(T)` return types),
    and `sessionize` via `AggregateFunctionBuilder` (single fixed signature;
@@ -124,7 +125,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (457 unit + 7 integration + 1 doc-test).
+# Run all tests (470 unit + 9 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -163,6 +164,7 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 | `sessionize` | `(TIMESTAMP, INTERVAL)` | `BIGINT` | Window function assigning session IDs |
 | `retention` | `(BOOLEAN, BOOLEAN, ...)` | `BOOLEAN[]` | Cohort retention analysis |
 | `window_funnel` | `(INTERVAL[, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `INTEGER` | Conversion funnel step tracking |
+| `window_funnel_events` | `(INTERVAL[, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `LIST(TIMESTAMP)` | Timestamps of the best funnel chain |
 | `sequence_match` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BOOLEAN` | Pattern matching over events |
 | `sequence_count` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BIGINT` | Count non-overlapping pattern matches |
 | `sequence_match_events` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `LIST(TIMESTAMP)` | Return matched condition timestamps |
@@ -222,20 +224,21 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **457 unit tests** covering all functions, edge cases, combine associativity,
+- **470 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
-  config-propagation tests for all 7 aggregate functions (across 6 FFI test
-  modules -- `sequence_match` and `sequence_count` share one state type)
+  config-propagation tests for all 8 aggregate functions (across 7 FFI test
+  modules -- `sequence_match` and `sequence_count` share one state type;
+  `window_funnel_events` shares `WindowFunnelState`)
 - **1 doc-test** for the pattern parser
-- **8 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **9 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
-  exercise all 7 functions through live SQL — the registration/FFI path unit
+  exercise all 8 functions through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
-- **E2E tests** against real DuckDB v1.5.3 CLI: 11 workflow test steps
-  (2 platforms) plus 7 SQL integration test files with 67 queries covering
-  all 7 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
+- **E2E tests** against real DuckDB v1.5.3 CLI: 12 workflow test steps
+  (2 platforms) plus 8 SQL integration test files with 75 queries covering
+  all 8 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
   no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
   all 8 direction/base combinations)
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
@@ -304,6 +307,9 @@ behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
 
 - `sessionize`: Window function (no ClickHouse equivalent)
 - `sequence_match_events`: Returns matched timestamps as `LIST(TIMESTAMP)`
+- `window_funnel_events`: Returns the best funnel chain's step timestamps as
+  `LIST(TIMESTAMP)` (ClickHouse's `windowFunnel` has no timestamp-returning
+  companion)
 - `'timestamp_dedup'` mode: Timestamp-based deduplication in `window_funnel`
 - `(?t!=N)` time constraint: Not-equal operator in sequence patterns
 - No experimental flags required (ClickHouse's `sequenceNextNode` requires
@@ -340,11 +346,14 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   mode combinations
 - **`sequence_match_events` tests**: Multi-step, gap events, no-match,
   complex patterns
+- **`window_funnel_events` tests**: Complete/partial/empty chains, multi-step
+  events, best-chain selection, reentry resets, length == `finalize()` parity
+  across modes
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
-Run with `cargo test`. The 457 unit tests run in <1 second (the doc-test in
-~2s). The 8 in-process integration tests add ~15s on a cold run — they build and
+Run with `cargo test`. The 470 unit tests run in <1 second (the doc-test in
+~2s). The 9 in-process integration tests add ~15s on a cold run — they build and
 `LOAD` the real release `cdylib` — and are near-instant once that artifact is
 cached.
 
@@ -352,14 +361,14 @@ cached.
 - Build the release `cdylib`, append the DuckDB metadata footer (a Rust port of
   `append_extension_metadata.py`), and `LOAD` it via
   `quack_rs::testing::InMemoryDb::open_unsigned()` (quack-rs 0.14.0)
-- Assert all 7 functions register and return correct results through live SQL —
+- Assert all 8 functions register and return correct results through live SQL —
   catching the load/registration/wrong-result class of FFI bugs that unit tests
   cannot, without needing the external `duckdb` CLI
 
 **E2E tests** (against real DuckDB CLI):
-- 11 workflow test steps per platform (Linux + macOS) in `e2e.yml`
-- 7 SQL integration test files with 67 queries in `test/sql/`
-- Covers all 7 functions with basic usage, timeouts, all 6 modes, GROUP BY,
+- 12 workflow test steps per platform (Linux + macOS) in `e2e.yml`
+- 8 SQL integration test files with 75 queries in `test/sql/`
+- Covers all 8 functions with basic usage, timeouts, all 6 modes, GROUP BY,
   no-match, NULL inputs, empty tables, 5+ conditions, all direction x base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`
 

@@ -209,6 +209,41 @@ impl std::fmt::Display for FunnelMode {
     }
 }
 
+/// Records the timestamps of matched funnel steps during a scan.
+///
+/// Two implementations exist: [`NoRecord`] (zero-sized no-op — monomorphization
+/// keeps [`WindowFunnelState::finalize`]'s hot path identical to a
+/// non-recording scan) and `Vec<i64>` (used by
+/// [`WindowFunnelState::finalize_events`]).
+trait StepRecorder {
+    /// Called when a chain (re)starts at an entry event (also on `allow_reentry`).
+    fn restart(&mut self, entry_ts: i64);
+    /// Called each time the chain advances one step.
+    fn record(&mut self, ts: i64);
+}
+
+/// No-op recorder for the plain `finalize` path.
+struct NoRecord;
+
+impl StepRecorder for NoRecord {
+    #[inline]
+    fn restart(&mut self, _entry_ts: i64) {}
+    #[inline]
+    fn record(&mut self, _ts: i64) {}
+}
+
+impl StepRecorder for Vec<i64> {
+    #[inline]
+    fn restart(&mut self, entry_ts: i64) {
+        self.clear();
+        self.push(entry_ts);
+    }
+    #[inline]
+    fn record(&mut self, ts: i64) {
+        self.push(ts);
+    }
+}
+
 /// State for the `window_funnel` aggregate function.
 ///
 /// Collects timestamped events during `update`, then processes them in `finalize`
@@ -330,7 +365,7 @@ impl WindowFunnelState {
             }
 
             let entry_ts = self.events[i].timestamp_us;
-            let step = self.scan_funnel(i, entry_ts);
+            let step = self.scan_funnel(i, entry_ts, &mut NoRecord);
             max_step = max_step.max(step);
 
             // Early termination: can't do better than matching all conditions
@@ -342,15 +377,70 @@ impl WindowFunnelState {
         max_step
     }
 
+    /// Computes the step timestamps of the best funnel chain.
+    ///
+    /// Returns one timestamp per matched step, in match order: the entry event
+    /// plus each advancing event. An event that advances multiple steps
+    /// contributes its timestamp once per step, so the result length always
+    /// equals [`finalize`](Self::finalize)'s step count. Among chains reaching
+    /// the same maximum step, the earliest entry wins (mirroring `finalize`'s
+    /// greedy scan order). Returns an empty vector when no entry condition
+    /// matches.
+    #[must_use]
+    pub fn finalize_events(&mut self) -> Vec<i64> {
+        if self.events.is_empty() || self.num_conditions == 0 {
+            return Vec::new();
+        }
+
+        sort_events(&mut self.events);
+        let mut best_step: i64 = 0;
+        let mut best: Vec<i64> = Vec::new();
+        let mut scratch: Vec<i64> = Vec::new();
+
+        for i in 0..self.events.len() {
+            if !self.events[i].condition(0) {
+                continue;
+            }
+
+            let entry_ts = self.events[i].timestamp_us;
+            let step = self.scan_funnel(i, entry_ts, &mut scratch);
+            if step > best_step {
+                best_step = step;
+                std::mem::swap(&mut best, &mut scratch);
+
+                // Early termination: can't do better than matching all conditions
+                if best_step == self.num_conditions as i64 {
+                    break;
+                }
+            }
+        }
+
+        debug_assert_eq!(
+            best.len() as i64,
+            if best_step == 0 { 0 } else { best_step },
+            "recorded chain length must equal the step count"
+        );
+        best
+    }
+
     /// Scans forward from an entry point trying to match funnel steps.
     ///
     /// Each active mode flag adds an independent constraint check. Constraints
     /// are evaluated in order: `STRICT`, `STRICT_ORDER`, `STRICT_DEDUPLICATION`,
     /// `STRICT_INCREASE`. If any constraint fails, the event is handled per
     /// that constraint's semantics (break, return, continue, or skip).
-    fn scan_funnel(&self, start_idx: usize, entry_ts: i64) -> i64 {
+    ///
+    /// `recorder` observes the chain: `restart` at the entry (and on
+    /// `allow_reentry` resets), `record` on each step advance.
+    fn scan_funnel<R: StepRecorder>(
+        &self,
+        start_idx: usize,
+        entry_ts: i64,
+        recorder: &mut R,
+    ) -> i64 {
         let mut current_step: usize = 1; // Already matched step 0
         let mut prev_matched_ts = entry_ts;
+        recorder.restart(entry_ts);
 
         for j in (start_idx + 1)..self.events.len() {
             let event = &self.events[j];
@@ -365,6 +455,7 @@ impl WindowFunnelState {
             if self.mode.has(FunnelMode::ALLOW_REENTRY) && current_step > 1 && event.condition(0) {
                 current_step = 1;
                 prev_matched_ts = event.timestamp_us;
+                recorder.restart(event.timestamp_us);
                 // Continue scanning from this new entry; don't also try to
                 // match the next step on this same event
                 continue;
@@ -416,6 +507,7 @@ impl WindowFunnelState {
             while event.condition(current_step) {
                 current_step += 1;
                 prev_matched_ts = event.timestamp_us;
+                recorder.record(event.timestamp_us);
 
                 // Matched all conditions
                 if current_step >= self.num_conditions {
@@ -1663,6 +1755,227 @@ mod proptests {
 
             let combined = a.combine(&b);
             prop_assert_eq!(combined.events.len(), n_a + n_b);
+        }
+    }
+}
+
+#[cfg(test)]
+mod finalize_events_tests {
+    use super::*;
+
+    fn make_event(ts: i64, conds: &[bool]) -> Event {
+        Event::from_bools(ts, conds)
+    }
+
+    fn state_with(
+        window_us: i64,
+        mode: FunnelMode,
+        events: &[(i64, &[bool])],
+    ) -> WindowFunnelState {
+        let mut state = WindowFunnelState::new();
+        state.window_size_us = window_us;
+        state.mode = mode;
+        for &(ts, conds) in events {
+            state.update(make_event(ts, conds), conds.len());
+        }
+        state
+    }
+
+    #[test]
+    fn test_events_empty_state() {
+        let mut state = WindowFunnelState::new();
+        assert!(state.finalize_events().is_empty());
+    }
+
+    #[test]
+    fn test_events_complete_funnel() {
+        let mut state = state_with(
+            3_600_000_000,
+            FunnelMode::DEFAULT,
+            &[
+                (0, &[true, false, false]),
+                (1_000_000, &[false, true, false]),
+                (2_000_000, &[false, false, true]),
+            ],
+        );
+        assert_eq!(state.finalize_events(), vec![0, 1_000_000, 2_000_000]);
+    }
+
+    #[test]
+    fn test_events_partial_funnel() {
+        let mut state = state_with(
+            3_600_000_000,
+            FunnelMode::DEFAULT,
+            &[
+                (0, &[true, false, false]),
+                (1_000_000, &[false, true, false]),
+            ],
+        );
+        assert_eq!(state.finalize_events(), vec![0, 1_000_000]);
+    }
+
+    #[test]
+    fn test_events_no_entry_returns_empty() {
+        let mut state = state_with(
+            3_600_000_000,
+            FunnelMode::DEFAULT,
+            &[
+                (0, &[false, true, false]),
+                (1_000_000, &[false, false, true]),
+            ],
+        );
+        assert!(state.finalize_events().is_empty());
+    }
+
+    #[test]
+    fn test_events_multi_step_event_repeats_timestamp() {
+        // One event satisfying conditions 2 and 3 advances two steps and
+        // contributes its timestamp twice.
+        let mut state = state_with(
+            3_600_000_000,
+            FunnelMode::DEFAULT,
+            &[
+                (0, &[true, false, false]),
+                (1_000_000, &[false, true, true]),
+            ],
+        );
+        assert_eq!(state.finalize_events(), vec![0, 1_000_000, 1_000_000]);
+    }
+
+    #[test]
+    fn test_events_best_chain_wins_over_earlier_shorter() {
+        // First entry only reaches step 1 (next event out of window);
+        // second entry completes the funnel.
+        let mut state = state_with(
+            5_000_000,
+            FunnelMode::DEFAULT,
+            &[
+                (0, &[true, false]),
+                (10_000_000, &[true, false]),
+                (11_000_000, &[false, true]),
+            ],
+        );
+        assert_eq!(state.finalize_events(), vec![10_000_000, 11_000_000]);
+    }
+
+    #[test]
+    fn test_events_earliest_chain_wins_ties() {
+        // Both entries reach the full 2 steps; the earliest entry's chain is
+        // returned (mirrors finalize's greedy order).
+        let mut state = state_with(
+            5_000_000,
+            FunnelMode::DEFAULT,
+            &[
+                (0, &[true, false]),
+                (1_000_000, &[false, true]),
+                (2_000_000, &[true, false]),
+                (3_000_000, &[false, true]),
+            ],
+        );
+        assert_eq!(state.finalize_events(), vec![0, 1_000_000]);
+    }
+
+    #[test]
+    fn test_events_window_boundary_excluded() {
+        let mut state = state_with(
+            1_000_000,
+            FunnelMode::DEFAULT,
+            &[(0, &[true, false]), (2_000_000, &[false, true])],
+        );
+        // Second event is outside the window: only the entry is matched.
+        assert_eq!(state.finalize_events(), vec![0]);
+    }
+
+    #[test]
+    fn test_events_allow_reentry_records_reset_chain() {
+        // Re-entry at t=2s resets the chain; the winning chain starts there.
+        let mut state = state_with(
+            10_000_000,
+            FunnelMode::ALLOW_REENTRY,
+            &[
+                (0, &[true, false, false]),
+                (1_000_000, &[false, true, false]),
+                (2_000_000, &[true, false, false]),
+                (3_000_000, &[false, true, false]),
+                (4_000_000, &[false, false, true]),
+            ],
+        );
+        assert_eq!(
+            state.finalize_events(),
+            vec![2_000_000, 3_000_000, 4_000_000]
+        );
+    }
+
+    #[test]
+    fn test_events_strict_once_one_step_per_event() {
+        let mut state = state_with(
+            3_600_000_000,
+            FunnelMode::STRICT_ONCE,
+            &[
+                (0, &[true, false, false]),
+                (1_000_000, &[false, true, true]),
+            ],
+        );
+        // strict_once: the dual-condition event advances only one step.
+        assert_eq!(state.finalize_events(), vec![0, 1_000_000]);
+    }
+
+    /// A finalize-parity scenario: window, mode, and event list.
+    type Scenario = (i64, FunnelMode, &'static [(i64, &'static [bool])]);
+
+    #[test]
+    fn test_events_length_always_matches_finalize() {
+        // finalize_events().len() must equal finalize() across modes/shapes.
+        let scenarios: &[Scenario] = &[
+            (
+                5_000_000,
+                FunnelMode::DEFAULT,
+                &[
+                    (0, &[true, false, true]),
+                    (1_000_000, &[false, true, false]),
+                    (2_000_000, &[true, false, false]),
+                    (7_000_000, &[false, false, true]),
+                ],
+            ),
+            (
+                10_000_000,
+                FunnelMode::STRICT,
+                &[
+                    (0, &[true, false, false]),
+                    (1_000_000, &[false, true, false]),
+                    (2_000_000, &[false, true, true]),
+                ],
+            ),
+            (
+                10_000_000,
+                FunnelMode::STRICT_ORDER,
+                &[
+                    (0, &[true, false, false]),
+                    (1_000_000, &[true, false, false]),
+                    (2_000_000, &[false, true, false]),
+                ],
+            ),
+            (
+                10_000_000,
+                FunnelMode::STRICT_INCREASE,
+                &[
+                    (0, &[true, false, false]),
+                    (0, &[false, true, false]),
+                    (1_000_000, &[false, true, false]),
+                    (2_000_000, &[false, false, true]),
+                ],
+            ),
+        ];
+        for (idx, &(window, mode, events)) in scenarios.iter().enumerate() {
+            let mut a = state_with(window, mode, events);
+            let mut b = state_with(window, mode, events);
+            let steps = a.finalize();
+            let timestamps = b.finalize_events();
+            assert_eq!(
+                timestamps.len() as i64,
+                steps,
+                "scenario {idx}: length must equal finalize() step count"
+            );
         }
     }
 }
