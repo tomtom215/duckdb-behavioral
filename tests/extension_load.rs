@@ -170,8 +170,8 @@ fn load_extension() -> InMemoryDb {
     db
 }
 
-/// The extension loads without error and registers all eight functions in the
-/// catalog. A missing registration here is exactly the class of bug that passed
+/// The extension loads without error and registers all eight aggregate
+/// functions plus the `behavioral_version()` diagnostic scalar in the catalog. A missing registration here is exactly the class of bug that passed
 /// the unit suite while shipping a broken extension.
 #[test]
 fn loads_and_registers_all_functions() {
@@ -185,6 +185,7 @@ fn loads_and_registers_all_functions() {
         "sequence_count",
         "sequence_match_events",
         "sequence_next_node",
+        "behavioral_version",
     ] {
         let count: i64 = db
             .query_one(&format!(
@@ -193,6 +194,13 @@ fn loads_and_registers_all_functions() {
             .unwrap_or_else(|e| panic!("catalog query for {func} failed: {e}"));
         assert!(count >= 1, "function `{func}` is not registered");
     }
+}
+
+#[test]
+fn behavioral_version_scalar() {
+    let db = load_extension();
+    let v: String = db.query_one("SELECT behavioral_version()").unwrap();
+    assert_eq!(v, env!("CARGO_PKG_VERSION"));
 }
 
 #[test]

@@ -3,8 +3,9 @@
 
 //! # `behavioral` — Behavioral Analytics Extension for `DuckDB`
 //!
-//! Provides eight functions for behavioral analytics, inspired by `ClickHouse`'s
-//! behavioral analytics functions but designed for `DuckDB`'s SQL dialect.
+//! Provides eight behavioral analytics functions, inspired by `ClickHouse`'s
+//! behavioral analytics functions but designed for `DuckDB`'s SQL dialect,
+//! plus a `behavioral_version()` diagnostic scalar.
 //!
 //! ## Functions
 //!
@@ -18,6 +19,7 @@
 //! | `sequence_count(pattern, ts, c1, ..., cN)` | Aggregate | Counts pattern matches in event sequences |
 //! | `sequence_match_events(pattern, ts, c1, ..., cN)` | Aggregate | Returns matched step timestamps |
 //! | `sequence_next_node(dir, base, ts, val, bc, e1, ..., eN)` | Aggregate | Next event after pattern match |
+//! | `behavioral_version()` | Scalar | Loaded extension version |
 //!
 //! ## Installation
 //!

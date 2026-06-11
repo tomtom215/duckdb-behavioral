@@ -43,6 +43,7 @@ pub mod sequence;
 pub mod sequence_match_events;
 pub mod sequence_next_node;
 pub mod sessionize;
+pub mod version;
 pub mod window_funnel;
 pub mod window_funnel_events;
 
@@ -74,6 +75,7 @@ pub unsafe fn register_all(con: &Connection) -> Result<(), ExtensionError> {
         sequence::register_sequence_count(con)?;
         sequence_match_events::register_sequence_match_events(con)?;
         sequence_next_node::register_sequence_next_node(con)?;
+        version::register_behavioral_version(con)?;
     }
 
     Ok(())

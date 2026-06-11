@@ -45,6 +45,7 @@ src/
 └── ffi/
     ├── mod.rs              # register_all() — dispatches to all FFI modules via Registrar trait
     ├── sessionize.rs       # FFI via quack-rs AggregateFunctionBuilder (single fixed signature)
+    ├── version.rs          # behavioral_version() scalar via quack-rs ScalarFunctionBuilder
     ├── retention.rs        # FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     ├── window_funnel.rs    # FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
     ├── window_funnel_events.rs   # FFI sharing window_funnel update/combine + LIST(TIMESTAMP) finalize
@@ -125,7 +126,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (470 unit + 9 integration + 1 doc-test).
+# Run all tests (470 unit + 10 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -169,6 +170,7 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 | `sequence_count` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BIGINT` | Count non-overlapping pattern matches |
 | `sequence_match_events` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `LIST(TIMESTAMP)` | Return matched condition timestamps |
 | `sequence_next_node` | `(VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, BOOLEAN, ...)` | `VARCHAR` | Next event value after pattern match |
+| `behavioral_version` | `()` | `VARCHAR` | Loaded extension version (diagnostic scalar) |
 
 ## Dependencies
 
@@ -231,10 +233,11 @@ Every change MUST meet these requirements:
   modules -- `sequence_match` and `sequence_count` share one state type;
   `window_funnel_events` shares `WindowFunnelState`)
 - **1 doc-test** for the pattern parser
-- **9 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **10 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
-  exercise all 8 functions through live SQL — the registration/FFI path unit
+  exercise all 8 aggregate functions plus the `behavioral_version()` scalar
+  through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
 - **E2E tests** against real DuckDB v1.5.3 CLI: 12 workflow test steps
   (2 platforms) plus 8 SQL integration test files with 75 queries covering
@@ -353,7 +356,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
 Run with `cargo test`. The 470 unit tests run in <1 second (the doc-test in
-~2s). The 9 in-process integration tests add ~15s on a cold run — they build and
+~2s). The 10 in-process integration tests add ~15s on a cold run — they build and
 `LOAD` the real release `cdylib` — and are near-instant once that artifact is
 cached.
 
