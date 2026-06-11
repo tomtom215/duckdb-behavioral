@@ -21,7 +21,7 @@
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionBuilder, FfiState};
+use quack_rs::aggregate::{AggregateFunctionBuilder, AggregateFunctionInfo, FfiState};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
 
@@ -65,11 +65,12 @@ pub unsafe fn register_sessionize(
 // as registered. `states` points to `row_count` aggregate state pointers, each
 // initialized by `FfiState::init_callback`.
 unsafe extern "C" fn state_update(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
 
         // Vector 0: TIMESTAMP (event timestamp)
@@ -94,10 +95,24 @@ unsafe extern "C" fn state_update(
                 continue;
             }
 
-            // Read interval threshold (same for all rows, but read per-row for safety)
+            // Read interval threshold (same for all rows, but read per-row for safety).
+            // Invalid gaps (month-based or negative) abort the query instead of
+            // silently sessionizing with a zero threshold.
             let iv = interval_reader.read_interval(i);
-            if let Some(threshold_us) = interval_to_micros(iv.months, iv.days, iv.micros) {
-                state.threshold_us = threshold_us;
+            match interval_to_micros(iv.months, iv.days, iv.micros) {
+                Some(threshold_us) if threshold_us >= 0 => state.threshold_us = threshold_us,
+                Some(_) => {
+                    info.set_error("sessionize: INTERVAL gap must be non-negative");
+                    return;
+                }
+                None => {
+                    info.set_error(
+                        "sessionize: invalid INTERVAL gap: month-based intervals are \
+                         ambiguous (28-31 days) and the total must fit in signed 64-bit \
+                         microseconds; use day/hour/minute/second units instead",
+                    );
+                    return;
+                }
             }
 
             state.update(ts_reader.read_i64(i));

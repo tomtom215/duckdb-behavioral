@@ -51,6 +51,18 @@ Given events for a single user with a 30-minute threshold:
 | 11:45 | 2 | 15 min gap (within threshold) |
 | 13:00 | 3 | 75 min gap (exceeds threshold) |
 
+## Errors
+
+Invalid gap intervals abort the query with a descriptive SQL error instead of
+silently sessionizing with a zero threshold:
+
+- **Month-based gap** — month intervals are ambiguous (28-31 days); use
+  day/hour/minute/second units (e.g. `INTERVAL '30 minutes'`)
+- **Negative gap** — the gap must be non-negative
+
+A `NULL` timestamp produces a `NULL` session ID for that row; a `NULL` gap
+skips the row leniently.
+
 ## Implementation
 
 The state tracks the first timestamp, last timestamp, and the number of session

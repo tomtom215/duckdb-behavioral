@@ -81,6 +81,18 @@ Time constraints are evaluated relative to the timestamp of the previously
 matched condition step. The time difference is computed in seconds, matching
 ClickHouse semantics.
 
+## Errors
+
+A malformed pattern aborts the query with the parser's position-annotated
+message instead of silently returning `NULL`:
+
+```text
+invalid sequence pattern '(?1)(?': pattern error at position 6: ...
+```
+
+A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
+conventions.
+
 ## Implementation
 
 | Operation | Complexity |

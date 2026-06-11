@@ -391,3 +391,75 @@ fn sequence_next_node_aggregate() {
         vec![(1, "home".to_string()), (2, "search".to_string())]
     );
 }
+
+/// Invalid configuration raises real SQL errors (via
+/// `duckdb_aggregate_function_set_error`) instead of silently producing wrong
+/// results or NULL: unknown funnel modes, month-based or negative intervals,
+/// malformed sequence patterns, and unknown `sequence_next_node`
+/// direction/base values.
+#[test]
+fn invalid_configuration_raises_sql_errors() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE inv(ts TIMESTAMP, event VARCHAR);
+         INSERT INTO inv VALUES
+            ('2024-01-01 00:00:00','view'), ('2024-01-01 00:05:00','cart');",
+    )
+    .unwrap();
+
+    let cases: &[(&str, &str)] = &[
+        (
+            "SELECT window_funnel(INTERVAL '1 hour', 'strict_typo', ts, \
+                event='view', event='cart') FROM inv",
+            "unknown mode 'strict_typo'",
+        ),
+        (
+            "SELECT window_funnel(INTERVAL '1 month', ts, \
+                event='view', event='cart') FROM inv",
+            "month-based intervals are ambiguous",
+        ),
+        (
+            "SELECT window_funnel(INTERVAL '-1 hour', ts, \
+                event='view', event='cart') FROM inv",
+            "must be non-negative",
+        ),
+        (
+            "SELECT sessionize(ts, INTERVAL '1 month') OVER (ORDER BY ts) FROM inv",
+            "month-based intervals are ambiguous",
+        ),
+        (
+            "SELECT sequence_match('(?1)(?', ts, event='view', event='cart') FROM inv",
+            "invalid sequence pattern '(?1)(?'",
+        ),
+        (
+            "SELECT sequence_count('(?1)(?', ts, event='view', event='cart') FROM inv",
+            "invalid sequence pattern",
+        ),
+        (
+            "SELECT sequence_match_events('(?1)x(?2)', ts, \
+                event='view', event='cart') FROM inv",
+            "invalid sequence pattern",
+        ),
+        (
+            "SELECT sequence_next_node('sideways', 'head', ts, event, \
+                event='view', event='cart') FROM inv",
+            "unknown direction 'sideways'",
+        ),
+        (
+            "SELECT sequence_next_node('forward', 'middle', ts, event, \
+                event='view', event='cart') FROM inv",
+            "unknown base 'middle'",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        let err = db
+            .query_one::<i64>(sql)
+            .expect_err(&format!("query must fail: {sql}"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains(expected),
+            "error for `{sql}`\n  expected substring: {expected}\n  actual: {msg}"
+        );
+    }
+}

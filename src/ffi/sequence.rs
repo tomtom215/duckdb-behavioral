@@ -8,9 +8,10 @@
 //! and [`quack_rs::vector::VectorReader`] for safe vector reading.
 
 use crate::common::event::Event;
+use crate::pattern::parser::parse_pattern;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
 
@@ -149,11 +150,12 @@ unsafe extern "C" fn count_state_finalize(
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 // VARCHAR is read via VectorReader::read_str() which handles duckdb_string_t correctly.
 unsafe extern "C" fn sequence_state_update(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
         // Vector 0: VARCHAR (pattern) — read via VectorReader::read_str()
@@ -172,10 +174,17 @@ unsafe extern "C" fn sequence_state_update(
                 continue;
             };
 
-            // Read pattern from first row (same for all rows in a group)
+            // Read pattern from first row (same for all rows in a group).
+            // Validated eagerly: a malformed pattern aborts the query with the
+            // parser's position-annotated message instead of silently
+            // returning NULL at finalize.
             if state.pattern_str.is_none() && pattern_reader.is_valid(i) {
                 let s = pattern_reader.read_str(i);
                 state.set_pattern(s);
+                if let Err(e) = parse_pattern(s) {
+                    info.set_error(&format!("invalid sequence pattern '{s}': {e}"));
+                    return;
+                }
             }
 
             // Skip NULL timestamps

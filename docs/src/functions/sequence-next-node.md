@@ -102,6 +102,17 @@ GROUP BY user_id;
 | Return type | `Nullable(String)` | `VARCHAR` (nullable) |
 | Experimental flag | Requires `allow_experimental_funnel_functions = 1` | Always available |
 
+## Errors
+
+Unknown configuration values abort the query with a descriptive SQL error
+instead of silently returning `NULL`:
+
+- **Unknown direction** — expected `'forward'` or `'backward'`
+- **Unknown base** — expected `'head'`, `'tail'`, `'first_match'`, or
+  `'last_match'`
+
+`NULL` configuration parameters are skipped leniently.
+
 ## Implementation
 
 | Operation | Complexity |

@@ -69,6 +69,18 @@ The timestamp of the `(?1)` match (10:00) and the `(?2)` match (10:30).
 Uses the same pattern syntax as [`sequence_match`](./sequence-match.md). Refer
 to that page for the full syntax reference.
 
+## Errors
+
+A malformed pattern aborts the query with the parser's position-annotated
+message instead of silently returning `NULL`:
+
+```text
+invalid sequence pattern '(?1)(?': pattern error at position 6: ...
+```
+
+A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
+conventions.
+
 ## Implementation
 
 The NFA executor uses a separate `NfaStateWithTimestamps` type that tracks

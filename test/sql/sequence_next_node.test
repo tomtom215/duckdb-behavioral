@@ -164,3 +164,16 @@ ORDER BY user_id;
 ----
 1	home
 2	search
+
+# Unknown direction/base values raise an error instead of returning NULL
+statement error
+SELECT sequence_next_node('sideways', 'head', ts, page, is_home, is_product)
+FROM page_events;
+----
+unknown direction 'sideways'
+
+statement error
+SELECT sequence_next_node('forward', 'middle', ts, page, is_home, is_product)
+FROM page_events;
+----
+unknown base 'middle'

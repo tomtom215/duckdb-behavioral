@@ -83,3 +83,14 @@ SELECT sequence_match('(?1)(?2)(?3)(?4)(?5)', ts, c1, c2, c3, c4, c5)
 FROM multi_cond;
 ----
 true
+
+# Malformed patterns raise a position-annotated error instead of returning NULL
+statement error
+SELECT sequence_match('(?1)(?', ts, is_view, is_cart) FROM click_events;
+----
+invalid sequence pattern
+
+statement error
+SELECT sequence_count('(?1)(?', ts, is_view, is_cart) FROM click_events;
+----
+invalid sequence pattern

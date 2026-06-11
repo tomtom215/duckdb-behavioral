@@ -100,6 +100,15 @@ src/
    functions use `con.register_aggregate_set(builder)` and `sessionize` uses
    `con.register_aggregate(builder)` — nothing touches the raw connection handle.
 
+7. **Strict configuration validation**: Invalid configuration aborts the query
+   with a descriptive SQL error (via `AggregateFunctionInfo::set_error` →
+   `duckdb_aggregate_function_set_error`) instead of silently producing wrong
+   results or NULL: unknown `window_funnel` mode strings, month-based or
+   negative INTERVAL windows/gaps, malformed sequence patterns (the parser's
+   position-annotated message), and unknown `sequence_next_node`
+   direction/base values. NULL configuration parameters remain lenient (row
+   skipped / NULL result), matching SQL aggregate conventions.
+
 ## Build & Test
 
 ```sql
@@ -219,13 +228,13 @@ Every change MUST meet these requirements:
   config-propagation tests for all 7 aggregate functions (across 6 FFI test
   modules -- `sequence_match` and `sequence_count` share one state type)
 - **1 doc-test** for the pattern parser
-- **7 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **8 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 7 functions through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
 - **E2E tests** against real DuckDB v1.5.3 CLI: 11 workflow test steps
-  (2 platforms) plus 7 SQL integration test files with 59 queries covering
+  (2 platforms) plus 7 SQL integration test files with 67 queries covering
   all 7 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
   no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
   all 8 direction/base combinations)
@@ -335,7 +344,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
 Run with `cargo test`. The 457 unit tests run in <1 second (the doc-test in
-~2s). The 7 in-process integration tests add ~15s on a cold run — they build and
+~2s). The 8 in-process integration tests add ~15s on a cold run — they build and
 `LOAD` the real release `cdylib` — and are near-instant once that artifact is
 cached.
 
@@ -349,7 +358,7 @@ cached.
 
 **E2E tests** (against real DuckDB CLI):
 - 11 workflow test steps per platform (Linux + macOS) in `e2e.yml`
-- 7 SQL integration test files with 59 queries in `test/sql/`
+- 7 SQL integration test files with 67 queries in `test/sql/`
 - Covers all 7 functions with basic usage, timeouts, all 6 modes, GROUP BY,
   no-match, NULL inputs, empty tables, 5+ conditions, all direction x base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`

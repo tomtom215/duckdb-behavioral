@@ -56,3 +56,10 @@ ORDER BY ts;
 2024-01-01 00:00:00	1
 2024-01-01 00:05:00	1
 NULL	NULL
+
+# Month-based gap intervals are ambiguous and raise an error
+statement error
+SELECT sessionize(ts, INTERVAL '1 month') OVER (ORDER BY ts)
+FROM (SELECT TIMESTAMP '2024-01-01 00:00:00' AS ts);
+----
+month-based intervals are ambiguous
