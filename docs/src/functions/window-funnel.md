@@ -85,6 +85,13 @@ Result: `2`
 - Step 2 matched at 10:20 (add_to_cart, within 1 hour of 10:00).
 - Step 3 at 11:30 is outside the 1-hour window from the entry at 10:00.
 
+### Determinism
+
+Events sort by `(timestamp, conditions)` before the scan, so results are
+deterministic regardless of thread count, physical row order, or the order in
+which DuckDB's parallel aggregation combines partial states — including
+same-timestamp event bursts.
+
 ## Modes
 
 Modes are independently combinable via a comma-separated string parameter.

@@ -89,13 +89,14 @@ pub unsafe fn register_sequence_count(
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB BOOLEAN vector. Pattern errors produce NULL output via validity bitmap.
 unsafe extern "C" fn match_state_finalize(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     result: duckdb_vector,
     count: idx_t,
     offset: idx_t,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let mut writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
@@ -108,7 +109,13 @@ unsafe extern "C" fn match_state_finalize(
 
             match state.finalize_match() {
                 Ok(matched) => writer.write_bool(idx, matched),
-                Err(_) => writer.set_null(idx),
+                // A NULL pattern finalizes as NULL; real execution errors
+                // (e.g. exploration budget exhaustion) abort the query.
+                Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
+                Err(e) => {
+                    info.set_error(&format!("sequence_match: {e}"));
+                    writer.set_null(idx);
+                }
             }
         }
     }
@@ -119,13 +126,14 @@ unsafe extern "C" fn match_state_finalize(
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB BIGINT vector. Pattern errors produce NULL output via validity bitmap.
 unsafe extern "C" fn count_state_finalize(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     result: duckdb_vector,
     count: idx_t,
     offset: idx_t,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let mut writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
@@ -138,7 +146,13 @@ unsafe extern "C" fn count_state_finalize(
 
             match state.finalize_count() {
                 Ok(n) => writer.write_i64(idx, n),
-                Err(_) => writer.set_null(idx),
+                // A NULL pattern finalizes as NULL; real execution errors
+                // (e.g. exploration budget exhaustion) abort the query.
+                Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
+                Err(e) => {
+                    info.set_error(&format!("sequence_count: {e}"));
+                    writer.set_null(idx);
+                }
             }
         }
     }

@@ -81,16 +81,26 @@ GROUP BY user_id;
 
 ## Behavior
 
-1. Events are sorted by timestamp.
-2. The function scans in the specified direction to find a sequential chain
-   of events matching `event1`, `event2`, ..., `eventN`.
-3. The starting event must satisfy `base_condition`.
-4. For **forward**: returns the value of the event immediately after the last
-   matched step.
-5. For **backward**: event1 matches at the starting position (later timestamp),
-   then event2 matches at an earlier position, etc. Returns the value of the
-   event immediately before the earliest matched step.
-6. Returns `NULL` if no complete match is found, or if no adjacent event exists.
+Matches ClickHouse's `sequenceNextNode` exactly (verified against its
+implementation):
+
+1. Events are sorted by `(timestamp, value)` — the value tie-break makes
+   results deterministic when same-timestamp events arrive in arbitrary order.
+2. A **single anchor** is selected by `base`:
+   - `head` / `tail`: the literal first/last event in sorted order, which must
+     itself satisfy `base_condition` — otherwise the result is `NULL`.
+   - `first_match` / `last_match`: the first/last event satisfying both
+     `base_condition` **and** `event1`.
+3. The chain must match **consecutive** events: `eventK` must hold at the
+   K-th position from the anchor (ascending for `forward`, descending for
+   `backward`). Interleaved non-matching events break the chain, and a failed
+   chain is **not** retried at other anchors.
+4. On a full match, the value of the event immediately after (`forward`) or
+   before (`backward`) the chain is returned; `NULL` when that position falls
+   off either end. Consequently `forward`+`tail` and `backward`+`head` always
+   return `NULL` for one or more steps — the adjacent node would be past the
+   end of the data (ClickHouse behaves identically).
+5. Returns `NULL` if no anchor exists or the chain does not match.
 
 ## Differences from ClickHouse
 

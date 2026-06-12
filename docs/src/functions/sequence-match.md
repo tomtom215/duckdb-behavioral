@@ -81,6 +81,11 @@ Time constraints are evaluated relative to the timestamp of the previously
 matched condition step. The time difference is computed in seconds, matching
 ClickHouse semantics.
 
+### Determinism
+
+Events sort by `(timestamp, conditions)` before matching, so results are
+deterministic regardless of thread count or physical row order.
+
 ## Errors
 
 A malformed pattern aborts the query with the parser's position-annotated
@@ -92,6 +97,11 @@ invalid sequence pattern '(?1)(?': pattern error at position 6: ...
 
 A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
 conventions.
+
+Adversarial patterns that exhaust the NFA exploration budget (scaled as
+`8 × events × steps`) abort the query with a descriptive error rather than
+silently reporting no match. Consecutive `.*` wildcards are collapsed at
+parse time, so ordinary patterns never approach the budget.
 
 ## Implementation
 

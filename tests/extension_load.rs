@@ -527,3 +527,251 @@ fn invalid_configuration_raises_sql_errors() {
         );
     }
 }
+
+/// `DuckDB`'s special `±infinity` timestamps are `i64::MAX` / `i64::MIN+1`
+/// internally. Gap arithmetic must saturate rather than wrap: a gap that
+/// spans from -infinity to a finite timestamp is infinite, not negative.
+#[test]
+fn infinity_timestamps_saturate_not_wrap() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE inf_s(ts TIMESTAMP);
+         INSERT INTO inf_s VALUES
+            (TIMESTAMP '-infinity'), (TIMESTAMP '2024-01-01 00:00:00'), (TIMESTAMP 'infinity');",
+    )
+    .unwrap();
+
+    // Each gap is infinite, so each row opens a new session.
+    let ids: Vec<i64> = db
+        .conn()
+        .prepare(
+            "SELECT sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) FROM inf_s ORDER BY ts",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(ids, vec![1, 2, 3], "infinite gaps must open new sessions");
+
+    // The second event is infinitely far from the entry: funnel stops at step 1.
+    db.execute_batch(
+        "CREATE TABLE inf_f(ts TIMESTAMP, a BOOLEAN, b BOOLEAN);
+         INSERT INTO inf_f VALUES
+            (TIMESTAMP '-infinity', true, false),
+            (TIMESTAMP '2024-01-01 00:00:00', false, true);",
+    )
+    .unwrap();
+    let step: i32 = db
+        .query_one("SELECT window_funnel(INTERVAL '1 hour', ts, a, b) FROM inf_f")
+        .unwrap();
+    assert_eq!(step, 1, "an infinitely distant event is outside any window");
+
+    // The elapsed time from -infinity is enormous, so (?t>=1) must hold.
+    let matched: bool = db
+        .query_one("SELECT sequence_match('(?1)(?t>=1)(?2)', ts, a, b) FROM inf_f")
+        .unwrap();
+    assert!(matched, "elapsed time from -infinity satisfies (?t>=1)");
+}
+
+/// Time-constraint numbers larger than `i64::MAX` must raise a pattern error
+/// instead of wrapping negative through an unchecked cast.
+#[test]
+fn time_constraint_over_i64_max_is_rejected() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE big_t(ts TIMESTAMP, a BOOLEAN, b BOOLEAN);
+         INSERT INTO big_t VALUES (TIMESTAMP '2024-01-01 00:00:00', true, false),
+                                  (TIMESTAMP '2024-01-01 00:00:05', false, true);",
+    )
+    .unwrap();
+    let err = db
+        .query_one::<bool>(
+            "SELECT sequence_match('(?1)(?t>=18446744073709551615)(?2)', ts, a, b) FROM big_t",
+        )
+        .expect_err("oversized time constraint must fail");
+    assert!(
+        err.to_string().contains("invalid sequence pattern"),
+        "actual error: {err}"
+    );
+}
+
+/// Pins the ClickHouse-parity semantics of `sequence_next_node` across all
+/// eight direction/base combinations through live SQL, mirroring
+/// `test/sql/sequence_next_node.test`: head/tail anchor at the literal
+/// first/last event, chains match consecutive events only, and a failed
+/// chain is not retried at other anchors.
+#[test]
+fn sequence_next_node_direction_base_matrix() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE pm(user_id INTEGER, ts TIMESTAMP, page VARCHAR, is_home BOOLEAN, is_product BOOLEAN);
+         INSERT INTO pm VALUES
+            (1,'2024-01-01 00:00:00','home',true,false),
+            (1,'2024-01-01 00:01:00','product',false,true),
+            (1,'2024-01-01 00:02:00','cart',false,false),
+            (1,'2024-01-01 00:03:00','checkout',false,false),
+            (2,'2024-01-01 00:00:00','home',true,false),
+            (2,'2024-01-01 00:01:00','search',false,false),
+            (2,'2024-01-01 00:02:00','product',false,true);",
+    )
+    .unwrap();
+
+    let run = |dir: &str, base: &str, cond: &str| -> Vec<Option<String>> {
+        db.conn()
+            .prepare(&format!(
+                "SELECT sequence_next_node('{dir}', '{base}', ts, page, {cond}, {cond}) \
+                 FROM pm GROUP BY user_id ORDER BY user_id"
+            ))
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let some = |v: &str| Some(v.to_string());
+
+    // forward
+    assert_eq!(
+        run("forward", "head", "is_home"),
+        vec![some("product"), some("search")]
+    );
+    assert_eq!(
+        run("forward", "tail", "is_home"),
+        vec![None, None],
+        "tail = literal last event"
+    );
+    assert_eq!(
+        run("forward", "first_match", "is_home"),
+        vec![some("product"), some("search")]
+    );
+    assert_eq!(
+        run("forward", "last_match", "is_home"),
+        vec![some("product"), some("search")]
+    );
+    // backward
+    assert_eq!(
+        run("backward", "head", "is_product"),
+        vec![None, None],
+        "head = literal first event"
+    );
+    assert_eq!(
+        run("backward", "tail", "is_product"),
+        vec![None, some("search")]
+    );
+    assert_eq!(
+        run("backward", "first_match", "is_product"),
+        vec![some("home"), some("search")]
+    );
+    assert_eq!(
+        run("backward", "last_match", "is_product"),
+        vec![some("home"), some("search")]
+    );
+
+    // Consecutive-chain contract: home -> product is adjacent for user 1
+    // (cart follows), but user 2 has 'search' between home and product.
+    let chains: Vec<Option<String>> = db
+        .conn()
+        .prepare(
+            "SELECT sequence_next_node('forward', 'first_match', ts, page, \
+                is_home, is_home, is_product) \
+             FROM pm GROUP BY user_id ORDER BY user_id",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        chains,
+        vec![some("cart"), None],
+        "gap events break the chain"
+    );
+}
+
+/// Parallel hash aggregation combines partial states in nondeterministic
+/// order. With the (timestamp, conditions) sort key, same-timestamp ties have
+/// one canonical order, so results must be identical across thread counts and
+/// physical insertion orders.
+#[test]
+fn parallel_combine_determinism_under_ties() {
+    let db = load_extension();
+    // 200 users x 60 events; every user has bursts of same-timestamp events
+    // carrying different conditions (the tie-heavy worst case).
+    db.execute_batch(
+        "CREATE TABLE det AS
+         SELECT (i % 200) AS user_id,
+                TIMESTAMP '2024-01-01 00:00:00' + INTERVAL (((i // 200) % 20) || ' minutes') AS ts,
+                ((i * 7) % 3 = 0) AS c1,
+                ((i * 11) % 3 = 1) AS c2,
+                ((i * 13) % 3 = 2) AS c3
+         FROM range(12000) t(i);
+         CREATE TABLE det_rev AS SELECT * FROM det ORDER BY user_id DESC, ts DESC, c1, c2, c3;",
+    )
+    .unwrap();
+
+    let funnel_hash = |table: &str, threads: i32| -> String {
+        db.execute_batch(&format!("SET threads={threads}")).unwrap();
+        db.query_one(&format!(
+            "SELECT md5(string_agg(step::VARCHAR, ',' ORDER BY user_id)) FROM (
+                SELECT user_id, window_funnel(INTERVAL '1 hour', ts, c1, c2, c3) AS step
+                FROM {table} GROUP BY user_id)"
+        ))
+        .unwrap()
+    };
+
+    let base = funnel_hash("det", 1);
+    assert_eq!(
+        funnel_hash("det", 4),
+        base,
+        "thread count must not change results"
+    );
+    assert_eq!(
+        funnel_hash("det_rev", 4),
+        base,
+        "physical row order must not change results"
+    );
+
+    let count_hash = |table: &str, threads: i32| -> String {
+        db.execute_batch(&format!("SET threads={threads}")).unwrap();
+        db.query_one(&format!(
+            "SELECT md5(string_agg(c::VARCHAR, ',' ORDER BY user_id)) FROM (
+                SELECT user_id, sequence_count('(?1).*(?2)', ts, c1, c2) AS c
+                FROM {table} GROUP BY user_id)"
+        ))
+        .unwrap()
+    };
+    let base = count_hash("det", 1);
+    assert_eq!(count_hash("det", 4), base);
+    assert_eq!(count_hash("det_rev", 4), base);
+}
+
+/// `window_funnel` works as a windowed aggregate (`DuckDB` windows any
+/// aggregate): a running funnel over an expanding frame is monotonically
+/// non-decreasing and ends at the full GROUP BY result.
+#[test]
+fn window_funnel_as_windowed_aggregate() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE wf(ts TIMESTAMP, event VARCHAR);
+         INSERT INTO wf VALUES
+            ('2024-01-01 00:00:00','view'),
+            ('2024-01-01 00:05:00','cart'),
+            ('2024-01-01 00:10:00','purchase');",
+    )
+    .unwrap();
+    let running: Vec<i32> = db
+        .conn()
+        .prepare(
+            "SELECT window_funnel(INTERVAL '1 hour', ts, \
+                event='view', event='cart', event='purchase') \
+             OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) \
+             FROM wf ORDER BY ts",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(running, vec![1, 2, 3]);
+}

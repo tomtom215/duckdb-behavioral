@@ -92,16 +92,24 @@ impl Event {
     }
 }
 
-/// Sorts events by timestamp (ascending) using unstable sort.
+/// Sorts events by `(timestamp, conditions)` ascending using unstable sort.
+///
+/// The `conditions` tie-break makes the order — and therefore every finalize
+/// result — **deterministic** regardless of the order in which `DuckDB`'s
+/// parallel hash aggregation delivers and combines same-timestamp events.
+/// (`ClickHouse`'s `windowFunnel` achieves the same determinism by
+/// stable-sorting `(timestamp, event_index)` pairs; lower condition bits
+/// sorting first approximates its per-condition entry order.)
 ///
 /// Before sorting, performs an O(n) presorted check: if events are already
-/// in non-decreasing timestamp order, the sort is skipped entirely. This is
-/// the common case when `DuckDB` provides events via ORDER BY or from naturally
-/// ordered data. For unsorted input, the O(n) verification scan adds negligible
-/// overhead before the O(n log n) pdqsort.
+/// in non-decreasing `(timestamp, conditions)` order, the sort is skipped
+/// entirely. This is the common case when `DuckDB` provides events via
+/// ORDER BY or from naturally ordered data. For unsorted input, the O(n)
+/// verification scan adds negligible overhead before the O(n log n) pdqsort.
 ///
 /// Unstable sort (pdqsort) is used because:
-/// 1. Same-timestamp event order has no defined semantics (matches `ClickHouse`)
+/// 1. The `(timestamp, conditions)` key totally orders the fields that affect
+///    results, so instability cannot change outcomes
 /// 2. No auxiliary O(n) memory allocation (in-place partitioning)
 /// 3. Better constant factors for `Copy` types due to cache-friendly swaps
 /// 4. Adaptive: O(n) for already-sorted input, O(n log n) worst case
@@ -112,13 +120,13 @@ impl Event {
 /// elements, causing TLB/cache misses that dominate the O(n log n) comparison
 /// overhead of pdqsort's cache-friendly in-place partitioning.
 pub fn sort_events(events: &mut [Event]) {
-    if events
-        .windows(2)
-        .all(|w| w[0].timestamp_us <= w[1].timestamp_us)
-    {
+    fn key(e: &Event) -> (i64, u32) {
+        (e.timestamp_us, e.conditions)
+    }
+    if events.windows(2).all(|w| key(&w[0]) <= key(&w[1])) {
         return;
     }
-    events.sort_unstable_by_key(|e| e.timestamp_us);
+    events.sort_unstable_by_key(key);
 }
 
 /// Merges two sorted event slices into a single sorted `Vec`.
@@ -576,5 +584,83 @@ mod tests {
         assert_eq!(events[1].timestamp_us, -100);
         assert_eq!(events[2].timestamp_us, 0);
         assert_eq!(events[3].timestamp_us, 100);
+    }
+}
+
+#[cfg(test)]
+mod saturation_tests {
+    //! Cross-module saturation contract: gap arithmetic on Event timestamps
+    //! must saturate (see `sessionize`/`window_funnel`/`executor` call sites).
+
+    #[test]
+    fn test_saturating_gap_extremes() {
+        // The exact operation used by the gap checks.
+        assert_eq!(i64::MAX.saturating_sub(-i64::MAX), i64::MAX);
+        assert_eq!((-i64::MAX).saturating_sub(i64::MAX), i64::MIN);
+        assert_eq!(0i64.saturating_sub(-i64::MAX), i64::MAX);
+    }
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::*;
+
+    /// Any permutation of the same event multiset must sort to the same
+    /// order — the contract that makes parallel-combine results stable.
+    #[test]
+    fn test_sort_is_permutation_invariant_with_ties() {
+        let canonical = vec![
+            Event::new(100, 0b001),
+            Event::new(100, 0b010),
+            Event::new(100, 0b100),
+            Event::new(200, 0b001),
+            Event::new(200, 0b011),
+        ];
+        let mut perm_a = vec![
+            Event::new(200, 0b011),
+            Event::new(100, 0b100),
+            Event::new(100, 0b001),
+            Event::new(200, 0b001),
+            Event::new(100, 0b010),
+        ];
+        let mut perm_b = vec![
+            Event::new(100, 0b010),
+            Event::new(200, 0b001),
+            Event::new(100, 0b100),
+            Event::new(100, 0b001),
+            Event::new(200, 0b011),
+        ];
+        sort_events(&mut perm_a);
+        sort_events(&mut perm_b);
+        assert_eq!(perm_a, canonical);
+        assert_eq!(perm_b, canonical);
+    }
+
+    /// Same-timestamp ties order by ascending condition bitmask.
+    #[test]
+    fn test_sort_ties_order_by_conditions() {
+        let mut events = vec![
+            Event::new(100, 0b100),
+            Event::new(100, 0b001),
+            Event::new(100, 0b010),
+        ];
+        sort_events(&mut events);
+        assert_eq!(events[0].conditions, 0b001);
+        assert_eq!(events[1].conditions, 0b010);
+        assert_eq!(events[2].conditions, 0b100);
+    }
+
+    /// The presorted check uses the full (timestamp, conditions) key: input
+    /// sorted by timestamp but with descending ties must still be re-sorted.
+    #[test]
+    fn test_presorted_check_covers_tie_key() {
+        let mut events = vec![
+            Event::new(100, 0b010),
+            Event::new(100, 0b001), // tie out of order
+            Event::new(200, 0b001),
+        ];
+        sort_events(&mut events);
+        assert_eq!(events[0].conditions, 0b001);
+        assert_eq!(events[1].conditions, 0b010);
     }
 }

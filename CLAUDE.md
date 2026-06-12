@@ -126,7 +126,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (470 unit + 10 integration + 1 doc-test).
+# Run all tests (486 unit + 15 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -199,6 +199,11 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   locally run `DUCKDB_DOWNLOAD_LIB=1 cargo test`, or set
   `DUCKDB_LIB_DIR=/path/to/libduckdb` (plus `LD_LIBRARY_PATH` on Linux) to use
   an already-downloaded library. Never set either variable for release builds.
+  Gotcha: with the unified `loadable-extension` feature set, libduckdb-sys only
+  emits `rerun-if-env-changed` for `DUCKDB_DOWNLOAD_LIB` — setting
+  `DUCKDB_LIB_DIR` *after* a previous build does not invalidate the cached
+  build-script output; clear `target/*/build/libduckdb-sys-*` (or toggle
+  `DUCKDB_DOWNLOAD_LIB`) to force a re-run.
   Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.3 →
   crate v1.10503.x).
 - `quack-rs` v0.14.0 with `bundled-test-prebuilt` feature — Provides
@@ -226,14 +231,14 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **470 unit tests** covering all functions, edge cases, combine associativity,
+- **486 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
   modules -- `sequence_match` and `sequence_count` share one state type;
   `window_funnel_events` shares `WindowFunnelState`)
 - **1 doc-test** for the pattern parser
-- **10 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **15 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
@@ -329,6 +334,20 @@ behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
 2. **Window parameter type**: ClickHouse uses integer seconds; we use DuckDB
    `INTERVAL`. Functionally equivalent.
 
+3. **Tie ordering model**: ClickHouse's `windowFunnel` stores one entry per
+   matched condition and stable-sorts `(timestamp, event_index)` pairs; we
+   store one bitmask event per row and sort by `(timestamp, conditions)`.
+   Both are deterministic; orderings can differ when one row satisfies
+   multiple conditions simultaneously.
+
+4. **`sequenceNextNode` condition limit**: ClickHouse allows up to 64 event
+   conditions (`std::bitset<64>`); our shared `u32` bitmask supports 32
+   (matching `windowFunnel`/`sequenceMatch`).
+
+5. **Saturating gap arithmetic**: gaps touching DuckDB's `±infinity`
+   timestamps saturate to `i64::MAX`, treating them as infinitely distant
+   (ClickHouse's `DateTime` has no infinity values, so no equivalent exists).
+
 ## Testing
 
 Tests are organized as `#[cfg(test)] mod tests` within each module.
@@ -356,8 +375,8 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
-Run with `cargo test`. The 470 unit tests run in <1 second (the doc-test in
-~2s). The 10 in-process integration tests add ~15s on a cold run — they build and
+Run with `cargo test`. The 486 unit tests run in <1 second (the doc-test in
+~2s). The 15 in-process integration tests add ~15s on a cold run — they build and
 `LOAD` the real release `cdylib` — and are near-instant once that artifact is
 cached.
 
@@ -508,8 +527,13 @@ Hard-won knowledge from developing this extension. Consult before making changes
 - **`sequenceNextNode` always returns `Nullable(String)`**: Not polymorphic.
   Simplifies FFI to a single VARCHAR return type.
 
-- **`sequence_next_node` requires base_condition AND event1 at start**: The starting
-  event must satisfy both `base_condition(i) && conditions[0](i)` simultaneously.
+- **`sequence_next_node` matches ClickHouse exactly** (verified against
+  `AggregateFunctionSequenceNextNode.cpp`): a single anchor per `base`
+  (`head`/`tail` = the literal first/last event, which must satisfy
+  `base_condition`; `first_match`/`last_match` = first/last event satisfying
+  base AND `event1`), chains match **consecutive** sorted events only, failed
+  chains are not retried at other anchors, and events sort by
+  `(timestamp, value)` for deterministic ties.
 
 - **Multi-step funnel advancement**: A single event can advance multiple funnel steps
   when it satisfies consecutive conditions (use `while`, not `if`). `strict_once`

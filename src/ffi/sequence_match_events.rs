@@ -139,13 +139,14 @@ unsafe extern "C" fn state_combine(
 // valid DuckDB LIST(TIMESTAMP) vector. Each list entry is populated with the
 // matched condition timestamps. Empty list on no match or pattern error.
 unsafe extern "C" fn state_finalize(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     result: duckdb_vector,
     count: idx_t,
     offset: idx_t,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let mut list_offset = ListVector::get_size(result) as u64;
 
         for i in 0..count as usize {
@@ -157,7 +158,16 @@ unsafe extern "C" fn state_finalize(
                 continue;
             };
 
-            let timestamps = state.finalize_events().unwrap_or_default();
+            let timestamps = match state.finalize_events() {
+                Ok(ts) => ts,
+                // A NULL pattern finalizes as an empty list; real execution
+                // errors (e.g. exploration budget exhaustion) abort the query.
+                Err(_) if state.pattern_str.is_none() => Vec::new(),
+                Err(e) => {
+                    info.set_error(&format!("sequence_match_events: {e}"));
+                    Vec::new()
+                }
+            };
             let ts_count = timestamps.len() as u64;
 
             // Reserve space in the list child vector

@@ -445,8 +445,13 @@ impl WindowFunnelState {
         for j in (start_idx + 1)..self.events.len() {
             let event = &self.events[j];
 
-            // Check window: event must be within window_size of the ENTRY event
-            if event.timestamp_us - entry_ts > self.window_size_us {
+            // Check window: event must be within window_size of the ENTRY
+            // event. Events are sorted, so the true gap is non-negative and
+            // (even spanning DuckDB's ±infinity timestamps) fits in u64;
+            // two's-complement wrapping_sub reinterpreted as u64 IS that gap.
+            // window_size_us is validated non-negative at the FFI boundary.
+            // Same cost as a plain sub + compare.
+            if event.timestamp_us.wrapping_sub(entry_ts) as u64 > self.window_size_us as u64 {
                 break;
             }
 
@@ -1977,5 +1982,27 @@ mod finalize_events_tests {
                 "scenario {idx}: length must equal finalize() step count"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod infinity_tests {
+    use super::*;
+    use crate::common::event::Event;
+
+    /// An event at `'infinity'` (`i64::MAX`) is outside any finite window of an
+    /// entry at '-infinity'; a wrapped difference would put it inside.
+    #[test]
+    fn test_scan_window_saturates_at_infinity() {
+        let mut state = WindowFunnelState::new();
+        state.window_size_us = 3_600_000_000;
+        state.update(Event::new(-i64::MAX, 0b01), 2);
+        state.update(Event::new(i64::MAX, 0b10), 2);
+        assert_eq!(
+            state.finalize(),
+            1,
+            "infinitely distant step must not match"
+        );
+        assert_eq!(state.finalize_events(), vec![-i64::MAX]);
     }
 }

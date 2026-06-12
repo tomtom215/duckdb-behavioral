@@ -126,7 +126,7 @@ impl SequenceState {
             .compiled_pattern
             .as_ref()
             .expect("compiled_pattern was set on the line above");
-        Ok(execute_pattern(pattern, &self.events, count_all))
+        execute_pattern(pattern, &self.events, count_all)
     }
 
     /// Executes `sequence_match` — returns true if the pattern matches.
@@ -167,7 +167,7 @@ impl SequenceState {
             .compiled_pattern
             .as_ref()
             .expect("compiled_pattern was set on the line above");
-        Ok(execute_pattern_events(pattern, &self.events).unwrap_or_default())
+        Ok(execute_pattern_events(pattern, &self.events)?.unwrap_or_default())
     }
 }
 

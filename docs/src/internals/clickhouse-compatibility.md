@@ -182,3 +182,25 @@ feature set.
 
 3. **Window parameter type**: ClickHouse accepts an integer (seconds); our
    extension accepts DuckDB's `INTERVAL` type. The semantics are equivalent.
+
+4. **Tie ordering model**: ClickHouse's `windowFunnel` stores one entry per
+   matched condition and stable-sorts `(timestamp, event_index)` pairs; we
+   store one bitmask event per row and sort by `(timestamp, conditions)`.
+   Both orderings are deterministic; they can differ when a single row
+   satisfies multiple conditions simultaneously.
+
+5. **`sequenceNextNode` condition limit**: ClickHouse allows up to 64 event
+   conditions (`std::bitset<64>`); our shared `u32` bitmask supports 32
+   (the `windowFunnel`/`sequenceMatch` limit).
+
+6. **Saturating gap arithmetic**: gaps touching DuckDB's `±infinity`
+   timestamps saturate to `i64::MAX` and behave as infinitely distant.
+   ClickHouse's `DateTime` types have no infinity values, so no equivalent
+   behavior exists there.
+
+`sequence_next_node` itself matches ClickHouse exactly as of v0.8.0
+(verified against `AggregateFunctionSequenceNextNode.cpp`): single anchor per
+base (`head`/`tail` = the literal first/last event), consecutive-event
+chains with no anchor retry, and `(timestamp, value)` tie ordering. Earlier
+versions matched gap-tolerant chains and anchored `head`/`tail` at the
+first/last event satisfying the base condition.

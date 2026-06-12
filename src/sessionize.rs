@@ -76,7 +76,16 @@ impl SessionizeState {
                 self.session_count = 1;
             }
             Some(prev) => {
-                if timestamp_us - prev > self.threshold_us {
+                // Overflow-exact gap check under the window ORDER BY
+                // contract (non-decreasing timestamps): the true gap — up to
+                // 2*i64::MAX with DuckDB's ±infinity timestamps — fits in
+                // u64, and two's-complement wrapping_sub reinterpreted as u64
+                // IS that gap. threshold_us is validated non-negative at the
+                // FFI boundary. Cost: a single sub + compare, same as the
+                // naive subtraction. Feeding unordered timestamps (plain
+                // GROUP BY misuse) yields unspecified boundary counts —
+                // session IDs are only meaningful over ordered frames.
+                if timestamp_us.wrapping_sub(prev) as u64 > self.threshold_us as u64 {
                     self.session_count += 1;
                 }
                 if timestamp_us > prev {
@@ -307,7 +316,16 @@ impl SessionizeBoundaryState {
                 self.last_ts = Some(timestamp_us);
             }
             Some(prev) => {
-                if timestamp_us - prev > self.threshold_us {
+                // Overflow-exact gap check under the window ORDER BY
+                // contract (non-decreasing timestamps): the true gap — up to
+                // 2*i64::MAX with DuckDB's ±infinity timestamps — fits in
+                // u64, and two's-complement wrapping_sub reinterpreted as u64
+                // IS that gap. threshold_us is validated non-negative at the
+                // FFI boundary. Cost: a single sub + compare, same as the
+                // naive subtraction. Feeding unordered timestamps (plain
+                // GROUP BY misuse) yields unspecified boundary counts —
+                // session IDs are only meaningful over ordered frames.
+                if timestamp_us.wrapping_sub(prev) as u64 > self.threshold_us as u64 {
                     self.boundaries += 1;
                 }
                 if timestamp_us > prev {
@@ -342,7 +360,9 @@ impl SessionizeBoundaryState {
             }
             (Some(_), Some(other_first)) => {
                 let cross_boundary = self.last_ts.map_or(0, |self_last| {
-                    i64::from(other_first - self_last > self.threshold_us)
+                    // saturating_sub mirrors update(): infinite cross-segment
+                    // gaps must count as boundaries, not wrap negative.
+                    i64::from(other_first.saturating_sub(self_last) > self.threshold_us)
                 });
 
                 Self {
@@ -1012,5 +1032,49 @@ mod proptests {
             prop_assert!(sessions_2 >= sessions_1);
             prop_assert!(sessions_3 >= sessions_2);
         }
+    }
+}
+
+#[cfg(test)]
+mod infinity_tests {
+    use super::*;
+
+    /// `DuckDB` encodes `'infinity'` as `i64::MAX` and `'-infinity'` as `i64::MIN+1`.
+    /// Gaps touching them are infinite and must open boundaries, not wrap.
+    #[test]
+    fn test_boundary_state_infinite_gap_saturates() {
+        let mut state = SessionizeBoundaryState::new();
+        state.threshold_us = 1_800_000_000;
+        state.update(-i64::MAX);
+        state.update(1_700_000_000_000_000); // ~2023-11
+        state.update(i64::MAX);
+        assert_eq!(state.finalize(), 3, "both infinite gaps open sessions");
+    }
+
+    #[test]
+    fn test_boundary_combine_infinite_cross_gap_saturates() {
+        let mut left = SessionizeBoundaryState::new();
+        left.threshold_us = 1_800_000_000;
+        left.update(-i64::MAX);
+        let mut right = SessionizeBoundaryState::new();
+        right.threshold_us = 1_800_000_000;
+        right.update(i64::MAX);
+        let combined = left.combine(&right);
+        assert_eq!(
+            combined.finalize(),
+            2,
+            "infinite cross-segment gap is a boundary"
+        );
+    }
+
+    #[test]
+    fn test_running_state_infinite_gap_saturates() {
+        let mut state = SessionizeState {
+            threshold_us: 1_800_000_000,
+            ..Default::default()
+        };
+        state.update(-i64::MAX);
+        state.update(i64::MAX);
+        assert_eq!(state.session_count, 2);
     }
 }

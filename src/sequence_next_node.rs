@@ -23,14 +23,21 @@
 //!
 //! # Matching Algorithm
 //!
-//! Uses simple sequential matching (not NFA/regex patterns). Events are sorted
-//! by timestamp and scanned in the specified direction to find a chain matching
-//! event1 → event2 → ... → eventN. The value of the adjacent event is returned.
+//! Mirrors `ClickHouse`'s `sequenceNextNode` exactly (verified against
+//! `AggregateFunctionSequenceNextNode.cpp`):
 //!
-//! - **Forward**: Returns the value of the event immediately after the last
-//!   matched event.
-//! - **Backward**: Returns the value of the event immediately before the
-//!   earliest matched event.
+//! 1. Events are sorted by `(timestamp, value)` — the value tie-break matches
+//!    `ClickHouse`'s comparator and makes results deterministic under
+//!    parallel combines.
+//! 2. A single base (anchor) index is selected per [`Base`]: `head`/`tail`
+//!    are the literal first/last events (which must satisfy the base
+//!    condition), `first_match`/`last_match` scan for an event satisfying
+//!    both the base condition and `event1`.
+//! 3. The chain must match **consecutive** events: `eventK` at `base + k`
+//!    (forward) or `base - k` (backward). Interleaved non-matching events
+//!    break the chain, and a failed chain is NOT retried at other anchors.
+//! 4. On a full match the value at `base ± num_steps` is returned; `NULL`
+//!    when that index falls off either end.
 //!
 //! # `Arc<str>` Value Storage (Session 9)
 //!
@@ -49,24 +56,26 @@ use std::sync::Arc;
 /// Direction of traversal for sequence matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    /// Scan events from earliest to latest. Returns the value of the event
-    /// immediately after the last matched event in the sequence.
+    /// Match the chain at ascending positions from the anchor. Returns the
+    /// value of the event immediately after the chain.
     Forward,
-    /// Scan events from latest to earliest. Returns the value of the event
-    /// immediately before the earliest matched event in the sequence.
+    /// Match the chain at descending positions from the anchor. Returns the
+    /// value of the event immediately before the chain.
     Backward,
 }
 
 /// Base position for starting the sequence match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Base {
-    /// Start from the first event (chronologically) where `base_condition` is true.
+    /// Anchor at the literal first event (chronologically). That event must
+    /// itself satisfy `base_condition`, otherwise there is no match.
     Head,
-    /// Start from the last event (chronologically) where `base_condition` is true.
+    /// Anchor at the literal last event (chronologically). That event must
+    /// itself satisfy `base_condition`, otherwise there is no match.
     Tail,
-    /// Use the first complete match found.
+    /// Anchor at the first event satisfying both `base_condition` and `event1`.
     FirstMatch,
-    /// Use the last complete match found.
+    /// Anchor at the last event satisfying both `base_condition` and `event1`.
     LastMatch,
 }
 
@@ -228,192 +237,106 @@ impl SequenceNextNodeState {
 
     /// Executes the sequence matching and returns the next node's value.
     ///
+    /// Mirrors `ClickHouse`'s `sequenceNextNode` exactly: a single base
+    /// (anchor) index is selected per [`Base`], the event chain must match at
+    /// **consecutive** sorted positions starting at the anchor (`eventK` at
+    /// `base ± k`), and the returned value is the node immediately after
+    /// (forward) / before (backward) the chain. If the anchor's chain does not
+    /// match, the result is `None` — there is no retry at other anchors.
+    ///
     /// Returns `None` if no match is found or no adjacent event exists.
     pub fn finalize(&mut self) -> Option<String> {
         if self.events.is_empty() || self.num_steps == 0 {
             return None;
         }
 
-        // Sort events by timestamp
+        // Sort events by (timestamp, value)
         self.sort_events();
 
         let direction = self.direction.unwrap_or(Direction::Forward);
         let base = self.base.unwrap_or(Base::FirstMatch);
 
-        match direction {
-            Direction::Forward => self.match_forward(base),
-            Direction::Backward => self.match_backward(base),
-        }
+        let base_idx = self.base_index(base)?;
+        self.next_node_value(base_idx, direction)
     }
 
-    /// Sorts events by timestamp (ascending) with presorted detection.
+    /// Sorts events by `(timestamp, value)` ascending with presorted detection.
+    ///
+    /// The value tie-break mirrors `ClickHouse`'s comparator (`event_time`
+    /// primary, node comparison secondary) and makes results deterministic
+    /// when parallel combines deliver same-timestamp events in arbitrary
+    /// order. `None` values order before all strings (`Option` ordering).
     fn sort_events(&mut self) {
-        if self
-            .events
-            .windows(2)
-            .all(|w| w[0].timestamp_us <= w[1].timestamp_us)
-        {
+        fn key(e: &NextNodeEvent) -> (i64, Option<&str>) {
+            (e.timestamp_us, e.value.as_deref())
+        }
+        if self.events.windows(2).all(|w| key(&w[0]) <= key(&w[1])) {
             return;
         }
-        self.events.sort_unstable_by_key(|e| e.timestamp_us);
+        self.events.sort_unstable_by(|a, b| key(a).cmp(&key(b)));
     }
 
-    /// Forward matching: find sequential event1→event2→...→eventN, return next event's value.
-    fn match_forward(&self, base: Base) -> Option<String> {
+    /// Selects the base (anchor) index, mirroring `ClickHouse`'s
+    /// `getBaseIndex`:
+    ///
+    /// - `head` / `tail`: the literal first/last event in sorted order, which
+    ///   must itself satisfy the base condition — otherwise no match.
+    /// - `first_match` / `last_match`: the first/last event satisfying both
+    ///   the base condition **and** `event1`.
+    fn base_index(&self, base: Base) -> Option<usize> {
         let n = self.events.len();
-
         match base {
-            Base::Head => {
-                let start = self.events.iter().position(|e| e.base_condition)?;
-                self.try_match_forward_from(start, n)
-            }
-            Base::Tail => {
-                let start = self.events.iter().rposition(|e| e.base_condition)?;
-                self.try_match_forward_from(start, n)
-            }
-            Base::FirstMatch => {
-                for start in 0..n {
-                    if !self.events[start].base_condition {
-                        continue;
-                    }
-                    if let Some(val) = self.try_match_forward_from(start, n) {
-                        return Some(val);
-                    }
-                }
-                None
-            }
-            Base::LastMatch => {
-                let mut result = None;
-                for start in 0..n {
-                    if !self.events[start].base_condition {
-                        continue;
-                    }
-                    if let Some(val) = self.try_match_forward_from(start, n) {
-                        result = Some(val);
-                    }
-                }
-                result
-            }
+            Base::Head => self.events[0].base_condition.then_some(0),
+            Base::Tail => self.events[n - 1].base_condition.then_some(n - 1),
+            Base::FirstMatch => (0..n)
+                .find(|&i| self.events[i].base_condition && self.events[i].conditions & 1 != 0),
+            Base::LastMatch => (0..n)
+                .rev()
+                .find(|&i| self.events[i].base_condition && self.events[i].conditions & 1 != 0),
         }
     }
 
-    /// Try to match the full sequence forward starting from `start`.
-    ///
-    /// Returns the value of the event immediately after the last matched event.
-    fn try_match_forward_from(&self, start: usize, n: usize) -> Option<String> {
-        // Check event1 (step 0) at start position
-        if self.events[start].conditions & 1 == 0 {
-            return None;
-        }
-
-        let mut last_matched = start;
-        let mut step = 1;
-
-        for pos in (start + 1)..n {
-            if step >= self.num_steps {
-                break;
-            }
-            if (self.events[pos].conditions >> step) & 1 != 0 {
-                last_matched = pos;
-                step += 1;
-            }
-        }
-
-        if step == self.num_steps {
-            // Full match! Return next event's value
-            let next_idx = last_matched + 1;
-            if next_idx < n {
-                self.events[next_idx].value.as_deref().map(String::from)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Backward matching: find sequential event chain scanning backward.
-    ///
-    /// Matches event1 at the starting position (later timestamp), then event2
-    /// at an earlier position, etc. Returns the value of the event immediately
-    /// before the earliest matched event.
-    fn match_backward(&self, base: Base) -> Option<String> {
+    /// Matches the event chain at consecutive positions and returns the
+    /// adjacent node's value, mirroring `ClickHouse`'s `getNextNodeIndex`:
+    /// `eventK` must hold at position `base + k` (forward) or `base - k`
+    /// (backward); on a full match the value at `base ± num_steps` is
+    /// returned, or `None` when the chain runs past either end.
+    fn next_node_value(&self, base_idx: usize, direction: Direction) -> Option<String> {
         let n = self.events.len();
-
-        match base {
-            Base::Tail => {
-                let start = self.events.iter().rposition(|e| e.base_condition)?;
-                self.try_match_backward_from(start)
-            }
-            Base::Head => {
-                let start = self.events.iter().position(|e| e.base_condition)?;
-                self.try_match_backward_from(start)
-            }
-            Base::FirstMatch => {
-                // Scan from right to left, return first complete match
-                for start in (0..n).rev() {
-                    if !self.events[start].base_condition {
-                        continue;
-                    }
-                    if let Some(val) = self.try_match_backward_from(start) {
-                        return Some(val);
+        match direction {
+            Direction::Forward => {
+                for step in 0..self.num_steps {
+                    let pos = base_idx + step;
+                    if pos >= n || (self.events[pos].conditions >> step) & 1 == 0 {
+                        return None;
                     }
                 }
-                None
+                let next = base_idx + self.num_steps;
+                if next < n {
+                    self.events[next].value.as_deref().map(String::from)
+                } else {
+                    None
+                }
             }
-            Base::LastMatch => {
-                // Scan from right to left, return last complete match
-                let mut result = None;
-                for start in (0..n).rev() {
-                    if !self.events[start].base_condition {
-                        continue;
+            Direction::Backward => {
+                for step in 0..self.num_steps {
+                    if step > base_idx {
+                        return None;
                     }
-                    if let Some(val) = self.try_match_backward_from(start) {
-                        result = Some(val);
+                    let pos = base_idx - step;
+                    if (self.events[pos].conditions >> step) & 1 == 0 {
+                        return None;
                     }
                 }
-                result
-            }
-        }
-    }
-
-    /// Try to match the full sequence backward starting from `start`.
-    ///
-    /// event1 is matched at `start`, event2 at an earlier position, etc.
-    /// Returns the value of the event immediately before the earliest matched.
-    fn try_match_backward_from(&self, start: usize) -> Option<String> {
-        // Check event1 (step 0) at start position
-        if self.events[start].conditions & 1 == 0 {
-            return None;
-        }
-
-        let mut earliest_matched = start;
-        let mut step = 1;
-
-        if start > 0 {
-            for pos in (0..start).rev() {
-                if step >= self.num_steps {
-                    break;
-                }
-                if (self.events[pos].conditions >> step) & 1 != 0 {
-                    earliest_matched = pos;
-                    step += 1;
+                if base_idx >= self.num_steps {
+                    self.events[base_idx - self.num_steps]
+                        .value
+                        .as_deref()
+                        .map(String::from)
+                } else {
+                    None
                 }
             }
-        }
-
-        if step == self.num_steps {
-            // Full match! Return the event before the earliest matched position
-            if earliest_matched > 0 {
-                self.events[earliest_matched - 1]
-                    .value
-                    .as_deref()
-                    .map(String::from)
-            } else {
-                None
-            }
-        } else {
-            None
         }
     }
 }
@@ -576,9 +499,27 @@ mod tests {
     // --- Forward + Tail ---
 
     #[test]
-    fn test_forward_tail_basic() {
-        // base_condition events at positions 0 and 2
-        // tail = last base_condition event = position 2
+    fn test_forward_tail_is_structurally_none() {
+        // ClickHouse parity: `tail` anchors at the literal LAST event. A
+        // forward chain from the tail ends at or past the last event, so the
+        // "next node" is always out of bounds -> NULL (even when the tail
+        // satisfies base_condition and event1).
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Forward);
+        state.base = Some(Base::Tail);
+        state.num_steps = 1;
+
+        state.update(make_event(1, "A", false, &[false]));
+        state.update(make_event(2, "B", true, &[true])); // tail: base + event1
+
+        assert_eq!(state.finalize(), None);
+    }
+
+    #[test]
+    fn test_forward_tail_not_base_is_none() {
+        // ClickHouse parity: when the literal last event does not satisfy
+        // base_condition, `tail` produces no anchor at all — earlier
+        // base-condition events are NOT considered.
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Forward);
         state.base = Some(Base::Tail);
@@ -586,11 +527,9 @@ mod tests {
 
         state.update(make_event(1, "A", true, &[true, false]));
         state.update(make_event(2, "B", false, &[false, true]));
-        state.update(make_event(3, "C", true, &[true, false]));
-        state.update(make_event(4, "D", false, &[false, true]));
-        state.update(make_event(5, "E", false, &[false, false]));
+        state.update(make_event(3, "E", false, &[false, false])); // tail, not base
 
-        assert_eq!(state.finalize(), Some("E".to_string()));
+        assert_eq!(state.finalize(), None);
     }
 
     // --- Forward + FirstMatch ---
@@ -602,15 +541,33 @@ mod tests {
         state.base = Some(Base::FirstMatch);
         state.num_steps = 2;
 
-        // First base+event1 at pos 0 fails to match event2
+        // First event satisfying base + event1 anchors the chain; event2
+        // matches at the immediately following position.
+        state.update(make_event(1, "X", false, &[false, false]));
+        state.update(make_event(2, "A", true, &[true, false]));
+        state.update(make_event(3, "B", false, &[false, true]));
+        state.update(make_event(4, "C", false, &[false, false]));
+
+        assert_eq!(state.finalize(), Some("C".to_string()));
+    }
+
+    #[test]
+    fn test_forward_first_match_single_anchor_no_retry() {
+        // ClickHouse parity: getBaseIndex selects ONE anchor (the first event
+        // satisfying base + event1). If the chain fails at that anchor, the
+        // result is NULL — later anchors are not tried.
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Forward);
+        state.base = Some(Base::FirstMatch);
+        state.num_steps = 2;
+
         state.update(make_event(1, "A", true, &[true, false]));
-        state.update(make_event(2, "X", false, &[false, false]));
-        // Second base+event1 at pos 2 matches event2 at pos 3
+        state.update(make_event(2, "X", false, &[false, false])); // breaks the chain
         state.update(make_event(3, "A", true, &[true, false]));
         state.update(make_event(4, "B", false, &[false, true]));
         state.update(make_event(5, "C", false, &[false, false]));
 
-        assert_eq!(state.finalize(), Some("C".to_string()));
+        assert_eq!(state.finalize(), None);
     }
 
     #[test]
@@ -688,19 +645,19 @@ mod tests {
     // --- Backward + Head ---
 
     #[test]
-    fn test_backward_head_basic() {
+    fn test_backward_head_is_structurally_none() {
+        // ClickHouse parity: `head` anchors at the literal FIRST event. A
+        // backward chain from the head would need a node before index 0,
+        // which never exists -> NULL (even when the head matches).
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Backward);
         state.base = Some(Base::Head);
         state.num_steps = 1;
 
-        state.update(make_event(1, "A", false, &[false]));
-        state.update(make_event(2, "B", true, &[true]));
-        state.update(make_event(3, "C", false, &[false]));
+        state.update(make_event(1, "A", true, &[true])); // head: base + event1
+        state.update(make_event(2, "B", false, &[false]));
 
-        // Head = first base_condition event = pos 1 (B)
-        // event1 matches at pos 1; backward → event before pos 1 = pos 0 = A
-        assert_eq!(state.finalize(), Some("A".to_string()));
+        assert_eq!(state.finalize(), None);
     }
 
     // --- Backward + FirstMatch ---
@@ -718,10 +675,10 @@ mod tests {
         state.update(make_event(4, "D", false, &[false, true])); // event2
         state.update(make_event(5, "E", true, &[true, false])); // event1, base
 
-        // Scan from right: pos 4 (E) has base=true, event1=true
-        // Backward from pos 4: pos 3 (D) has event2=true → match at [4,3]
-        // Event before pos 3 = pos 2 (C)
-        assert_eq!(state.finalize(), Some("C".to_string()));
+        // first_match scans ASCENDING (ClickHouse getBaseIndex): the first
+        // event with base + event1 is C (pos 2). Backward chain: event1 at
+        // pos 2, event2 at pos 1 (B). Next node backward = pos 0 = A.
+        assert_eq!(state.finalize(), Some("A".to_string()));
     }
 
     // --- Backward + LastMatch ---
@@ -739,10 +696,10 @@ mod tests {
         state.update(make_event(4, "D", false, &[false, true])); // event2
         state.update(make_event(5, "E", true, &[true, false])); // event1, base
 
-        // Scan from right: both pos 4 and pos 2 yield matches
-        // Last match (leftmost starting point): pos 2 (C), event2 at pos 1 (B)
-        // Event before pos 1 = pos 0 (A)
-        assert_eq!(state.finalize(), Some("A".to_string()));
+        // last_match takes the LAST event with base + event1: E (pos 4).
+        // Backward chain: event1 at pos 4, event2 at pos 3 (D). Next node
+        // backward = pos 2 = C.
+        assert_eq!(state.finalize(), Some("C".to_string()));
     }
 
     // --- Multi-step patterns ---
@@ -838,18 +795,20 @@ mod tests {
     }
 
     #[test]
-    fn test_null_value_in_middle_not_blocking() {
+    fn test_null_value_event_can_be_a_chain_step() {
+        // A NULL node value does not block matching — conditions do. Here the
+        // NULL-value event itself satisfies event2, so the chain completes
+        // and the next node is returned.
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Forward);
         state.base = Some(Base::FirstMatch);
         state.num_steps = 2;
 
         state.update(make_event(1, "A", true, &[true, false]));
-        state.update(make_null_event(2, false, &[false, false])); // gap with null value
-        state.update(make_event(3, "B", false, &[false, true]));
-        state.update(make_event(4, "C", false, &[false, false]));
+        state.update(make_null_event(2, false, &[false, true])); // event2, NULL value
+        state.update(make_event(3, "B", false, &[false, false]));
 
-        assert_eq!(state.finalize(), Some("C".to_string()));
+        assert_eq!(state.finalize(), Some("B".to_string()));
     }
 
     // --- Combine tests ---
@@ -977,7 +936,10 @@ mod tests {
     // --- Gap events (events between matched steps) ---
 
     #[test]
-    fn test_forward_with_gap_events() {
+    fn test_forward_gap_events_break_the_chain() {
+        // ClickHouse parity: the chain must match CONSECUTIVE events.
+        // eventK must hold at position base+K; interleaved non-matching
+        // events break the chain.
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Forward);
         state.base = Some(Base::FirstMatch);
@@ -989,7 +951,7 @@ mod tests {
         state.update(make_event(4, "B", false, &[false, true]));
         state.update(make_event(5, "C", false, &[false, false]));
 
-        assert_eq!(state.finalize(), Some("C".to_string()));
+        assert_eq!(state.finalize(), None);
     }
 
     // --- Same timestamp ---
@@ -1270,12 +1232,13 @@ mod tests {
         a.update(make_event(1, "A", true, &[true, false]));
 
         let mut b = SequenceNextNodeState::new();
-        b.update(make_null_event(2, false, &[false, false])); // null gap
-        b.update(make_event(3, "B", false, &[false, true]));
+        b.update(make_null_event(2, false, &[false, true])); // event2, NULL value
+        b.update(make_event(3, "B", false, &[false, false]));
         b.update(make_event(4, "C", false, &[false, false]));
 
         a.combine_in_place(&b);
-        assert_eq!(a.finalize(), Some("C".to_string()));
+        // Chain: A (event1) -> NULL-value event (event2); next node is B.
+        assert_eq!(a.finalize(), Some("B".to_string()));
     }
 
     // --- Session 11: DuckDB zero-initialized target combine tests ---
@@ -1377,18 +1340,19 @@ mod tests {
 
     #[test]
     fn test_backward_tail_single_match_with_previous() {
-        // Backward + Tail with a single matching sequence where the event
-        // before the match should be returned.
+        // Backward + Tail: the anchor is the literal LAST event (which must
+        // satisfy base_condition); event1 matches there and the node before
+        // the chain is returned.
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Backward);
         state.base = Some(Base::Tail);
         state.num_steps = 1;
         state.update(make_event(1, "A", false, &[false]));
-        state.update(make_event(2, "B", true, &[true])); // base + event1
-        state.update(make_event(3, "C", false, &[false]));
-        // Backward from tail: last base_condition is B at pos 1
-        // event1 matches at B, backward → event before B = A
-        assert_eq!(state.finalize(), Some("A".to_string()));
+        state.update(make_event(2, "B", false, &[false]));
+        state.update(make_event(3, "C", true, &[true])); // tail: base + event1
+
+        // Chain matches at the tail (pos 2); next node backward = pos 1 = B.
+        assert_eq!(state.finalize(), Some("B".to_string()));
     }
 
     #[test]
@@ -1448,19 +1412,19 @@ mod tests {
     }
 
     #[test]
-    fn test_backward_head_multi_base_conditions() {
-        // Multiple base_condition events: Head uses the first one.
+    fn test_backward_head_anchor_is_literal_first_event() {
+        // ClickHouse parity: `head` is the literal first event regardless of
+        // which later events satisfy base_condition. Here the first event is
+        // not a base event, so there is no anchor at all.
         let mut state = SequenceNextNodeState::new();
         state.direction = Some(Direction::Backward);
         state.base = Some(Base::Head);
         state.num_steps = 1;
-        state.update(make_event(1, "A", false, &[false]));
-        state.update(make_event(2, "B", true, &[true])); // first base
-        state.update(make_event(3, "C", true, &[true])); // second base
+        state.update(make_event(1, "A", false, &[false])); // head, not base
+        state.update(make_event(2, "B", true, &[true]));
+        state.update(make_event(3, "C", true, &[true]));
         state.update(make_event(4, "D", false, &[false]));
-        // Head backward: first base at B (pos 1), event1 at pos 1
-        // backward → event before pos 1 = A
-        assert_eq!(state.finalize(), Some("A".to_string()));
+        assert_eq!(state.finalize(), None);
     }
 }
 
@@ -1472,39 +1436,43 @@ mod proptests {
     proptest! {
         #[test]
         fn forward_first_match_with_match_returns_some(
-            num_gap_events in 0..20usize,
+            num_prefix_events in 0..20usize,
         ) {
-            // event1 at pos 0, then gap events, then event2 at last gap+1, then "result"
+            // Any number of non-qualifying PREFIX events must not disturb
+            // first_match anchoring; the consecutive chain that follows
+            // matches and the next node is returned (ClickHouse semantics:
+            // the chain itself must be consecutive, the anchor search skips
+            // non-qualifying events).
             let mut state = SequenceNextNodeState::new();
             state.direction = Some(Direction::Forward);
             state.base = Some(Base::FirstMatch);
             state.num_steps = 2;
 
-            state.update(NextNodeEvent {
-                timestamp_us: 0,
-                value: Some(Arc::from("start")),
-                base_condition: true,
-                conditions: 1, // event1
-            });
-
-            for i in 0..num_gap_events {
+            for i in 0..num_prefix_events {
                 state.update(NextNodeEvent {
-                    timestamp_us: (i as i64 + 1),
-                    value: Some(Arc::from(format!("gap_{i}").as_str())),
+                    timestamp_us: i as i64,
+                    value: Some(Arc::from(format!("prefix_{i}").as_str())),
                     base_condition: false,
                     conditions: 0,
                 });
             }
 
             state.update(NextNodeEvent {
-                timestamp_us: (num_gap_events as i64 + 1),
-                value: Some(Arc::from("matched")),
-                base_condition: false,
-                conditions: 2, // event2
+                timestamp_us: num_prefix_events as i64,
+                value: Some(Arc::from("start")),
+                base_condition: true,
+                conditions: 1, // event1
             });
 
             state.update(NextNodeEvent {
-                timestamp_us: (num_gap_events as i64 + 2),
+                timestamp_us: (num_prefix_events as i64 + 1),
+                value: Some(Arc::from("matched")),
+                base_condition: false,
+                conditions: 2, // event2 (consecutive with event1)
+            });
+
+            state.update(NextNodeEvent {
+                timestamp_us: (num_prefix_events as i64 + 2),
                 value: Some(Arc::from("result")),
                 base_condition: false,
                 conditions: 0,

@@ -19,6 +19,12 @@
 //! (?t==N)   — Time constraint: exactly N seconds since previous match
 //! (?t!=N)   — Time constraint: not exactly N seconds since previous match
 //! ```
+//!
+//! `.` and `(?t!=N)` are extensions beyond `ClickHouse`'s pattern syntax.
+//! Note that rows where no condition is true are filtered during `update`
+//! (they cannot match any `(?N)` step), so `.` matches exactly one *stored*
+//! event — one where at least one condition fired. Consecutive `.*` runs are
+//! collapsed at parse time (semantically identical, exponentially cheaper).
 
 pub mod executor;
 pub mod parser;

@@ -85,7 +85,8 @@ ORDER BY user_id;
 1	product
 2	search
 
-# Forward, tail: what comes after the last home event?
+# Forward, tail: anchors at the literal LAST event (ClickHouse semantics).
+# Neither user's last event satisfies is_home, so there is no anchor.
 query IT
 SELECT user_id, sequence_next_node(
     'forward',
@@ -98,8 +99,8 @@ SELECT user_id, sequence_next_node(
 GROUP BY user_id
 ORDER BY user_id;
 ----
-1	product
-2	search
+1	NULL
+2	NULL
 
 # Forward, last_match: return from the last complete match
 query IT
@@ -117,7 +118,9 @@ ORDER BY user_id;
 1	product
 2	search
 
-# Backward, tail: what comes before the last product event?
+# Backward, tail: anchors at the literal LAST event (ClickHouse semantics).
+# User 1's last event (checkout) is not a product -> no anchor. User 2's last
+# event IS the product: the chain matches there and 'search' precedes it.
 query IT
 SELECT user_id, sequence_next_node(
     'backward',
@@ -130,10 +133,11 @@ SELECT user_id, sequence_next_node(
 GROUP BY user_id
 ORDER BY user_id;
 ----
-1	home
+1	NULL
 2	search
 
-# Backward, head: from the first product event
+# Backward, head: anchors at the literal FIRST event (ClickHouse semantics).
+# Neither user's first event satisfies is_product, so there is no anchor.
 query IT
 SELECT user_id, sequence_next_node(
     'backward',
@@ -146,8 +150,8 @@ SELECT user_id, sequence_next_node(
 GROUP BY user_id
 ORDER BY user_id;
 ----
-1	home
-2	search
+1	NULL
+2	NULL
 
 # Backward, last_match
 query IT
