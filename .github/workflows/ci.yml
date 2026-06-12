@@ -104,6 +104,34 @@ jobs:
             echo "### ❌ Compilation check failed" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  wasm-check:
+    name: WASM check (wasm32-unknown-emscripten)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # No prebuilt libduckdb exists for wasm; the loadable-extension build
+      # uses pregenerated bindings and needs no library at all.
+      DUCKDB_DOWNLOAD_LIB: "0"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: wasm-check
+      - name: Compile check for DuckDB-WASM target
+        id: wasm-check
+        run: cargo check --target wasm32-unknown-emscripten --lib
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.wasm-check.outcome }}" = "success" ]; then
+            echo "### ✅ wasm32-unknown-emscripten compile check passed" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ wasm32-unknown-emscripten compile check failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest
@@ -471,6 +499,7 @@ jobs:
       - fmt
       - clippy
       - check
+      - wasm-check
       - doc
       - test
       - cross-platform
@@ -490,6 +519,7 @@ jobs:
             "fmt=${{ needs.fmt.result }}"
             "clippy=${{ needs.clippy.result }}"
             "check=${{ needs.check.result }}"
+            "wasm-check=${{ needs.wasm-check.result }}"
             "doc=${{ needs.doc.result }}"
             "test=${{ needs.test.result }}"
             "cross-platform=${{ needs.cross-platform.result }}"

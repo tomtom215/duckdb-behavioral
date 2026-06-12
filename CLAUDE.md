@@ -379,8 +379,9 @@ cached.
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- **ci.yml**: check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver,
-  coverage, cross-platform (Linux + macOS), extension-build, ci-gate (13 jobs)
+- **ci.yml**: check, wasm-check (compile for `wasm32-unknown-emscripten`),
+  test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage,
+  cross-platform (Linux + macOS), extension-build, ci-gate (14 jobs)
 - **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
 - **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
@@ -525,6 +526,13 @@ Hard-won knowledge from developing this extension. Consult before making changes
 - **Local `interval_to_micros` rejects months intentionally**: quack-rs converts
   months to 30 days. The local version returns `None` for month-based intervals
   because 28-31 day ambiguity is unacceptable for behavioral analytics.
+
+- **WASM compiles but is not yet shipped**: since quack-rs 0.14.0 the crate
+  compiles for `wasm32-unknown-emscripten` (DuckDB-WASM), enforced by the
+  `wasm-check` CI job. `description.yml` still excludes the wasm platforms:
+  flipping them on requires verifying the emscripten link + DuckDB-WASM load,
+  which the community-extensions CI can serve as the test bed for in a
+  dedicated submission.
 
 ### Testing Notes
 

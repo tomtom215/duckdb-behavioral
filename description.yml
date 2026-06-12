@@ -8,6 +8,9 @@ extension:
   language: Rust
   build: cargo
   license: MIT
+  # The crate compiles for wasm32-unknown-emscripten since quack-rs 0.14.0
+  # (enforced by the wasm-check CI job); the wasm platforms stay excluded until
+  # an emscripten link + DuckDB-WASM load is verified end to end.
   excluded_platforms: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
   requires_toolchains: "rust;python3"
   maintainers:
