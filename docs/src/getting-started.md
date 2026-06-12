@@ -155,15 +155,17 @@ function catalog:
 ```sql
 SELECT function_name FROM duckdb_functions()
 WHERE function_name IN (
-  'sessionize', 'retention', 'window_funnel',
+  'sessionize', 'retention', 'window_funnel', 'window_funnel_events',
   'sequence_match', 'sequence_count',
-  'sequence_match_events', 'sequence_next_node'
+  'sequence_match_events', 'sequence_next_node', 'behavioral_version'
 )
 GROUP BY function_name
 ORDER BY function_name;
 ```
 
-This should return all seven function names.
+This should return all nine function names (eight analytics functions plus
+the `behavioral_version()` diagnostic scalar). `SELECT behavioral_version();`
+tells you which build is loaded.
 
 ---
 

@@ -156,6 +156,15 @@ sequence_next_node('direction', 'base', timestamp_col, value_col,
 
 ---
 
+### behavioral_version — Which build is loaded?
+
+```sql
+behavioral_version() → VARCHAR   -- e.g. '0.8.0'
+```
+
+**Key facts:** Diagnostic scalar; useful when the community channel, a pinned
+install, and a local build could serve different versions.
+
 ## Limits
 
 | Limit | Value |

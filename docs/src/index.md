@@ -18,9 +18,10 @@ queries.**
 
 `duckdb-behavioral` is a loadable DuckDB extension written in Rust that brings
 [ClickHouse-style behavioral analytics functions](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions)
-to DuckDB. It ships seven battle-tested functions that cover the core patterns
-of user behavior analysis, with complete ClickHouse feature parity and
-benchmark-validated performance at billion-row scale.
+to DuckDB. It ships eight battle-tested functions that cover the core patterns
+of user behavior analysis — all six ClickHouse behavioral functions with
+source-verified semantics, plus two extensions — and benchmark-validated
+performance at billion-row scale.
 
 No external services, no data pipelines, no additional infrastructure. Load the
 extension, write SQL, get answers.
@@ -245,13 +246,13 @@ For a comprehensive technical overview, see the
 
 | Area | Highlights |
 |---|---|
-| **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
+| **Language & Safety** | Pure Rust core with `unsafe` confined to the FFI bridge (8 function modules). Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
 | **Testing Rigor** | 486 unit tests, 76 E2E SQL queries across 8 test files against real DuckDB, 29 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
 | **Performance** | Fifteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
-| **CI/CD** | 13 CI jobs, 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
-| **Feature Completeness** | Complete ClickHouse behavioral analytics parity: 7 functions, 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
+| **CI/CD** | 14 CI jobs (incl. a DuckDB-WASM compile check), 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
+| **Feature Completeness** | All six ClickHouse behavioral functions (source-verified semantics) plus `sessionize` and `window_funnel_events`: 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
 
 ---
 
@@ -260,7 +261,7 @@ For a comprehensive technical overview, see the
 | Section | Contents |
 |---|---|
 | [Getting Started](./getting-started.md) | Installation, loading, troubleshooting, your first analysis |
-| [Function Reference](./functions/sessionize.md) | Detailed docs for all 7 functions with examples |
+| [Function Reference](./functions/sessionize.md) | Detailed docs for all 8 functions with examples |
 | [Use Cases](./use-cases.md) | Five complete real-world examples with sample data and queries |
 | [SQL Cookbook](./cookbook.md) | 25+ practical SQL recipes for common analytics patterns |
 | [Quick Reference](./quick-reference.md) | One-page cheat sheet for all functions and patterns |

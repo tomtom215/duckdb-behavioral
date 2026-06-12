@@ -221,7 +221,7 @@ inactivity gaps.
 ### Do I need to set any experimental flags?
 
 No. In ClickHouse, `sequenceNextNode` requires
-`SET allow_experimental_funnel_functions = 1`. In `duckdb-behavioral`, all seven
+`SET allow_experimental_funnel_functions = 1`. In `duckdb-behavioral`, all eight
 functions are available immediately after loading the extension, with no
 experimental flags required.
 

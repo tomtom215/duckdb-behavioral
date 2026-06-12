@@ -199,6 +199,9 @@ carol	1
 # Extract timestamps of PR lifecycle events per PR
 # ============================================================
 
+# PR 1003 was opened but never reviewed: no complete lifecycle, so the
+# LONGEST PARTIAL chain is returned (ClickHouse sequenceMatchEvents
+# semantics) — just the pr_opened timestamp.
 query IT
 SELECT pr_id,
     sequence_match_events(
@@ -215,7 +218,7 @@ ORDER BY pr_id;
 ----
 1001	['2024-03-15 10:00:00', '2024-03-15 14:30:00', '2024-03-16 09:00:00', '2024-03-16 10:00:00']
 1002	['2024-03-15 11:00:00', '2024-03-15 11:30:00', '2024-03-15 12:00:00', '2024-03-15 12:15:00']
-1003	[]
+1003	['2024-03-17 08:00:00']
 
 
 # ============================================================
