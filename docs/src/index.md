@@ -164,6 +164,7 @@ flowchart TD
     Q -->|"Break events<br/>into sessions"| S["sessionize"]
     Q -->|"Did users come<br/>back over time?"| R["retention"]
     Q -->|"How far through<br/>a multi-step flow?"| WF["window_funnel"]
+    WF -->|"When did each<br/>step happen?"| WFE["window_funnel_events"]
     Q -->|"Did a specific<br/>event pattern occur?"| SM{Need details?}
     SM -->|"Yes/No answer"| SEQ["sequence_match"]
     SM -->|"How many times?"| SC["sequence_count"]
@@ -174,6 +175,7 @@ flowchart TD
     style S fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style R fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style WF fill:#f0f0f0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style WFE fill:#f0f0f0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style SM fill:#ffffff,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style SEQ fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style SC fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -244,7 +246,7 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 453 unit tests, 59 E2E SQL queries across 7 test files against real DuckDB, 29 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
+| **Testing Rigor** | 470 unit tests, 75 E2E SQL queries across 8 test files against real DuckDB, 29 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
 | **Performance** | Fifteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |

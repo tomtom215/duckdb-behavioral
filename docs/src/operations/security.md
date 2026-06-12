@@ -101,7 +101,7 @@ Release artifacts include:
 sha256sum -c SHA256SUMS.txt
 
 # Verify GitHub attestation (requires gh CLI)
-gh attestation verify behavioral-v0.7.0-linux_amd64.tar.gz \
+gh attestation verify behavioral-v0.8.0-linux_amd64.tar.gz \
   --repo tomtom215/duckdb-behavioral
 ```
 

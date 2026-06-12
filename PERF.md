@@ -808,6 +808,14 @@ No Rust source code changes — numbers reflect updated benchmark framework
 and data generation. Any future optimization must demonstrate improvement
 against these values.
 
+> **v0.8.0 note**: `window_funnel_events` (added in v0.8.0) shares
+> `window_funnel`'s greedy scan via a zero-sized recorder abstraction, so the
+> `window_funnel` numbers below remain the relevant baseline for the shared
+> path. Dedicated `window_funnel_events_finalize` benchmarks exist in
+> `window_funnel_bench.rs`; a reference-hardware baseline for them has not
+> been recorded yet (smoke-measured at ~390 Melem/s for 1M events on
+> non-reference hardware).
+
 **Environment**: rustc 1.93.0, x86_64 Linux, Criterion 0.8.2, 100 samples
 (10 samples for 100M/1B).
 

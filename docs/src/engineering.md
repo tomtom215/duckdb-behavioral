@@ -181,7 +181,7 @@ Organized by category within each module:
 
 Integration tests against a real DuckDB CLI instance that validate the complete
 chain: extension loading, function registration, SQL execution, and result
-correctness. These tests caught three critical bugs that all 453 unit tests
+correctness. These tests caught three critical bugs that the entire unit suite
 missed:
 
 1. A segmentation fault on extension load (incorrect pointer arithmetic)
@@ -363,7 +363,8 @@ finalize    -- Produces the final result from the accumulated state
 
 Because `duckdb_aggregate_function_set_varargs` does not exist, each function
 that accepts a variable number of boolean conditions (retention, window_funnel,
-sequence_match, sequence_count, sequence_match_events, sequence_next_node)
+sequence_match, sequence_count, sequence_match_events, sequence_next_node,
+window_funnel_events, behavioral_version)
 must register **31 overloads** (2--32 parameters) via a function set.
 
 ### NFA Pattern Engine
@@ -413,20 +414,20 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 453 |
+| Unit tests | 470 |
 | Doc-tests | 1 |
-| E2E SQL queries | 59 (across 7 test files) |
+| E2E SQL queries | 75 (across 8 test files) |
 | Property-based tests | 29 (proptest) |
 | Mutation-guided tests | 51 |
 | Mutation kill rate | 88.4% (130/147) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
-| Unsafe block count | Confined to `src/ffi/` (6 files) |
+| Unsafe block count | Confined to `src/ffi/` (8 function modules) |
 | MSRV | Rust 1.87 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements |
-| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
+| CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Documented negative results | 5 (radix sort, branchless, string pool, compiled pattern, first-condition pre-check) |
-| ClickHouse parity | Complete (7/7 functions, all modes, 32 conditions) |
+| ClickHouse parity | Complete (all 6 ClickHouse behavioral functions, all modes, 32 conditions) + 2 extension-only functions |
 
 ---
 

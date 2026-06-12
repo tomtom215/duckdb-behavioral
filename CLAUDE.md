@@ -152,7 +152,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.3 -ev v0.7.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.3 -ev v0.8.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -249,8 +249,9 @@ Every change MUST meet these requirements:
   cardinality benchmarks, and throughput reporting up to 1B elements
 - **Mutation testing**: 88.4% kill rate baseline via cargo-mutants
   (130 caught / 17 missed) measured on the v0.4.x codebase. cargo-mutants
-  27.0.0 now identifies ~465 candidate mutations on the v0.7.0 source
-  (unchanged from v0.5.0) — a re-measurement is tracked as a separate session
+  27.0.0 identified ~465 candidate mutations on the v0.7.0 source (unchanged
+  from v0.5.0); v0.8.0 adds new code paths — a re-measurement is tracked as a
+  separate session
 - **MSRV 1.87** verified in CI (raised from 1.86 at `quack-rs` v0.13.0;
   v0.14.0 keeps the declared MSRV of 1.87.0, which aligns with `libduckdb-sys`)
 - All public items have documentation
@@ -383,7 +384,7 @@ GitHub Actions workflows in `.github/workflows/`:
   test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage,
   cross-platform (Linux + macOS), extension-build, ci-gate (14 jobs)
 - **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
-- **e2e.yml**: Builds extension, tests all 7 functions against real DuckDB CLI
+- **e2e.yml**: Builds extension, tests all 8 functions against real DuckDB CLI
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
   creates GitHub release on tag push with SemVer validation
 - **community-submission.yml**: On-demand workflow for community extension
@@ -427,7 +428,7 @@ The entry point uses `quack-rs` which depends on `libduckdb-sys`. When updating:
 7. Run full unit test suite (`cargo test`)
 8. **MANDATORY**: E2E test -- build release, append metadata with the new
    `-dv vX.Y.Z` (DuckDB release version, exact-match against the loading
-   CLI), and verify all 7 functions in DuckDB CLI
+   CLI), and verify all 8 functions in DuckDB CLI
 
 ### Performance optimization session
 
