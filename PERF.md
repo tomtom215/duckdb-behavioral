@@ -801,6 +801,52 @@ the extra branch in the hot path. The NFA already handles non-matching starts
 efficiently (one push + one pop + one condition check + return None), so the
 pre-check adds overhead without sufficient savings. Reverted and documented.
 
+### Session 18 (v0.8.0): Correctness-Driven Arithmetic + Determinism — Measured Cost
+
+Not an optimization session: a deep correctness audit changed four hot-path
+mechanisms, and this entry records the measured before/after so the baseline
+stays honest. "Before" = v0.8.0 pre-audit tree (commit `b1cf962`), "after" =
+post-audit, both measured back-to-back on the same container (10M elements,
+Criterion 95% CI; absolute numbers are not comparable to the
+reference-hardware baseline below).
+
+| Benchmark | Before | After | Δ time |
+|---|---|---|---|
+| `sessionize_update/10M` | 13.98–14.65 ms (682–715 Melem/s) | **12.92 ms (774 Melem/s)** | **−7.6% (faster)** |
+| `window_funnel_finalize/10M` | 40.37 ms (248 Melem/s) | 40.32 ms (248 Melem/s) | ±0% |
+| `window_funnel_finalize/100M` | 602.1 ms (166 Melem/s) | 576.7 ms (173 Melem/s) | −4.2% |
+| `sequence_match/10M` | 65.26 ms (153 Melem/s) | **62.67 ms (160 Melem/s)** | **−4.0% (faster)** |
+| `sequence_next_node/1M` | 37.44 ms (26.7 Melem/s) | 38.64 ms (25.9 Melem/s) | +3.2% |
+| `sort_events/10M` (random) | 122.2 ms (81.9 Melem/s) | 127.0 ms (78.7 Melem/s) | +4.0% |
+| `sort_events_presorted/10M` | 104.8 ms (95.4 Melem/s) | 103.9 ms (96.3 Melem/s) | ±0% |
+
+#### What changed and why
+
+1. **Overflow-exact gap checks** (sessionize update, window_funnel scan,
+   pattern executor): `a - b > t` wrapped for DuckDB's ±infinity timestamps.
+   First attempt used `saturating_sub` — measured **+16.6%** on
+   `sessionize_update` and `window_funnel_finalize` (extra cmov in the
+   dependency chain). Final form exploits the ordering invariant (window
+   ORDER BY contract / sorted events): the true gap is non-negative and fits
+   `u64`, so `a.wrapping_sub(b) as u64 > t as u64` is exact across the full
+   timestamp range at the cost of a plain sub + compare. Measured FASTER
+   than the original signed compare on `sessionize_update` (774 vs
+   682–715 Melem/s) — unsigned compare + dropped sign handling.
+
+2. **Deterministic sort key** `(timestamp, conditions)` (was timestamp-only):
+   +4.0% on fully-random 10M sorts, ±0% on the presorted common path. Buys
+   result determinism under parallel aggregation. Accepted.
+
+3. **`sequence_next_node` ClickHouse-exact rewrite** (consecutive chains,
+   `(timestamp, value)` ties): +3.2% at 1M — the value tie-break costs string
+   compares on equal timestamps; consecutive matching itself is cheaper than
+   the old scan. Accepted as the price of parity.
+
+4. **NFA budget scaling + `.*.*` parse-time collapse**: fast paths unchanged
+   (`sequence_match` measured faster); complex patterns gain a budget that
+   scales `8 × events × steps` and errors loudly instead of silently
+   reporting no-match.
+
 ## Current Baseline
 
 Recorded after Session 15 dependency refresh (Criterion 0.8.2, rand 0.9.2).

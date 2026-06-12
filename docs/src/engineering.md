@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 470 unit tests, 10 in-process integration tests (real extension load), 76 E2E SQL queries across 8 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 486 unit tests, 15 in-process integration tests (real extension load), 76 E2E SQL queries across 8 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -53,6 +53,7 @@ graph TB
         FS[sessionize.rs]
         FR[retention.rs]
         FW[window_funnel.rs]
+        FWE[window_funnel_events.rs]
         FQ[sequence.rs]
         FE[sequence_match_events.rs]
         FN[sequence_next_node.rs]
@@ -76,11 +77,12 @@ graph TB
 
     DDB -->|LOAD extension| EP
     EP --> REG
-    REG --> FS & FR & FW & FQ & FE & FN
-    SEG -->|init/update/combine/finalize| FS & FR & FW & FQ & FE & FN
+    REG --> FS & FR & FW & FWE & FQ & FE & FN
+    SEG -->|init/update/combine/finalize| FS & FR & FW & FWE & FQ & FE & FN
     FS --> SS
     FR --> SR
     FW --> SW
+    FWE --> SW
     FQ --> SQ
     FE --> SQ
     FN --> SN
@@ -96,6 +98,7 @@ graph TB
     style FS fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FR fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FW fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FWE fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FQ fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FE fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FN fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -131,13 +134,13 @@ graph TB
 This architecture enables:
 
 - **Independent unit testing**: Business logic tests run in < 1 second with no
-  DuckDB instance. All 457 tests exercise Rust structs directly.
+  DuckDB instance. All 486 tests exercise Rust structs directly.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
   is decoupled from the database.
 - **Auditable unsafe scope**: The `unsafe` boundary is confined to `src/ffi/`
-  (6 files). Reviewers can audit the safety-critical code without reading the
-  entire codebase.
+  (8 function modules). Reviewers can audit the safety-critical code without
+  reading the entire codebase.
 
 ---
 
@@ -151,7 +154,7 @@ graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
         L2["E2E Tests (76 queries, 8 test files)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
-        L1["Unit Tests (457)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
+        L1["Unit Tests (486)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -161,7 +164,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (457 tests)**
+**Level 1: Unit Tests (486 tests)**
 
 Organized by category within each module:
 
@@ -414,7 +417,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 470 |
+| Unit tests | 486 |
 | Doc-tests | 1 |
 | E2E SQL queries | 76 (across 8 test files) |
 | Property-based tests | 29 (proptest) |

@@ -100,6 +100,9 @@ All functions support **2 to 32 boolean conditions**, matching ClickHouse's limi
 `behavioral_version()` returns the loaded extension version for diagnostics.
 Invalid configuration (unknown modes, malformed patterns, month-based
 intervals) raises descriptive SQL errors instead of silently wrong results.
+Results are **deterministic under parallel execution**: events sort with full
+tie-breaking keys, so thread count and row order never change a result. Gap
+arithmetic saturates at DuckDB's `±infinity` timestamps instead of wrapping.
 Detailed documentation, examples, and edge case behavior for each function:
 [Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)
 
@@ -390,8 +393,8 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 
 | Metric | Value |
 |---|---|
-| Unit tests | 470 + 1 doc-test |
-| Integration tests | 10 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths) |
+| Unit tests | 486 + 1 doc-test |
+| Integration tests | 15 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
 | E2E tests | 11 workflow steps (2 platforms) + 59 SQL queries (against real DuckDB CLI) |
 | Property-based tests | 29 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
@@ -436,7 +439,7 @@ cargo build --release
 ## Development
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 470 unit + 10 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 486 unit + 15 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks
