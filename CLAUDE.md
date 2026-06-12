@@ -240,7 +240,7 @@ Every change MUST meet these requirements:
   through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
 - **E2E tests** against real DuckDB v1.5.3 CLI: 12 workflow test steps
-  (2 platforms) plus 8 SQL integration test files with 75 queries covering
+  (2 platforms) plus 8 SQL integration test files with 76 queries covering
   all 8 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
   no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
   all 8 direction/base combinations)
@@ -371,7 +371,7 @@ cached.
 
 **E2E tests** (against real DuckDB CLI):
 - 12 workflow test steps per platform (Linux + macOS) in `e2e.yml`
-- 8 SQL integration test files with 75 queries in `test/sql/`
+- 8 SQL integration test files with 76 queries in `test/sql/`
 - Covers all 8 functions with basic usage, timeouts, all 6 modes, GROUP BY,
   no-match, NULL inputs, empty tables, 5+ conditions, all direction x base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`

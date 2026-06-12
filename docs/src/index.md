@@ -246,7 +246,7 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to 6 FFI files. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 470 unit tests, 75 E2E SQL queries across 8 test files against real DuckDB, 29 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
+| **Testing Rigor** | 470 unit tests, 76 E2E SQL queries across 8 test files against real DuckDB, 29 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
 | **Performance** | Fifteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |

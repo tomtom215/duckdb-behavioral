@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 457 unit tests, 8 in-process integration tests (real extension load), 67 E2E SQL queries across 7 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 470 unit tests, 10 in-process integration tests (real extension load), 76 E2E SQL queries across 8 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -150,7 +150,7 @@ This architecture enables:
 graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
-        L2["E2E Tests (67 queries, 7 test files)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
+        L2["E2E Tests (76 queries, 8 test files)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
         L1["Unit Tests (457)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
     end
 
@@ -416,7 +416,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 |---|---|
 | Unit tests | 470 |
 | Doc-tests | 1 |
-| E2E SQL queries | 75 (across 8 test files) |
+| E2E SQL queries | 76 (across 8 test files) |
 | Property-based tests | 29 (proptest) |
 | Mutation-guided tests | 51 |
 | Mutation kill rate | 88.4% (130/147) |
