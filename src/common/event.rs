@@ -92,16 +92,24 @@ impl Event {
     }
 }
 
-/// Sorts events by timestamp (ascending) using unstable sort.
+/// Sorts events by `(timestamp, conditions)` ascending using unstable sort.
+///
+/// The `conditions` tie-break makes the order — and therefore every finalize
+/// result — **deterministic** regardless of the order in which `DuckDB`'s
+/// parallel hash aggregation delivers and combines same-timestamp events.
+/// (`ClickHouse`'s `windowFunnel` achieves the same determinism by
+/// stable-sorting `(timestamp, event_index)` pairs; lower condition bits
+/// sorting first approximates its per-condition entry order.)
 ///
 /// Before sorting, performs an O(n) presorted check: if events are already
-/// in non-decreasing timestamp order, the sort is skipped entirely. This is
-/// the common case when `DuckDB` provides events via ORDER BY or from naturally
-/// ordered data. For unsorted input, the O(n) verification scan adds negligible
-/// overhead before the O(n log n) pdqsort.
+/// in non-decreasing `(timestamp, conditions)` order, the sort is skipped
+/// entirely. This is the common case when `DuckDB` provides events via
+/// ORDER BY or from naturally ordered data. For unsorted input, the O(n)
+/// verification scan adds negligible overhead before the O(n log n) pdqsort.
 ///
 /// Unstable sort (pdqsort) is used because:
-/// 1. Same-timestamp event order has no defined semantics (matches `ClickHouse`)
+/// 1. The `(timestamp, conditions)` key totally orders the fields that affect
+///    results, so instability cannot change outcomes
 /// 2. No auxiliary O(n) memory allocation (in-place partitioning)
 /// 3. Better constant factors for `Copy` types due to cache-friendly swaps
 /// 4. Adaptive: O(n) for already-sorted input, O(n log n) worst case
@@ -112,38 +120,13 @@ impl Event {
 /// elements, causing TLB/cache misses that dominate the O(n log n) comparison
 /// overhead of pdqsort's cache-friendly in-place partitioning.
 pub fn sort_events(events: &mut [Event]) {
-    if events
-        .windows(2)
-        .all(|w| w[0].timestamp_us <= w[1].timestamp_us)
-    {
+    fn key(e: &Event) -> (i64, u32) {
+        (e.timestamp_us, e.conditions)
+    }
+    if events.windows(2).all(|w| key(&w[0]) <= key(&w[1])) {
         return;
     }
-    events.sort_unstable_by_key(|e| e.timestamp_us);
-}
-
-/// Merges two sorted event slices into a single sorted `Vec`.
-///
-/// Both input slices must be sorted by timestamp. The result preserves the
-/// relative order of events from each input (stable merge).
-///
-/// Since `Event` is `Copy`, this avoids heap allocation per element during
-/// the merge (no `clone()` needed).
-#[must_use]
-pub fn merge_sorted_events(a: &[Event], b: &[Event]) -> Vec<Event> {
-    let mut result = Vec::with_capacity(a.len() + b.len());
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        if a[i].timestamp_us <= b[j].timestamp_us {
-            result.push(a[i]);
-            i += 1;
-        } else {
-            result.push(b[j]);
-            j += 1;
-        }
-    }
-    result.extend_from_slice(&a[i..]);
-    result.extend_from_slice(&b[j..]);
-    result
+    events.sort_unstable_by_key(key);
 }
 
 #[cfg(test)]
@@ -212,54 +195,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_sorted_events() {
-        let a = vec![
-            Event::from_bools(100, &[true]),
-            Event::from_bools(300, &[true]),
-        ];
-        let b = vec![
-            Event::from_bools(200, &[false]),
-            Event::from_bools(400, &[false]),
-        ];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 4);
-        assert_eq!(merged[0].timestamp_us, 100);
-        assert_eq!(merged[1].timestamp_us, 200);
-        assert_eq!(merged[2].timestamp_us, 300);
-        assert_eq!(merged[3].timestamp_us, 400);
-    }
-
-    #[test]
-    fn test_merge_sorted_events_empty() {
-        let a = vec![Event::from_bools(100, &[true])];
-        let b: Vec<Event> = vec![];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 1);
-
-        let merged2 = merge_sorted_events(&b, &a);
-        assert_eq!(merged2.len(), 1);
-    }
-
-    #[test]
-    fn test_merge_sorted_events_equal_timestamps() {
-        let a = vec![Event::from_bools(100, &[true])];
-        let b = vec![Event::from_bools(100, &[false])];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 2);
-        // a's event should come first (stable merge)
-        assert!(merged[0].condition(0));
-        assert!(!merged[1].condition(0));
-    }
-
-    #[test]
-    fn test_merge_both_empty() {
-        let a: Vec<Event> = vec![];
-        let b: Vec<Event> = vec![];
-        let merged = merge_sorted_events(&a, &b);
-        assert!(merged.is_empty());
-    }
-
-    #[test]
     fn test_sort_already_sorted() {
         let mut events = vec![
             Event::from_bools(100, &[true]),
@@ -288,22 +223,6 @@ mod tests {
     #[test]
     fn test_has_any_condition_all_true() {
         assert!(Event::from_bools(0, &[true, true, true]).has_any_condition());
-    }
-
-    #[test]
-    fn test_merge_preserves_order_within_same_ts() {
-        // Multiple events at the same timestamp from each side
-        let a = vec![
-            Event::from_bools(100, &[true, false]),
-            Event::from_bools(100, &[false, true]),
-        ];
-        let b = vec![Event::from_bools(100, &[true, true])];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 3);
-        // a's events come first since a[0].ts <= b[0].ts
-        assert_eq!(merged[0].conditions, 0b01); // true, false
-        assert_eq!(merged[1].conditions, 0b10); // false, true
-        assert_eq!(merged[2].conditions, 0b11); // true, true
     }
 
     #[test]
@@ -443,16 +362,6 @@ mod tests {
         assert_eq!(events[2].conditions, 3);
     }
 
-    #[test]
-    fn test_merge_sorted_preserves_stability() {
-        // Merge should take from `a` first when timestamps are equal (stable merge).
-        let a = vec![Event::new(100, 0b01)];
-        let b = vec![Event::new(100, 0b10)];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged[0].conditions, 0b01); // a's element first
-        assert_eq!(merged[1].conditions, 0b10); // b's element second
-    }
-
     // --- 32-condition support tests ---
 
     #[test]
@@ -576,5 +485,83 @@ mod tests {
         assert_eq!(events[1].timestamp_us, -100);
         assert_eq!(events[2].timestamp_us, 0);
         assert_eq!(events[3].timestamp_us, 100);
+    }
+}
+
+#[cfg(test)]
+mod saturation_tests {
+    //! Cross-module saturation contract: gap arithmetic on Event timestamps
+    //! must saturate (see `sessionize`/`window_funnel`/`executor` call sites).
+
+    #[test]
+    fn test_saturating_gap_extremes() {
+        // The exact operation used by the gap checks.
+        assert_eq!(i64::MAX.saturating_sub(-i64::MAX), i64::MAX);
+        assert_eq!((-i64::MAX).saturating_sub(i64::MAX), i64::MIN);
+        assert_eq!(0i64.saturating_sub(-i64::MAX), i64::MAX);
+    }
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::*;
+
+    /// Any permutation of the same event multiset must sort to the same
+    /// order — the contract that makes parallel-combine results stable.
+    #[test]
+    fn test_sort_is_permutation_invariant_with_ties() {
+        let canonical = vec![
+            Event::new(100, 0b001),
+            Event::new(100, 0b010),
+            Event::new(100, 0b100),
+            Event::new(200, 0b001),
+            Event::new(200, 0b011),
+        ];
+        let mut perm_a = vec![
+            Event::new(200, 0b011),
+            Event::new(100, 0b100),
+            Event::new(100, 0b001),
+            Event::new(200, 0b001),
+            Event::new(100, 0b010),
+        ];
+        let mut perm_b = vec![
+            Event::new(100, 0b010),
+            Event::new(200, 0b001),
+            Event::new(100, 0b100),
+            Event::new(100, 0b001),
+            Event::new(200, 0b011),
+        ];
+        sort_events(&mut perm_a);
+        sort_events(&mut perm_b);
+        assert_eq!(perm_a, canonical);
+        assert_eq!(perm_b, canonical);
+    }
+
+    /// Same-timestamp ties order by ascending condition bitmask.
+    #[test]
+    fn test_sort_ties_order_by_conditions() {
+        let mut events = vec![
+            Event::new(100, 0b100),
+            Event::new(100, 0b001),
+            Event::new(100, 0b010),
+        ];
+        sort_events(&mut events);
+        assert_eq!(events[0].conditions, 0b001);
+        assert_eq!(events[1].conditions, 0b010);
+        assert_eq!(events[2].conditions, 0b100);
+    }
+
+    /// The presorted check uses the full (timestamp, conditions) key: input
+    /// sorted by timestamp but with descending ties must still be re-sorted.
+    #[test]
+    fn test_presorted_check_covers_tie_key() {
+        let mut events = vec![
+            Event::new(100, 0b010),
+            Event::new(100, 0b001), // tie out of order
+            Event::new(200, 0b001),
+        ];
+        sort_events(&mut events);
+        assert_eq!(events[0].conditions, 0b001);
+        assert_eq!(events[1].conditions, 0b010);
     }
 }

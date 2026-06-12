@@ -85,6 +85,13 @@ Result: `2`
 - Step 2 matched at 10:20 (add_to_cart, within 1 hour of 10:00).
 - Step 3 at 11:30 is outside the 1-hour window from the entry at 10:00.
 
+### Determinism
+
+Events sort by `(timestamp, conditions)` before the scan, so results are
+deterministic regardless of thread count, physical row order, or the order in
+which DuckDB's parallel aggregation combines partial states — including
+same-timestamp event bursts.
+
 ## Modes
 
 Modes are independently combinable via a comma-separated string parameter.
@@ -113,6 +120,22 @@ window_funnel(INTERVAL '1 hour', 'strict_increase, strict_once',
 window_funnel(INTERVAL '1 hour', 'strict_order, allow_reentry',
   ts, cond1, cond2, cond3)
 ```
+
+## Errors
+
+Invalid configuration aborts the query with a descriptive SQL error instead of
+silently producing wrong results:
+
+- **Unknown mode string** — `window_funnel: unknown mode 'strict_typo'; valid
+  modes are 'strict', 'strict_deduplication', 'strict_order',
+  'strict_increase', 'strict_once', 'allow_reentry', 'timestamp_dedup'
+  (comma-separated for combinations)`
+- **Month-based window** — month intervals are ambiguous (28-31 days); use
+  day/hour/minute/second units (e.g. `INTERVAL '30 days'`)
+- **Negative window** — the window must be non-negative
+
+A `NULL` window or mode is skipped leniently (the row contributes no
+configuration), matching SQL aggregate conventions.
 
 ## Implementation
 

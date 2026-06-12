@@ -21,7 +21,8 @@ cargo build
 ### Running Tests
 
 ```bash
-# Unit tests (453 tests + 1 doc-test, runs in <1 second)
+# Unit tests (470 tests + 1 doc-test, runs in <1 second).
+# DUCKDB_DOWNLOAD_LIB=1 links a prebuilt libduckdb instead of compiling DuckDB from source.
 cargo test
 
 # Clippy (zero warnings required)
@@ -102,7 +103,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.3 -ev v0.7.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.3 -ev v0.8.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 
 # Load and test

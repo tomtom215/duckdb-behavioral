@@ -13,7 +13,7 @@ ensure code quality across multiple dimensions.
 | Job | Purpose | Tool |
 |-----|---------|------|
 | **check** | Verify compilation | `cargo check --all-targets` |
-| **test** | Run 453 unit tests + 1 doc-test | `cargo test` |
+| **test** | Run 486 unit tests + 1 doc-test | `cargo test` |
 | **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
 | **fmt** | Formatting verification | `cargo fmt --check` |
 | **doc** | Documentation builds without warnings | `cargo doc` with `-Dwarnings` |
@@ -60,8 +60,9 @@ instance.
 
 **Test coverage:**
 - Extension loading verification
-- All 7 functions (sessionize, retention, window_funnel, sequence_match,
-  sequence_count, sequence_match_events, sequence_next_node)
+- All 8 functions (sessionize, retention, window_funnel,
+  window_funnel_events, sequence_match, sequence_count,
+  sequence_match_events, sequence_next_node)
 - Mode parameters (strict_increase)
 - GROUP BY aggregation
 - Load test with 100K events across all aggregate functions

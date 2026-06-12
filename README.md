@@ -25,8 +25,9 @@
 
 ---
 
-Provides `sessionize`, `retention`, `window_funnel`, `sequence_match`,
-`sequence_count`, `sequence_match_events`, and `sequence_next_node` as a loadable
+Provides `sessionize`, `retention`, `window_funnel`, `window_funnel_events`,
+`sequence_match`, `sequence_count`, `sequence_match_events`, and
+`sequence_next_node` as a loadable
 [DuckDB](https://duckdb.org/) extension written in Rust. **Complete
 [ClickHouse](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions)
 behavioral analytics parity.**
@@ -89,12 +90,19 @@ SELECT window_funnel(INTERVAL '1 hour', TIMESTAMP '2024-01-01', true, true, fals
 | `sessionize` | `(TIMESTAMP, INTERVAL)` | `BIGINT` | Window function assigning session IDs based on inactivity gaps |
 | `retention` | `(BOOLEAN, BOOLEAN, ...)` | `BOOLEAN[]` | Cohort retention analysis |
 | `window_funnel` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `INTEGER` | Conversion funnel step tracking with [6 combinable modes](https://tomtom215.github.io/duckdb-behavioral/functions/window-funnel.html) |
+| `window_funnel_events` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `TIMESTAMP[]` | Timestamps of the best funnel chain |
 | `sequence_match` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BOOLEAN` | NFA-based [pattern matching](https://tomtom215.github.io/duckdb-behavioral/functions/sequence-match.html) over event sequences |
 | `sequence_count` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BIGINT` | Count non-overlapping pattern matches |
 | `sequence_match_events` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `LIST(TIMESTAMP)` | Return matched condition timestamps |
 | `sequence_next_node` | `(VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, ...)` | `VARCHAR` | Next event value after pattern match |
 
 All functions support **2 to 32 boolean conditions**, matching ClickHouse's limit.
+`behavioral_version()` returns the loaded extension version for diagnostics.
+Invalid configuration (unknown modes, malformed patterns, month-based
+intervals) raises descriptive SQL errors instead of silently wrong results.
+Results are **deterministic under parallel execution**: events sort with full
+tie-breaking keys, so thread count and row order never change a result. Gap
+arithmetic saturates at DuckDB's `±infinity` timestamps instead of wrapping.
 Detailed documentation, examples, and edge case behavior for each function:
 [Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)
 
@@ -105,6 +113,7 @@ Detailed documentation, examples, and edge case behavior for each function:
 | Break events into sessions by inactivity gap | `sessionize` |
 | Check if users returned in later time periods | `retention` |
 | Measure how far users get through ordered steps | `window_funnel` |
+| See when each funnel step happened | `window_funnel_events` |
 | Detect whether a pattern of events occurred | `sequence_match` |
 | Count how many times a pattern occurred | `sequence_count` |
 | Get timestamps of each matched pattern step | `sequence_match_events` |
@@ -384,8 +393,8 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 
 | Metric | Value |
 |---|---|
-| Unit tests | 453 + 1 doc-test |
-| Integration tests | 7 (in-process: real extension loaded via `InMemoryDb`, all 7 functions exercised through SQL) |
+| Unit tests | 486 + 1 doc-test |
+| Integration tests | 16 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
 | E2E tests | 11 workflow steps (2 platforms) + 59 SQL queries (against real DuckDB CLI) |
 | Property-based tests | 29 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
@@ -412,6 +421,7 @@ E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
 | `sequence_next_node` | Complete |
 | 32-condition support | Complete |
 | `sessionize` | Extension-only (no ClickHouse equivalent) |
+| `window_funnel_events` | Extension-only (no ClickHouse equivalent) |
 
 ## Building
 
@@ -429,7 +439,7 @@ cargo build --release
 ## Development
 
 ```bash
-cargo test                  # 453 unit + 7 integration + 1 doc-test
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 486 unit + 16 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks
@@ -450,7 +460,7 @@ for the full SemVer rules applied to SQL function signatures.
 ## Documentation
 
 - **[Getting Started](https://tomtom215.github.io/duckdb-behavioral/getting-started.html)** — installation, loading, troubleshooting
-- **[Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)** — detailed docs for all 7 functions
+- **[Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)** — detailed docs for all 8 functions
 - **[Use Cases](https://tomtom215.github.io/duckdb-behavioral/use-cases.html)** — 5 complete real-world examples with sample data
 - **[SQL Cookbook](https://tomtom215.github.io/duckdb-behavioral/cookbook.html)** — practical recipes for common analytics patterns
 - **[Quick Reference](https://tomtom215.github.io/duckdb-behavioral/quick-reference.html)** — one-page cheat sheet for all functions and patterns

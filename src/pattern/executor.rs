@@ -8,12 +8,42 @@
 
 use crate::common::event::Event;
 use crate::common::timestamp::MICROS_PER_SECOND;
-use crate::pattern::parser::{CompiledPattern, PatternStep};
+use crate::pattern::parser::{CompiledPattern, PatternError, PatternStep, TimeOp};
 
 /// Maximum number of active NFA states before aborting execution.
 /// Prevents pathological patterns (e.g., `.*.*.*.*`) from consuming
 /// unbounded memory.
-const MAX_NFA_STATES: usize = 10_000;
+/// Floor for the NFA exploration budget. The effective per-start budget
+/// scales with input size (see [`nfa_budget`]); this floor covers tiny
+/// inputs with adversarial patterns.
+const MIN_NFA_BUDGET: usize = 10_000;
+
+/// Per-start NFA exploration budget: `8 * events * steps`, floored at
+/// [`MIN_NFA_BUDGET`].
+///
+/// Lazy exploration of real-world patterns visits O(events × steps) states
+/// per starting position, so legitimate inputs stay far below `8 × n × k`.
+/// Only adversarial stacks of wildcards (e.g. dozens of consecutive `.*`)
+/// can exceed it — and instead of silently reporting "no match", exhaustion
+/// surfaces as a [`PatternError`] so the query fails loudly.
+fn nfa_budget(num_events: usize, num_steps: usize) -> usize {
+    num_events
+        .saturating_mul(num_steps.max(1))
+        .saturating_mul(8)
+        .max(MIN_NFA_BUDGET)
+}
+
+/// Builds the budget-exhaustion error.
+fn budget_error(num_events: usize, num_steps: usize) -> PatternError {
+    PatternError {
+        message: format!(
+            "pattern exploration budget exceeded ({num_events} events x {num_steps} steps): \
+             the pattern is too complex for this input — simplify repeated wildcards \
+             or reduce the group size"
+        ),
+        position: PatternError::NO_POSITION,
+    }
+}
 
 /// Result of executing a pattern against an event stream.
 #[derive(Debug, Clone)]
@@ -48,21 +78,21 @@ pub fn execute_pattern(
     pattern: &CompiledPattern,
     events: &[Event],
     count_all: bool,
-) -> MatchResult {
+) -> Result<MatchResult, PatternError> {
     if events.is_empty() || pattern.steps.is_empty() {
-        return MatchResult {
+        return Ok(MatchResult {
             matched: false,
             count: 0,
-        };
+        });
     }
 
     // Try fast paths for common pattern shapes before falling back to NFA.
     match classify_pattern(pattern) {
         PatternShape::AdjacentConditions(ref conds) => {
-            return fast_adjacent(events, conds, count_all);
+            return Ok(fast_adjacent(events, conds, count_all));
         }
         PatternShape::WildcardSeparated(ref conds) => {
-            return fast_wildcard(events, conds, count_all);
+            return Ok(fast_wildcard(events, conds, count_all));
         }
         PatternShape::Complex => {} // Fall through to NFA
     }
@@ -197,6 +227,39 @@ fn fast_wildcard(events: &[Event], conditions: &[usize], count_all: bool) -> Mat
     }
 }
 
+/// Evaluates a time-constraint gate, mirroring `ClickHouse`'s semantics
+/// (see the `TimeConstraint` arms): returns `(advance_pattern, skip_event)`.
+///
+/// Events are sorted, so the true elapsed time is non-negative and (even
+/// spanning ±infinity timestamps) fits in u64; `wrapping_sub` reinterpreted
+/// as u64 IS that gap. Dividing in u64 keeps the i64 conversion exact, and
+/// flooring to whole seconds generalizes `ClickHouse`'s whole-second
+/// `DateTime` comparisons to microsecond timestamps.
+fn time_gate(
+    op: TimeOp,
+    threshold_seconds: i64,
+    last_match_ts: Option<i64>,
+    event_ts: i64,
+) -> (bool, bool) {
+    let Some(prev_ts) = last_match_ts else {
+        // No previous match timestamp; vacuously satisfied.
+        return (true, false);
+    };
+    let elapsed_us = event_ts.wrapping_sub(prev_ts) as u64;
+    let elapsed_seconds = (elapsed_us / MICROS_PER_SECOND as u64) as i64;
+    let satisfied = op.evaluate(elapsed_seconds, threshold_seconds);
+    // Elapsed time is non-decreasing over later events, so skipping is only
+    // useful while the gate can still (or again) hold: always for >=, >, != ;
+    // only while still satisfied for <=, < ; until the threshold is passed
+    // for ==.
+    let skip = match op {
+        TimeOp::Gte | TimeOp::Gt | TimeOp::Ne => true,
+        TimeOp::Lte | TimeOp::Lt => satisfied,
+        TimeOp::Eq => elapsed_seconds <= threshold_seconds,
+    };
+    (satisfied, skip)
+}
+
 /// Full NFA-based pattern execution for complex patterns.
 ///
 /// Used when the pattern contains time constraints, `.` (`OneEvent`),
@@ -205,9 +268,10 @@ fn execute_pattern_nfa(
     pattern: &CompiledPattern,
     events: &[Event],
     count_all: bool,
-) -> MatchResult {
+) -> Result<MatchResult, PatternError> {
     let mut total_matches = 0;
     let mut search_start = 0;
+    let budget = nfa_budget(events.len(), pattern.steps.len());
     // Pre-allocate the NFA state stack once and reuse across all starting
     // positions. This eliminates per-position heap allocation: instead of
     // O(N) alloc/free pairs, we do O(1) total allocations. The Vec is
@@ -215,13 +279,14 @@ fn execute_pattern_nfa(
     let mut states = Vec::with_capacity(pattern.steps.len() * 2);
 
     while search_start < events.len() {
-        if let Some(match_end) = try_match_from(pattern, events, search_start, &mut states) {
+        if let Some(match_end) = try_match_from(pattern, events, search_start, budget, &mut states)?
+        {
             total_matches += 1;
             if !count_all {
-                return MatchResult {
+                return Ok(MatchResult {
                     matched: true,
                     count: 1,
-                };
+                });
             }
             // For non-overlapping count, advance past this match
             search_start = match_end + 1;
@@ -230,10 +295,10 @@ fn execute_pattern_nfa(
         }
     }
 
-    MatchResult {
+    Ok(MatchResult {
         matched: total_matches > 0,
         count: total_matches,
-    }
+    })
 }
 
 /// Tries to match the full pattern starting from the given event index.
@@ -247,8 +312,9 @@ fn try_match_from(
     pattern: &CompiledPattern,
     events: &[Event],
     start: usize,
+    budget: usize,
     states: &mut Vec<NfaState>,
-) -> Option<usize> {
+) -> Result<Option<usize>, PatternError> {
     states.clear();
     states.push(NfaState {
         event_idx: start,
@@ -260,24 +326,26 @@ fn try_match_from(
 
     while let Some(state) = states.pop() {
         iterations += 1;
-        if iterations > MAX_NFA_STATES {
-            // Prevent runaway matching on pathological patterns
-            return None;
+        if iterations > budget {
+            // Adversarial pattern shapes (stacked wildcards) can explode the
+            // search space; fail loudly instead of reporting a false "no match".
+            return Err(budget_error(events.len(), pattern.steps.len()));
         }
 
         // Successfully matched all steps
         if state.step_idx >= pattern.steps.len() {
             // Return the index of the last consumed event (one before current)
-            return Some(if state.event_idx > 0 {
+            return Ok(Some(if state.event_idx > 0 {
                 state.event_idx - 1
             } else {
                 0
-            });
+            }));
         }
 
         // No more events to consume
         if state.event_idx >= events.len() {
-            // Time constraints and AnyEvents can still succeed at the end
+            // ClickHouse treats trailing `.*`, `(?t<=N)`, `(?t<N)` and
+            // `(?t>=0)` as matching the empty remainder.
             match &pattern.steps[state.step_idx] {
                 PatternStep::AnyEvents => {
                     // .* can match zero events, advance to next step
@@ -285,6 +353,16 @@ fn try_match_from(
                         step_idx: state.step_idx + 1,
                         ..state
                     });
+                }
+                PatternStep::TimeConstraint(op, threshold) => {
+                    let vacuous_at_end = matches!(op, TimeOp::Lte | TimeOp::Lt)
+                        || (matches!(op, TimeOp::Gte) && *threshold == 0);
+                    if vacuous_at_end {
+                        states.push(NfaState {
+                            step_idx: state.step_idx + 1,
+                            ..state
+                        });
+                    }
                 }
                 _ => continue,
             }
@@ -329,19 +407,27 @@ fn try_match_from(
                 });
             }
             PatternStep::TimeConstraint(op, threshold_seconds) => {
-                // Time constraint doesn't consume an event, just checks timing
-                if let Some(prev_ts) = state.last_match_ts {
-                    let elapsed_us = event.timestamp_us - prev_ts;
-                    let elapsed_seconds = elapsed_us / MICROS_PER_SECOND;
-                    if op.evaluate(elapsed_seconds, *threshold_seconds) {
-                        // Time constraint satisfied, advance step
-                        states.push(NfaState {
-                            step_idx: state.step_idx + 1,
-                            ..state
-                        });
-                    }
-                } else {
-                    // No previous match timestamp; time constraint is vacuously true
+                // ClickHouse semantics (verified against
+                // AggregateFunctionSequenceMatch.cpp): the constraint gates
+                // the next pattern step without consuming the event, and
+                // non-matching events may be skipped — the gate is re-tested
+                // against later events whenever it could still be satisfied.
+                // Anchored at the last consumed event (`last_match_ts`).
+                let (advance_pattern, skip_event) = time_gate(
+                    *op,
+                    *threshold_seconds,
+                    state.last_match_ts,
+                    event.timestamp_us,
+                );
+                // Lazy order: advancing the pattern is explored first
+                // (pushed last), mirroring `.*`.
+                if skip_event {
+                    states.push(NfaState {
+                        event_idx: state.event_idx + 1,
+                        ..state
+                    });
+                }
+                if advance_pattern {
                     states.push(NfaState {
                         step_idx: state.step_idx + 1,
                         ..state
@@ -351,7 +437,7 @@ fn try_match_from(
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// Executes a compiled pattern and returns matched condition timestamps.
@@ -360,9 +446,12 @@ fn try_match_from(
 /// time constraints). Returns `Some(vec![ts1, ts2, ...])` if the pattern
 /// matches, `None` if no match is found. Events must be sorted by
 /// timestamp (ascending) before calling.
-pub fn execute_pattern_events(pattern: &CompiledPattern, events: &[Event]) -> Option<Vec<i64>> {
+pub fn execute_pattern_events(
+    pattern: &CompiledPattern,
+    events: &[Event],
+) -> Result<Vec<i64>, PatternError> {
     if events.is_empty() || pattern.steps.is_empty() {
-        return None;
+        return Ok(Vec::new());
     }
 
     try_match_from_with_timestamps(pattern, events, 0, events.len())
@@ -375,13 +464,23 @@ fn try_match_from_with_timestamps(
     events: &[Event],
     search_start: usize,
     search_end: usize,
-) -> Option<Vec<i64>> {
+) -> Result<Vec<i64>, PatternError> {
+    let budget = nfa_budget(events.len(), pattern.steps.len());
+    let mut best_partial = Vec::new();
     for start in search_start..search_end {
-        if let Some(timestamps) = try_match_collecting(pattern, events, start) {
-            return Some(timestamps);
+        if let Some(timestamps) =
+            try_match_collecting(pattern, events, start, budget, &mut best_partial)?
+        {
+            // A complete match: every complete match has the same length, so
+            // the first one found (in lazy exploration order, ascending
+            // starts) is the result — mirroring ClickHouse.
+            return Ok(timestamps);
         }
     }
-    None
+    // No complete match: ClickHouse's sequenceMatchEvents returns the
+    // timestamps of the longest chain matched anywhere (empty when no
+    // condition ever fired).
+    Ok(best_partial)
 }
 
 /// Tries to match from a specific start position, collecting condition timestamps.
@@ -389,7 +488,9 @@ fn try_match_collecting(
     pattern: &CompiledPattern,
     events: &[Event],
     start: usize,
-) -> Option<Vec<i64>> {
+    budget: usize,
+    best_partial: &mut Vec<i64>,
+) -> Result<Option<Vec<i64>>, PatternError> {
     // Count how many Condition steps are in the pattern
     let num_conditions = pattern
         .steps
@@ -408,16 +509,26 @@ fn try_match_collecting(
 
     while let Some(state) = states.pop() {
         iterations += 1;
-        if iterations > MAX_NFA_STATES {
-            return None;
+        if iterations > budget {
+            // Fail loudly instead of reporting a false "no match" (see
+            // try_match_from).
+            return Err(budget_error(events.len(), pattern.steps.len()));
+        }
+
+        // ClickHouse's sequenceMatchEvents returns the timestamps of the
+        // LONGEST chain matched when the full pattern never matches; track
+        // the best partial across the whole exploration.
+        if state.collected.len() > best_partial.len() {
+            best_partial.clone_from(&state.collected);
         }
 
         // Successfully matched all steps
         if state.step_idx >= pattern.steps.len() {
-            return Some(state.collected);
+            return Ok(Some(state.collected));
         }
 
-        // No more events to consume
+        // No more events to consume. ClickHouse treats trailing `.*`,
+        // `(?t<=N)`, `(?t<N)` and `(?t>=0)` as matching the empty remainder.
         if state.event_idx >= events.len() {
             match &pattern.steps[state.step_idx] {
                 PatternStep::AnyEvents => {
@@ -425,6 +536,16 @@ fn try_match_collecting(
                         step_idx: state.step_idx + 1,
                         ..state
                     });
+                }
+                PatternStep::TimeConstraint(op, threshold) => {
+                    let vacuous_at_end = matches!(op, TimeOp::Lte | TimeOp::Lt)
+                        || (matches!(op, TimeOp::Gte) && *threshold == 0);
+                    if vacuous_at_end {
+                        states.push(NfaStateWithTimestamps {
+                            step_idx: state.step_idx + 1,
+                            ..state
+                        });
+                    }
                 }
                 _ => continue,
             }
@@ -467,16 +588,20 @@ fn try_match_collecting(
                 });
             }
             PatternStep::TimeConstraint(op, threshold_seconds) => {
-                if let Some(prev_ts) = state.last_match_ts {
-                    let elapsed_us = event.timestamp_us - prev_ts;
-                    let elapsed_seconds = elapsed_us / MICROS_PER_SECOND;
-                    if op.evaluate(elapsed_seconds, *threshold_seconds) {
-                        states.push(NfaStateWithTimestamps {
-                            step_idx: state.step_idx + 1,
-                            ..state
-                        });
-                    }
-                } else {
+                // ClickHouse gap-skip semantics — see time_gate.
+                let (advance_pattern, skip_event) = time_gate(
+                    *op,
+                    *threshold_seconds,
+                    state.last_match_ts,
+                    event.timestamp_us,
+                );
+                if skip_event {
+                    states.push(NfaStateWithTimestamps {
+                        event_idx: state.event_idx + 1,
+                        ..state.clone()
+                    });
+                }
+                if advance_pattern {
                     states.push(NfaStateWithTimestamps {
                         step_idx: state.step_idx + 1,
                         ..state
@@ -486,7 +611,7 @@ fn try_match_collecting(
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// NFA state that also collects matched condition timestamps.
@@ -531,7 +656,7 @@ mod tests {
     fn test_simple_match() {
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -539,7 +664,7 @@ mod tests {
     fn test_simple_no_match() {
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         let events = make_events(&[(100, &[false, true]), (200, &[true, false])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -552,7 +677,7 @@ mod tests {
             (300, &[false, false]), // gap event
             (400, &[false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -564,7 +689,7 @@ mod tests {
             (200, &[false, false]), // exactly one event gap
             (300, &[false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -579,7 +704,7 @@ mod tests {
         ]);
         // The pattern (?1).(?2) requires exactly ONE event between (?1) and (?2)
         // Event at 200 is the "." and event at 300 needs to be (?2) but it's false
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -591,7 +716,7 @@ mod tests {
             (0, &[true, false]),
             (3_000_000, &[false, true]), // 3 seconds later >= 2
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -602,7 +727,7 @@ mod tests {
             (0, &[true, false]),
             (3_000_000, &[false, true]), // 3 seconds < 5
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -615,7 +740,7 @@ mod tests {
             (300, &[true, false]),
             (400, &[false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, true);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
         assert!(result.matched);
         assert_eq!(result.count, 2);
     }
@@ -623,7 +748,7 @@ mod tests {
     #[test]
     fn test_empty_events() {
         let pattern = parse_pattern("(?1)").unwrap();
-        let result = execute_pattern(&pattern, &[], false);
+        let result = execute_pattern(&pattern, &[], false).unwrap();
         assert!(!result.matched);
         assert_eq!(result.count, 0);
     }
@@ -632,7 +757,7 @@ mod tests {
     fn test_no_matching_condition() {
         let pattern = parse_pattern("(?1)").unwrap();
         let events = make_events(&[(100, &[false]), (200, &[false])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -648,7 +773,7 @@ mod tests {
         // (?2) tries event[1] which doesn't exist. So this should NOT match.
         // Unless event[0] has cond[1] = true and we can reuse it...
         // No - each step consumes events. (?1) consumed event[0], so (?2) needs another event.
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -656,7 +781,7 @@ mod tests {
     fn test_adjacent_match() {
         let pattern = parse_pattern("(?1).*(?2)").unwrap();
         let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -670,7 +795,7 @@ mod tests {
             (400, &[false, false, false]),
             (500, &[false, false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -681,7 +806,7 @@ mod tests {
             (0, &[true, false]),
             (500_000, &[false, true]), // 0.5 seconds <= 1
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -700,7 +825,7 @@ mod tests {
         }
         let events = make_events(&event_data);
         // Should not hang; returns no match after hitting the state limit
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -709,7 +834,7 @@ mod tests {
         // A pattern with no steps should not match anything
         let pattern = CompiledPattern { steps: vec![] };
         let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
         assert_eq!(result.count, 0);
     }
@@ -718,7 +843,7 @@ mod tests {
     fn test_count_all_no_matches() {
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         let events = make_events(&[(100, &[false, true]), (200, &[false, true])]);
-        let result = execute_pattern(&pattern, &events, true);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
         assert!(!result.matched);
         assert_eq!(result.count, 0);
     }
@@ -730,7 +855,7 @@ mod tests {
             (0, &[true, false]),
             (2_000_000, &[false, true]), // exactly 2 seconds
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -741,7 +866,7 @@ mod tests {
             (0, &[true, false]),
             (3_000_000, &[false, true]), // 3 seconds != 2
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -752,7 +877,7 @@ mod tests {
             (0, &[true, false]),
             (6_000_000, &[false, true]), // 6 > 5
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -763,7 +888,7 @@ mod tests {
             (0, &[true, false]),
             (4_000_000, &[false, true]), // 4 < 5
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -771,7 +896,7 @@ mod tests {
     fn test_single_event_single_condition() {
         let pattern = parse_pattern("(?1)").unwrap();
         let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -780,7 +905,7 @@ mod tests {
         // .* at the end of pattern should still match
         let pattern = parse_pattern("(?1).*").unwrap();
         let events = make_events(&[(100, &[true]), (200, &[false])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -795,7 +920,7 @@ mod tests {
             (500, &[true, false]),
             (600, &[false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, true);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
         assert_eq!(result.count, 3);
     }
 
@@ -812,7 +937,7 @@ mod tests {
             (1_000_000, &[false, false]), // matched by `.`
             (3_000_000, &[false, true]),  // 2s after the `.` event, <= 3
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
 
         // Now verify the time constraint uses the `.` event's timestamp, not (?1)'s
@@ -822,7 +947,7 @@ mod tests {
             (1_000_000, &[false, false]), // matched by `.` at 1s
             (3_000_000, &[false, true]),  // 2s after `.`, > 1s limit
         ]);
-        let result2 = execute_pattern(&pattern2, &events2, false);
+        let result2 = execute_pattern(&pattern2, &events2, false).unwrap();
         assert!(!result2.matched);
     }
 
@@ -834,7 +959,7 @@ mod tests {
         // should be vacuously true.
         let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
         let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -849,12 +974,12 @@ mod tests {
             (0, &[true, false]),
             (1_500_000, &[false, true]), // 1.5s → 1s (integer division) < 2
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
 
         // 2_500_000 µs = 2.5s, truncated to 2s. With (?t>=2), 2s >= 2 → match.
         let events2 = make_events(&[(0, &[true, false]), (2_500_000, &[false, true])]);
-        let result2 = execute_pattern(&pattern, &events2, false);
+        let result2 = execute_pattern(&pattern, &events2, false).unwrap();
         assert!(result2.matched);
     }
 
@@ -870,7 +995,7 @@ mod tests {
             (300, &[true, false]), // start of second match
             (400, &[false, true]), // lazy: (?2) matches here immediately
         ]);
-        let result = execute_pattern(&pattern, &events, true);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
         // Lazy: match (0→1), then (2→3) = 2 non-overlapping matches
         assert!(result.matched);
         assert_eq!(result.count, 2);
@@ -883,7 +1008,7 @@ mod tests {
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         assert_eq!(pattern.steps.len(), 2);
         let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -902,7 +1027,7 @@ mod tests {
             (500, &[true, false]),
             (600, &[false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, true);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
         assert_eq!(result.count, 3);
 
         // Adjacent events that share: c1, c1c2, c2
@@ -913,7 +1038,7 @@ mod tests {
             (200, &[true, true]), // both conditions
             (300, &[false, true]),
         ]);
-        let result2 = execute_pattern(&pattern, &events2, true);
+        let result2 = execute_pattern(&pattern, &events2, true).unwrap();
         assert_eq!(result2.count, 1);
     }
 
@@ -923,7 +1048,7 @@ mod tests {
         // .* should match zero remaining events at the end.
         let pattern = parse_pattern("(?1).*").unwrap();
         let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -933,16 +1058,18 @@ mod tests {
     fn test_events_simple_match() {
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![100, 200]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![100, 200]);
     }
 
     #[test]
     fn test_events_no_match() {
+        // No complete match: ClickHouse's sequenceMatchEvents returns the
+        // longest partial chain — here (?1) matched at 200.
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         let events = make_events(&[(100, &[false, true]), (200, &[true, false])]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, None);
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![200]);
     }
 
     #[test]
@@ -953,16 +1080,16 @@ mod tests {
             (200, &[false, false]),
             (300, &[false, true]),
         ]);
-        let result = execute_pattern_events(&pattern, &events);
+        let result = execute_pattern_events(&pattern, &events).unwrap();
         // Only condition timestamps, not wildcard
-        assert_eq!(result, Some(vec![100, 300]));
+        assert_eq!(result, vec![100, 300]);
     }
 
     #[test]
     fn test_events_empty_input() {
         let pattern = parse_pattern("(?1)").unwrap();
-        let result = execute_pattern_events(&pattern, &[]);
-        assert_eq!(result, None);
+        let result = execute_pattern_events(&pattern, &[]).unwrap();
+        assert_eq!(result, Vec::<i64>::new());
     }
 
     #[test]
@@ -973,16 +1100,16 @@ mod tests {
             (20, &[false, true, false]),
             (30, &[false, false, true]),
         ]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![10, 20, 30]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![10, 20, 30]);
     }
 
     #[test]
     fn test_events_with_time_constraint() {
         let pattern = parse_pattern("(?1)(?t>=2)(?2)").unwrap();
         let events = make_events(&[(0, &[true, false]), (3_000_000, &[false, true])]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![0, 3_000_000]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![0, 3_000_000]);
     }
 
     #[test]
@@ -993,8 +1120,8 @@ mod tests {
             (200, &[false, false]),
             (300, &[false, true]),
         ]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![100, 300]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![100, 300]);
     }
 
     // --- Fast path tests ---
@@ -1012,7 +1139,7 @@ mod tests {
             (200, &[true, false]), // c1
             (300, &[false, true]), // c2
         ]);
-        let result = execute_pattern(&pattern, &events, true);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
         assert_eq!(result.count, 1);
     }
 
@@ -1025,7 +1152,7 @@ mod tests {
             (200, &[false, true, false]),
             (300, &[false, false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -1040,7 +1167,7 @@ mod tests {
             (400, &[true, false]),
             (500, &[false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, true);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
         assert_eq!(result.count, 2);
     }
 
@@ -1053,7 +1180,7 @@ mod tests {
             (200, &[true, false]),
             (300, &[true, false]),
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -1062,7 +1189,7 @@ mod tests {
         // Fewer events than pattern steps
         let pattern = parse_pattern("(?1)(?2)(?3)").unwrap();
         let events = make_events(&[(100, &[true, false, false]), (200, &[false, true, false])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
 
@@ -1071,7 +1198,7 @@ mod tests {
         // Patterns with time constraints must use the NFA, not fast paths.
         let pattern = parse_pattern("(?1)(?t<=5)(?2)").unwrap();
         let events = make_events(&[(0, &[true, false]), (3_000_000, &[false, true])]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -1084,7 +1211,7 @@ mod tests {
             (200, &[false, false]),
             (300, &[false, true]),
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
     }
 
@@ -1099,7 +1226,7 @@ mod tests {
             (1_000_000, &[false, false]), // consumed by .*
             (2_000_000, &[false, true]),  // 2s from (?1) match, <= 3
         ]);
-        let result = execute_pattern(&pattern, &events, false);
+        let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(result.matched);
 
         // Time constraint too tight for the gap
@@ -1109,7 +1236,7 @@ mod tests {
             (1_000_000, &[false, false]),
             (5_000_000, &[false, true]), // 5s from (?1), > 1
         ]);
-        let result2 = execute_pattern(&pattern2, &events2, false);
+        let result2 = execute_pattern(&pattern2, &events2, false).unwrap();
         assert!(!result2.matched);
     }
 
@@ -1125,27 +1252,29 @@ mod tests {
             (1_000_000, &[false, false]), // consumed by .*
             (3_000_000, &[false, true]),  // 3s from (?1), <= 5
         ]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![0, 3_000_000]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![0, 3_000_000]);
     }
 
     #[test]
     fn test_events_wildcard_time_constraint_fails() {
-        // Time constraint not satisfied during event collection — should return None.
+        // Time constraint not satisfiable: no complete match, so the longest
+        // partial chain — just (?1) at t=0 — is returned.
         let pattern = parse_pattern("(?1).*(?t<=1)(?2)").unwrap();
         let events = make_events(&[
             (0, &[true, false]),
             (1_000_000, &[false, false]),
             (5_000_000, &[false, true]), // 5s from (?1), > 1
         ]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, None);
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![0]);
     }
 
     #[test]
     fn test_events_nfa_state_limit() {
-        // Pathological pattern with multiple .* should hit MAX_NFA_STATES
-        // and return None during event collection (same as execute_pattern).
+        // Consecutive `.*` runs are collapsed by the parser, so the classic
+        // pathological shape stays on the fast path and simply reports
+        // no-match.
         let pattern = parse_pattern("(?1).*.*.*.*(?2)").unwrap();
         let mut event_data: Vec<(i64, &[bool])> = Vec::new();
         let conds_start: [bool; 2] = [true, false];
@@ -1155,17 +1284,34 @@ mod tests {
             event_data.push((i, &conds_mid));
         }
         let events = make_events(&event_data);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, None);
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        // No (?2) anywhere: the longest partial chain is (?1) at t=0.
+        assert_eq!(result, vec![0]);
+
+        // A non-normalizable adversarial pattern (wildcards interleaved with
+        // time constraints) that exceeds the exploration budget fails LOUDLY
+        // instead of silently reporting no-match.
+        let adversarial =
+            parse_pattern("(?1).*(?t>=0).*(?t>=0).*(?t>=0).*(?t>=0).*(?t>=0).*(?2)").unwrap();
+        let mut big: Vec<Event> = vec![Event::from_bools(0, &[true, false])];
+        for i in 1..3_000i64 {
+            big.push(Event::new(i, 0b100));
+        }
+        let err = execute_pattern_events(&adversarial, &big).unwrap_err();
+        assert!(
+            err.message.contains("exploration budget exceeded"),
+            "actual: {}",
+            err.message
+        );
     }
 
     #[test]
     fn test_events_empty_pattern() {
-        // Empty pattern steps should return None.
+        // Empty pattern steps match nothing: empty result.
         let pattern = CompiledPattern { steps: vec![] };
         let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, None);
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, Vec::<i64>::new());
     }
 
     #[test]
@@ -1174,14 +1320,14 @@ mod tests {
         // (?1) consumes event[0], .* matches zero, (?2) needs event[1].
         let pattern = parse_pattern("(?1).*(?2)").unwrap();
         let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![100, 200]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![100, 200]);
     }
 
     #[test]
     fn test_events_one_event_gap_fails() {
-        // (?1).(?2) with two gap events — should not match because .
-        // matches exactly one event.
+        // (?1).(?2) with two gap events — no complete match because `.`
+        // matches exactly one event; longest partial is (?1) at 100.
         let pattern = parse_pattern("(?1).(?2)").unwrap();
         let events = make_events(&[
             (100, &[true, false]),
@@ -1189,8 +1335,8 @@ mod tests {
             (300, &[false, false]),
             (400, &[false, true]),
         ]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, None);
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![100]);
     }
 
     #[test]
@@ -1199,9 +1345,9 @@ mod tests {
         // zero remaining events and the pattern should succeed.
         let pattern = parse_pattern("(?1).*").unwrap();
         let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern_events(&pattern, &events);
+        let result = execute_pattern_events(&pattern, &events).unwrap();
         // Only one condition timestamp collected
-        assert_eq!(result, Some(vec![100]));
+        assert_eq!(result, vec![100]);
     }
 
     #[test]
@@ -1210,8 +1356,8 @@ mod tests {
         // Should be vacuously true for event collection too.
         let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
         let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![100]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![100]);
     }
 
     #[test]
@@ -1226,7 +1372,150 @@ mod tests {
             (300, &[false, false]),
             (400, &[false, true]), // later (?2) — greedy would pick this
         ]);
-        let result = execute_pattern_events(&pattern, &events);
-        assert_eq!(result, Some(vec![100, 200]));
+        let result = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(result, vec![100, 200]);
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::pattern::parser::parse_pattern;
+
+    /// A complex pattern (time constraint forces the NFA path) over a large
+    /// gap span must still find the match — the exploration budget must not
+    /// produce silent false negatives on legitimate inputs.
+    #[test]
+    fn test_large_gap_span_still_matches_complex_pattern() {
+        let pattern = parse_pattern("(?1).*(?t>=1)(?2)").unwrap();
+        let mut events = Vec::new();
+        events.push(Event::from_bools(0, &[true, false]));
+        for i in 0..50_000i64 {
+            // Gap events: condition 3 fires so they pass update() filters,
+            // but they match neither pattern condition.
+            events.push(Event::new(1_000_000 + i, 0b100));
+        }
+        events.push(Event::from_bools(60_000_000, &[false, true]));
+
+        let result = execute_pattern(&pattern, &events, false).expect("within budget");
+        assert!(
+            result.matched,
+            "the match exists; budget exhaustion must not hide it"
+        );
+    }
+
+    /// The events-collecting variant has the same requirement.
+    #[test]
+    fn test_large_gap_span_events_variant() {
+        let pattern = parse_pattern("(?1).(?t>=0)(?2)").unwrap();
+        let mut events = Vec::new();
+        events.push(Event::from_bools(0, &[true, false]));
+        events.push(Event::new(500_000, 0b100));
+        events.push(Event::from_bools(1_000_000, &[false, true]));
+        // Long tail after the match must not matter.
+        for i in 0..20_000i64 {
+            events.push(Event::new(2_000_000 + i, 0b100));
+        }
+        let timestamps = execute_pattern_events(&pattern, &events).expect("within budget");
+        assert_eq!(timestamps, vec![0, 1_000_000]);
+    }
+}
+
+#[cfg(test)]
+mod time_semantics_tests {
+    use super::*;
+    use crate::pattern::parser::parse_pattern;
+
+    /// Elapsed time is floored to whole seconds before comparison — the
+    /// faithful generalization of `ClickHouse`'s `DateTime` (whole-second)
+    /// behavior to microsecond timestamps. 2.5s elapsed counts as 2.
+    #[test]
+    fn test_elapsed_seconds_floor_for_lte() {
+        let pattern = parse_pattern("(?1)(?t<=2)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(2_500_000, &[false, true]), // 2.5s -> floor 2
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// (?t==N) therefore means "elapsed within [N, N+1) seconds".
+    #[test]
+    fn test_elapsed_seconds_floor_for_eq() {
+        let pattern = parse_pattern("(?1)(?t==2)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(2_900_000, &[false, true]), // 2.9s -> floor 2
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(3_000_000, &[false, true]), // 3.0s -> floor 3
+        ];
+        assert!(!execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// `ClickHouse` gap-skip semantics: `(?1)(?t<=N)(?2)` tolerates
+    /// non-matching events between the two conditions.
+    #[test]
+    fn test_time_constraint_skips_gap_events() {
+        let pattern = parse_pattern("(?1)(?t<=10)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::new(2_000_000, 0b100), // gap event (other condition)
+            Event::new(3_000_000, 0b100), // gap event
+            Event::from_bools(5_000_000, &[false, true]),
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// The gate still rejects matches outside the window even when skipping.
+    #[test]
+    fn test_time_constraint_gate_still_enforced_with_gaps() {
+        let pattern = parse_pattern("(?1)(?t<=2)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::new(1_000_000, 0b100), // gap inside window
+            Event::from_bools(5_000_000, &[false, true]), // outside window
+        ];
+        assert!(!execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// `ClickHouse` end-of-events rule: trailing `(?t<=N)` / `(?t<N)` /
+    /// `(?t>=0)` match the empty remainder.
+    #[test]
+    fn test_trailing_constraints_vacuous_at_end() {
+        let events = vec![Event::from_bools(0, &[true])];
+        for pattern_str in ["(?1)(?t<=5)", "(?1)(?t<5)", "(?1)(?t>=0)"] {
+            let pattern = parse_pattern(pattern_str).unwrap();
+            assert!(
+                execute_pattern(&pattern, &events, false).unwrap().matched,
+                "{pattern_str} must match at end of events"
+            );
+        }
+        // Trailing constraints that need a future event do not match.
+        for pattern_str in ["(?1)(?t>=1)", "(?1)(?t>0)", "(?1)(?t==0)"] {
+            let pattern = parse_pattern(pattern_str).unwrap();
+            assert!(
+                !execute_pattern(&pattern, &events, false).unwrap().matched,
+                "{pattern_str} must not match at end of events"
+            );
+        }
+    }
+
+    /// `(?t>=N)` waits past arbitrarily many early events.
+    #[test]
+    fn test_gte_waits_for_later_events() {
+        let pattern = parse_pattern("(?1)(?t>=4)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(1_000_000, &[false, true]), // too early
+            Event::from_bools(2_000_000, &[false, true]), // too early
+            Event::from_bools(5_000_000, &[false, true]), // 5s >= 4 ✓
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+        let timestamps = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(timestamps, vec![0, 5_000_000]);
     }
 }

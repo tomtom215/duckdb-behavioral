@@ -11,9 +11,14 @@ use crate::common::event::Event;
 use crate::common::timestamp::interval_to_micros;
 use crate::window_funnel::{FunnelMode, WindowFunnelState};
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
+
+/// Error text listing every SQL mode string `window_funnel` accepts.
+const VALID_MODES: &str = "'strict', 'strict_deduplication', 'strict_order', \
+     'strict_increase', 'strict_once', 'allow_reentry', 'timestamp_dedup' \
+     (comma-separated for combinations)";
 
 /// Minimum number of boolean condition parameters for `window_funnel`.
 const MIN_CONDITIONS: usize = 2;
@@ -79,28 +84,30 @@ pub unsafe fn register_window_funnel(
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update(
-    _info: duckdb_function_info,
+// Shared with `window_funnel_events`, which differs only in finalize.
+pub(super) unsafe extern "C" fn state_update(
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     // No mode parameter: INTERVAL(0), TIMESTAMP(1), BOOLEAN(2..N)
     unsafe {
-        update_impl(input, states, false);
+        update_impl(info, input, states, false, "window_funnel");
     }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, VARCHAR,
 // TIMESTAMP, BOOLEAN...) as registered. The VARCHAR at column 1 contains the mode
 // string. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update_with_mode(
-    _info: duckdb_function_info,
+// Shared with `window_funnel_events`, which differs only in finalize.
+pub(super) unsafe extern "C" fn state_update_with_mode(
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     // With mode parameter: INTERVAL(0), VARCHAR(1), TIMESTAMP(2), BOOLEAN(3..N)
     unsafe {
-        update_impl(input, states, true);
+        update_impl(info, input, states, true, "window_funnel");
     }
 }
 
@@ -111,15 +118,26 @@ unsafe extern "C" fn state_update_with_mode(
 /// When `has_mode` is false, column layout is:
 ///   \[0\] INTERVAL, \[1\] TIMESTAMP, \[2..N\] BOOLEAN
 ///
+/// Invalid configuration (month-based or negative window, unknown mode string)
+/// aborts the query via [`AggregateFunctionInfo::set_error`] instead of
+/// silently producing wrong results.
+///
+/// `func` names the SQL function in error messages (`window_funnel` or
+/// `window_funnel_events`).
+///
 /// # Safety
 ///
-/// Requires valid `input` data chunk and `states` aggregate state pointers.
-unsafe fn update_impl(
+/// Requires a valid `info` handle plus valid `input` data chunk and `states`
+/// aggregate state pointers.
+pub(super) unsafe fn update_impl(
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
     has_mode: bool,
+    func: &str,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
 
@@ -157,17 +175,37 @@ unsafe fn update_impl(
             }
 
             // Read window size from interval using VectorReader
-            let iv = interval_reader.read_interval(i);
-            if let Some(window_us) = interval_to_micros(iv.months, iv.days, iv.micros) {
-                state.window_size_us = window_us;
+            if interval_reader.is_valid(i) {
+                let iv = interval_reader.read_interval(i);
+                match interval_to_micros(iv.months, iv.days, iv.micros) {
+                    Some(window_us) if window_us >= 0 => state.window_size_us = window_us,
+                    Some(_) => {
+                        info.set_error(&format!("{func}: INTERVAL window must be non-negative"));
+                        return;
+                    }
+                    None => {
+                        info.set_error(&format!(
+                            "{func}: invalid INTERVAL window: month-based intervals \
+                             are ambiguous (28-31 days) and the total must fit in signed \
+                             64-bit microseconds; use day/hour/minute/second units instead"
+                        ));
+                        return;
+                    }
+                }
             }
 
             // Parse mode string (once per state, from first row that has it)
             if let Some(ref mode_reader) = mode_reader {
                 if state.mode.is_default() && mode_reader.is_valid(i) {
                     let s = mode_reader.read_str(i);
-                    if let Ok(mode) = FunnelMode::parse_modes(s) {
-                        state.mode = mode;
+                    match FunnelMode::parse_modes(s) {
+                        Ok(mode) => state.mode = mode,
+                        Err(unknown) => {
+                            info.set_error(&format!(
+                                "{func}: unknown mode '{unknown}'; valid modes are {VALID_MODES}"
+                            ));
+                            return;
+                        }
                     }
                 }
             }
@@ -190,7 +228,8 @@ unsafe fn update_impl(
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
 // combine_in_place propagates window_size_us and mode from source to target
 // when target has defaults (Session 10 bug fix).
-unsafe extern "C" fn state_combine(
+// Shared with `window_funnel_events`, which differs only in finalize.
+pub(super) unsafe extern "C" fn state_combine(
     _info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     target: *mut duckdb_aggregate_state,

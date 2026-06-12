@@ -17,6 +17,7 @@
 - [sessionize](./functions/sessionize.md)
 - [retention](./functions/retention.md)
 - [window_funnel](./functions/window-funnel.md)
+- [window_funnel_events](./functions/window-funnel-events.md)
 - [sequence_match](./functions/sequence-match.md)
 - [sequence_count](./functions/sequence-count.md)
 - [sequence_match_events](./functions/sequence-match-events.md)

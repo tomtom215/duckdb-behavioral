@@ -64,7 +64,7 @@ cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.3 -ev v0.7.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.3 -ev v0.8.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 ```
 
@@ -121,7 +121,7 @@ conn = duckdb.connect(config={"allow_unsigned_extensions": "true"})
 conn.execute("LOAD '/tmp/behavioral.duckdb_extension'")
 ```
 
-Once loaded, all seven functions are available in the current session:
+Once loaded, all eight functions are available in the current session:
 `sessionize`, `retention`, `window_funnel`, `sequence_match`,
 `sequence_count`, `sequence_match_events`, and `sequence_next_node`.
 
@@ -155,15 +155,17 @@ function catalog:
 ```sql
 SELECT function_name FROM duckdb_functions()
 WHERE function_name IN (
-  'sessionize', 'retention', 'window_funnel',
+  'sessionize', 'retention', 'window_funnel', 'window_funnel_events',
   'sequence_match', 'sequence_count',
-  'sequence_match_events', 'sequence_next_node'
+  'sequence_match_events', 'sequence_next_node', 'behavioral_version'
 )
 GROUP BY function_name
 ORDER BY function_name;
 ```
 
-This should return all seven function names.
+This should return all nine function names (eight analytics functions plus
+the `behavioral_version()` diagnostic scalar). `SELECT behavioral_version();`
+tells you which build is loaded.
 
 ---
 
@@ -354,7 +356,7 @@ WHERE function_name LIKE 'session%'
    OR function_name LIKE 'sequence%';
 ```
 
-All seven functions should appear. If some are missing, this may indicate a
+All eight functions should appear. If some are missing, this may indicate a
 version mismatch between the extension and DuckDB. Rebuild the extension from
 source against the DuckDB version you are running.
 
@@ -399,7 +401,7 @@ or `brew install cmake` (macOS).
 
 ## Running Tests
 
-The extension includes 453 unit tests and 1 doc-test:
+The extension includes 486 unit tests and 1 doc-test:
 
 ```bash
 cargo test

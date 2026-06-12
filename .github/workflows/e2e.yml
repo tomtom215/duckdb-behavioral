@@ -151,6 +151,22 @@ jobs:
             FROM mode_events;
           "
 
+      - name: E2E - window_funnel_events
+        run: |
+          ./duckdb -unsigned -c "
+            LOAD 'build/release/behavioral.duckdb_extension';
+
+            CREATE TABLE chain_events AS SELECT * FROM (VALUES
+              (TIMESTAMP '2024-01-01 10:00:00', 'view'),
+              (TIMESTAMP '2024-01-01 10:05:00', 'cart'),
+              (TIMESTAMP '2024-01-01 10:10:00', 'purchase')
+            ) AS t(ts, event);
+
+            SELECT window_funnel_events(INTERVAL '1 hour', ts,
+              event = 'view', event = 'cart', event = 'purchase') AS chain
+            FROM chain_events;
+          "
+
       - name: E2E - sequence_match and sequence_count
         run: |
           ./duckdb -unsigned -c "
@@ -305,6 +321,7 @@ jobs:
             echo "| retention | Verified |"
             echo "| window_funnel | Verified |"
             echo "| window_funnel modes | Verified |"
+            echo "| window_funnel_events | Verified |"
             echo "| sequence_match/count | Verified |"
             echo "| sequence_match_events | Verified |"
             echo "| sequence_next_node | Verified |"

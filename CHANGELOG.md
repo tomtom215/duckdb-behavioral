@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-12
+
+### Added
+
+- **`window_funnel_events` function** — `LIST(TIMESTAMP)` of the best funnel
+  chain: one timestamp per matched step, in match order (list length always
+  equals `window_funnel`'s step count for the same arguments). Companion to
+  `window_funnel` for funnel debugging and step-to-step latency analysis;
+  extension beyond ClickHouse. Shares `WindowFunnelState` and the
+  update/combine FFI callbacks; the greedy scan is generic over a zero-sized
+  step recorder so `window_funnel`'s hot path is unchanged.
+- **`behavioral_version()` scalar** — returns the loaded extension version
+  (the first scalar function; registered via quack-rs `ScalarFunctionBuilder`).
+- **Strict configuration validation** — invalid configuration now aborts the
+  query with a descriptive SQL error (via
+  `duckdb_aggregate_function_set_error`) instead of silently producing wrong
+  results or NULL: unknown `window_funnel` mode strings (message lists all
+  valid modes), month-based or negative INTERVAL windows/gaps, malformed
+  sequence patterns (the parser's position-annotated message), and unknown
+  `sequence_next_node` direction/base values. NULL configuration parameters
+  remain lenient.
+- **`wasm-check` CI job** — the crate compiles for `wasm32-unknown-emscripten`
+  (DuckDB-WASM) since quack-rs 0.14.0; CI now enforces it. The community
+  descriptor still excludes wasm platforms pending a verified emscripten
+  link + load.
+
+### Fixed
+
+- **`sequence_next_node` now matches ClickHouse exactly** (verified against
+  `AggregateFunctionSequenceNextNode.cpp`). Three divergences fixed:
+  `head`/`tail` anchor at the literal first/last event (which must satisfy
+  the base condition) rather than scanning for one; the event chain must
+  match **consecutive** events (interleaved non-matching events break it, and
+  a failed chain is not retried at other anchors); events sort by
+  `(timestamp, value)` so same-timestamp results are deterministic.
+- **Timestamp gap arithmetic saturates instead of wrapping** — with DuckDB's
+  `±infinity` timestamps (`±i64::MAX` internally), the gap computations in
+  `sessionize` (update + combine), `window_funnel`'s window check, and the
+  pattern executor's `(?t…)` elapsed-time evaluation previously overflowed
+  and wrapped in release builds, silently treating infinitely distant events
+  as adjacent. All sites now use `saturating_sub`.
+- **Pattern time constraints reject numbers above `i64::MAX`** — values in
+  `(i64::MAX, u64::MAX]` previously wrapped negative through an unchecked
+  cast, inverting the constraint (e.g. `(?t>=18446744073709551615)` became
+  `(?t>=-1)`). Now a position-annotated pattern error.
+- **Time constraints now match ClickHouse exactly** (verified against
+  `AggregateFunctionSequenceMatch.cpp`): `(?t op N)` gates the next pattern
+  step while *skipping* non-matching events in between — previously
+  `(?1)(?t<=N)(?2)` required the two conditions to be adjacent and silently
+  missed matches ClickHouse finds. Trailing `(?t<=N)`/`(?t<N)`/`(?t>=0)`
+  now match the empty remainder, also as in ClickHouse. Elapsed time is
+  floored to whole seconds (documented adaptation: ClickHouse compares raw
+  column units; the floor generalizes whole-second `DateTime` behavior).
+- **`sequence_match_events` returns the longest partial chain on no-match**
+  (ClickHouse `sequenceMatchEvents` semantics) instead of an empty list —
+  the empty list now means "no condition ever fired". Documentation
+  previously mis-classified this function as an extension beyond ClickHouse;
+  it is one of the six ClickHouse behavioral functions (and `.` is ClickHouse
+  syntax too — only `(?t!=N)` is our pattern-syntax extension).
+- **NFA exploration budget no longer causes silent false negatives** — the
+  fixed 10,000-iteration cap could make complex patterns (time constraints,
+  `.`) report "no match" on groups with more than a few thousand
+  non-matching events even when a match existed. The budget now scales with
+  input size (`8 × events × steps`), consecutive `.*` wildcards are collapsed
+  at parse time (they are semantically one wildcard but each copy multiplied
+  the NFA branching factor), and if a truly adversarial pattern still
+  exhausts the budget the query fails loudly with a descriptive error
+  instead of silently returning a wrong result.
+
+### Changed
+
+- **Deterministic results under parallel aggregation** — shared event sorting
+  now uses the full `(timestamp, conditions)` key (with a matching presorted
+  check), so `window_funnel`, `window_funnel_events`, `sequence_match`,
+  `sequence_count`, and `sequence_match_events` produce identical results
+  regardless of thread count or physical row order. Verified by an
+  integration probe that hashes results across `threads=1/4` and reversed
+  insertion order. (ClickHouse's `windowFunnel` achieves the same via
+  stable-sorted `(timestamp, event_index)` pairs.)
+- **`sessionize` FFI migrated to quack-rs `AggregateFunctionBuilder`** — the
+  last hand-rolled raw `libduckdb-sys` module is gone; every function now
+  registers through the `Registrar` trait. Behavior-preserving (identical
+  C-API call sequence, default NULL handling); adds the combine-harness tests
+  sessionize never had.
+- **Dev/test builds link a prebuilt libduckdb** (quack-rs
+  `bundled-test-prebuilt` + `DUCKDB_DOWNLOAD_LIB=1`) instead of compiling
+  DuckDB's C++ tree from source — cold test setup drops from ~25 minutes to
+  the Rust wrapper crates only. Release builds are untouched (verified: no
+  libduckdb `NEEDED`/`RUNPATH` in the shipped `.so`).
+- **BREAKING (0.x minor)**: `ffi::sessionize::register_sessionize` now takes
+  `&impl Registrar` instead of a raw `duckdb_connection`.
+
+### Removed
+
+- **`common::event::merge_sorted_events`** — dead public API (unused since
+  the in-place combine rewrite) whose timestamp-only merge contract became
+  inconsistent with the new `(timestamp, conditions)` ordering.
+
+### Tests
+
+- 486 unit tests (was 453) and 16 in-process integration tests (was 7),
+  including: adversarial probes for `±infinity` timestamps and oversized
+  time constraints, a ClickHouse-semantics matrix for all eight
+  `sequence_next_node` direction/base combinations, parallel-combine
+  determinism hashing, windowed `window_funnel` usage, and SQL error-path
+  assertions for all validation errors. 8 E2E SQL files with 76 queries.
+
+
 ## [0.7.0] - 2026-06-07
 
 ### Changed
@@ -352,7 +460,9 @@ all bumping deps to versions at or below those landed here: #58, #61,
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.6.0...v0.8.0
+[0.7.0]: https://github.com/tomtom215/duckdb-behavioral/commit/f50cb24
 [0.6.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.3.0...v0.4.0

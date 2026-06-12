@@ -3,8 +3,9 @@
 
 //! # `behavioral` — Behavioral Analytics Extension for `DuckDB`
 //!
-//! Provides seven functions for behavioral analytics, inspired by `ClickHouse`'s
-//! behavioral analytics functions but designed for `DuckDB`'s SQL dialect.
+//! Provides eight behavioral analytics functions, inspired by `ClickHouse`'s
+//! behavioral analytics functions but designed for `DuckDB`'s SQL dialect,
+//! plus a `behavioral_version()` diagnostic scalar.
 //!
 //! ## Functions
 //!
@@ -13,10 +14,12 @@
 //! | `sessionize(ts, gap)` | Window | Assigns session IDs based on inactivity gaps |
 //! | `retention(c1, ..., cN)` | Aggregate | Cohort retention analysis |
 //! | `window_funnel(window, ts, c1, ..., cN)` | Aggregate | Conversion funnel analysis |
+//! | `window_funnel_events(window, ts, c1, ..., cN)` | Aggregate | Timestamps of the best funnel chain |
 //! | `sequence_match(pattern, ts, c1, ..., cN)` | Aggregate | Pattern matching over event sequences |
 //! | `sequence_count(pattern, ts, c1, ..., cN)` | Aggregate | Counts pattern matches in event sequences |
 //! | `sequence_match_events(pattern, ts, c1, ..., cN)` | Aggregate | Returns matched step timestamps |
 //! | `sequence_next_node(dir, base, ts, val, bc, e1, ..., eN)` | Aggregate | Next event after pattern match |
+//! | `behavioral_version()` | Scalar | Loaded extension version |
 //!
 //! ## Installation
 //!

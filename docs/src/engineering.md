@@ -23,7 +23,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 453 unit tests, 7 in-process integration tests (real extension load), 59 E2E SQL queries across 7 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 486 unit tests, 16 in-process integration tests (real extension load), 76 E2E SQL queries across 8 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -53,6 +53,7 @@ graph TB
         FS[sessionize.rs]
         FR[retention.rs]
         FW[window_funnel.rs]
+        FWE[window_funnel_events.rs]
         FQ[sequence.rs]
         FE[sequence_match_events.rs]
         FN[sequence_next_node.rs]
@@ -76,11 +77,12 @@ graph TB
 
     DDB -->|LOAD extension| EP
     EP --> REG
-    REG --> FS & FR & FW & FQ & FE & FN
-    SEG -->|init/update/combine/finalize| FS & FR & FW & FQ & FE & FN
+    REG --> FS & FR & FW & FWE & FQ & FE & FN
+    SEG -->|init/update/combine/finalize| FS & FR & FW & FWE & FQ & FE & FN
     FS --> SS
     FR --> SR
     FW --> SW
+    FWE --> SW
     FQ --> SQ
     FE --> SQ
     FN --> SN
@@ -96,6 +98,7 @@ graph TB
     style FS fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FR fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FW fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FWE fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FQ fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FE fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FN fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -131,13 +134,13 @@ graph TB
 This architecture enables:
 
 - **Independent unit testing**: Business logic tests run in < 1 second with no
-  DuckDB instance. All 453 tests exercise Rust structs directly.
+  DuckDB instance. All 486 tests exercise Rust structs directly.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
   is decoupled from the database.
 - **Auditable unsafe scope**: The `unsafe` boundary is confined to `src/ffi/`
-  (6 files). Reviewers can audit the safety-critical code without reading the
-  entire codebase.
+  (8 function modules). Reviewers can audit the safety-critical code without
+  reading the entire codebase.
 
 ---
 
@@ -150,8 +153,8 @@ This architecture enables:
 graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
-        L2["E2E Tests (59 queries, 7 test files)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
-        L1["Unit Tests (453)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
+        L2["E2E Tests (76 queries, 8 test files)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
+        L1["Unit Tests (486)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -161,7 +164,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (453 tests)**
+**Level 1: Unit Tests (486 tests)**
 
 Organized by category within each module:
 
@@ -181,7 +184,7 @@ Organized by category within each module:
 
 Integration tests against a real DuckDB CLI instance that validate the complete
 chain: extension loading, function registration, SQL execution, and result
-correctness. These tests caught three critical bugs that all 453 unit tests
+correctness. These tests caught three critical bugs that the entire unit suite
 missed:
 
 1. A segmentation fault on extension load (incorrect pointer arithmetic)
@@ -320,9 +323,11 @@ DuckDB's Rust crate does not provide high-level aggregate function
 registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
 SDK (v0.14.0) which wraps the raw C API with safe builders
 (including `returns_logical(LogicalType)` for `LIST(T)` return types),
-state management, vector I/O, and LIST output helpers. All 6 aggregate
-functions use the builder for registration. The `sessionize` function
-uses raw `libduckdb-sys` due to window function limitations in quack-rs.
+state management, vector I/O, and LIST output helpers. All 7 aggregate
+functions use quack-rs builders for registration: the six variadic functions
+via `AggregateFunctionSetBuilder`, and `sessionize` via
+`AggregateFunctionBuilder` (a single fixed signature — DuckDB windows any
+aggregate, so no window-specific registration exists).
 Each aggregate implements five callback functions:
 
 ```mermaid
@@ -361,7 +366,8 @@ finalize    -- Produces the final result from the accumulated state
 
 Because `duckdb_aggregate_function_set_varargs` does not exist, each function
 that accepts a variable number of boolean conditions (retention, window_funnel,
-sequence_match, sequence_count, sequence_match_events, sequence_next_node)
+sequence_match, sequence_count, sequence_match_events, sequence_next_node,
+window_funnel_events, behavioral_version)
 must register **31 overloads** (2--32 parameters) via a function set.
 
 ### NFA Pattern Engine
@@ -411,20 +417,20 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 453 |
+| Unit tests | 486 |
 | Doc-tests | 1 |
-| E2E SQL queries | 59 (across 7 test files) |
+| E2E SQL queries | 76 (across 8 test files) |
 | Property-based tests | 29 (proptest) |
 | Mutation-guided tests | 51 |
 | Mutation kill rate | 88.4% (130/147) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
-| Unsafe block count | Confined to `src/ffi/` (6 files) |
+| Unsafe block count | Confined to `src/ffi/` (8 function modules) |
 | MSRV | Rust 1.87 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements |
-| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
+| CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Documented negative results | 5 (radix sort, branchless, string pool, compiled pattern, first-condition pre-check) |
-| ClickHouse parity | Complete (7/7 functions, all modes, 32 conditions) |
+| ClickHouse parity | Complete (all 6 ClickHouse behavioral functions, all modes, 32 conditions) + 2 extension-only functions |
 
 ---
 

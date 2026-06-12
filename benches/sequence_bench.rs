@@ -123,9 +123,42 @@ fn bench_sequence_combine(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_sequence_time_constraint(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sequence_match_time_constraint");
+
+    for &n in &[100_000_usize, 1_000_000] {
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            // Events at 1s intervals; cond1 every 3rd event, cond2 the event
+            // after it, one unrelated-condition event between pairs.
+            let events: Vec<Event> = (0..n)
+                .map(|i| {
+                    let bitmask = match i % 3 {
+                        0 => 0b001u32,
+                        1 => 0b010,
+                        _ => 0b100,
+                    };
+                    Event::new(i as i64 * 1_000_000, bitmask)
+                })
+                .collect();
+            b.iter(|| {
+                let mut state = SequenceState::new();
+                state.set_pattern("(?1)(?t<=600)(?2)");
+                for e in &events {
+                    state.update(black_box(*e));
+                }
+                state.finalize_count().unwrap()
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_sequence_match,
+    bench_sequence_time_constraint,
     bench_sequence_count,
     bench_sequence_combine
 );

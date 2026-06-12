@@ -102,9 +102,46 @@ fn bench_window_funnel_combine(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_window_funnel_events_finalize(c: &mut Criterion) {
+    let mut group = c.benchmark_group("window_funnel_events_finalize");
+
+    for &(events, conditions) in &[
+        (10_000, 5),
+        (1_000_000, 8),
+        (10_000_000, 8),
+        (100_000_000, 8),
+    ] {
+        group.throughput(Throughput::Elements(events as u64));
+        if events >= 10_000_000 {
+            group.sample_size(10);
+        }
+        if events >= 100_000_000 {
+            group.measurement_time(std::time::Duration::from_secs(60));
+        }
+        group.bench_with_input(
+            BenchmarkId::new(format!("events={events},conds={conditions}"), events),
+            &(events, conditions),
+            |b, &(events, conditions)| {
+                let event_data = make_funnel_events(events, conditions);
+                b.iter(|| {
+                    let mut state = WindowFunnelState::new();
+                    state.window_size_us = 3_600_000_000; // 1 hour
+                    for e in &event_data {
+                        state.update(black_box(*e), conditions);
+                    }
+                    state.finalize_events()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_window_funnel_finalize,
-    bench_window_funnel_combine
+    bench_window_funnel_combine,
+    bench_window_funnel_events_finalize
 );
 criterion_main!(benches);

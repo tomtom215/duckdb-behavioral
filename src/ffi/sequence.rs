@@ -8,9 +8,10 @@
 //! and [`quack_rs::vector::VectorReader`] for safe vector reading.
 
 use crate::common::event::Event;
+use crate::pattern::parser::parse_pattern;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
 
@@ -88,13 +89,14 @@ pub unsafe fn register_sequence_count(
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB BOOLEAN vector. Pattern errors produce NULL output via validity bitmap.
 unsafe extern "C" fn match_state_finalize(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     result: duckdb_vector,
     count: idx_t,
     offset: idx_t,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let mut writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
@@ -107,7 +109,13 @@ unsafe extern "C" fn match_state_finalize(
 
             match state.finalize_match() {
                 Ok(matched) => writer.write_bool(idx, matched),
-                Err(_) => writer.set_null(idx),
+                // A NULL pattern finalizes as NULL; real execution errors
+                // (e.g. exploration budget exhaustion) abort the query.
+                Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
+                Err(e) => {
+                    info.set_error(&format!("sequence_match: {e}"));
+                    writer.set_null(idx);
+                }
             }
         }
     }
@@ -118,13 +126,14 @@ unsafe extern "C" fn match_state_finalize(
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB BIGINT vector. Pattern errors produce NULL output via validity bitmap.
 unsafe extern "C" fn count_state_finalize(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     result: duckdb_vector,
     count: idx_t,
     offset: idx_t,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let mut writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
@@ -137,7 +146,13 @@ unsafe extern "C" fn count_state_finalize(
 
             match state.finalize_count() {
                 Ok(n) => writer.write_i64(idx, n),
-                Err(_) => writer.set_null(idx),
+                // A NULL pattern finalizes as NULL; real execution errors
+                // (e.g. exploration budget exhaustion) abort the query.
+                Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
+                Err(e) => {
+                    info.set_error(&format!("sequence_count: {e}"));
+                    writer.set_null(idx);
+                }
             }
         }
     }
@@ -149,11 +164,12 @@ unsafe extern "C" fn count_state_finalize(
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 // VARCHAR is read via VectorReader::read_str() which handles duckdb_string_t correctly.
 unsafe extern "C" fn sequence_state_update(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
         // Vector 0: VARCHAR (pattern) — read via VectorReader::read_str()
@@ -172,10 +188,17 @@ unsafe extern "C" fn sequence_state_update(
                 continue;
             };
 
-            // Read pattern from first row (same for all rows in a group)
+            // Read pattern from first row (same for all rows in a group).
+            // Validated eagerly: a malformed pattern aborts the query with the
+            // parser's position-annotated message instead of silently
+            // returning NULL at finalize.
             if state.pattern_str.is_none() && pattern_reader.is_valid(i) {
                 let s = pattern_reader.read_str(i);
                 state.set_pattern(s);
+                if let Err(e) = parse_pattern(s) {
+                    info.set_error(&format!("invalid sequence pattern '{s}': {e}"));
+                    return;
+                }
             }
 
             // Skip NULL timestamps

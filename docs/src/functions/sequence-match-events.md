@@ -39,16 +39,20 @@ GROUP BY user_id;
 
 ## Behavior
 
-1. Events are sorted by timestamp.
+1. Events are sorted by `(timestamp, conditions)`.
 2. The pattern is compiled and executed using a timestamp-collecting variant of
    the NFA engine.
 3. When a `(?N)` condition step matches, the event's timestamp is recorded.
-4. If the full pattern matches, the collected timestamps are returned as a list.
-5. If no match is found, an empty list is returned.
+4. If the full pattern matches, the collected timestamps of the first complete
+   match are returned as a list.
+5. If the full pattern never matches, the timestamps of the **longest partial
+   chain** matched anywhere are returned — exactly ClickHouse's
+   `sequenceMatchEvents` behavior ("timestamps for the longest chain of events
+   matched the pattern"). The list is empty only when no condition ever fired.
 
-The returned list contains one timestamp per `(?N)` step in the pattern.
-Wildcard steps (`.` and `.*`) and time constraint steps do not contribute
-timestamps to the output.
+The returned list contains one timestamp per matched `(?N)` step. Wildcard
+steps (`.` and `.*`) and time constraint steps do not contribute timestamps
+to the output.
 
 ### Example
 
@@ -68,6 +72,18 @@ The timestamp of the `(?1)` match (10:00) and the `(?2)` match (10:30).
 
 Uses the same pattern syntax as [`sequence_match`](./sequence-match.md). Refer
 to that page for the full syntax reference.
+
+## Errors
+
+A malformed pattern aborts the query with the parser's position-annotated
+message instead of silently returning `NULL`:
+
+```text
+invalid sequence pattern '(?1)(?': pattern error at position 6: ...
+```
+
+A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
+conventions.
 
 ## Implementation
 

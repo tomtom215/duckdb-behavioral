@@ -3,19 +3,29 @@
 
 //! FFI registration for the `sessionize` aggregate/window function.
 //!
-//! `sessionize` is registered as an aggregate function with window semantics.
-//! The `DuckDB` public C Extension API does not expose window function registration
-//! hooks (see `quack-rs` documentation: "Known limitations — window functions").
-//! This module intentionally uses raw `libduckdb-sys` calls and is excluded from
-//! the `quack-rs` migration. Do not attempt to migrate this module without first
-//! verifying that `quack-rs` has added window function support.
+//! `sessionize` is registered as a plain aggregate function via
+//! [`quack_rs::aggregate::AggregateFunctionBuilder`] (single fixed signature,
+//! unlike the variadic function sets used by the other modules). `DuckDB`'s
+//! windowing machinery drives any aggregate through the same
+//! update/combine/finalize callbacks when it appears in an `OVER` clause —
+//! there is no window-specific registration. The segment-tree evaluation is
+//! why [`SessionizeBoundaryState::combine`] must be O(1) and why the
+//! `current_row_null` flag propagates from the right-hand segment.
 //!
-//! All other FFI modules in this crate use `quack-rs` builders and safe abstractions.
-//! See `LESSONS.md` for context on this decision.
+//! Historical note: this module was hand-rolled on raw `libduckdb-sys` until
+//! quack-rs grew `AggregateFunctionBuilder` + `Registrar::register_aggregate`,
+//! whose registration performs the identical C-API call sequence (including
+//! default NULL handling, i.e. no `duckdb_aggregate_function_set_special_handling`).
+//! See `LESSONS.md` for context on the original decision.
 
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
 use libduckdb_sys::*;
+use quack_rs::aggregate::{AggregateFunctionBuilder, AggregateFunctionInfo, FfiState};
+use quack_rs::types::TypeId;
+use quack_rs::vector::{VectorReader, VectorWriter};
+
+impl quack_rs::aggregate::AggregateState for SessionizeBoundaryState {}
 
 /// Registers the `sessionize` function with `DuckDB`.
 ///
@@ -30,134 +40,90 @@ use libduckdb_sys::*;
 ///
 /// # Safety
 ///
-/// Requires a valid `duckdb_connection` handle.
-pub unsafe fn register_sessionize(con: duckdb_connection) {
-    unsafe {
-        let func = duckdb_create_aggregate_function();
-
-        let name = c"sessionize";
-        duckdb_aggregate_function_set_name(func, name.as_ptr());
-
-        // Parameter 0: TIMESTAMP (event timestamp)
-        let ts_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
-        duckdb_aggregate_function_add_parameter(func, ts_type);
-        duckdb_destroy_logical_type(&mut { ts_type });
-
-        // Parameter 1: INTERVAL (gap threshold)
-        let interval_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL);
-        duckdb_aggregate_function_add_parameter(func, interval_type);
-        duckdb_destroy_logical_type(&mut { interval_type });
-
-        // Return type: BIGINT (session ID)
-        let ret_type = duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BIGINT);
-        duckdb_aggregate_function_set_return_type(func, ret_type);
-        duckdb_destroy_logical_type(&mut { ret_type });
-
-        // Set callbacks
-        duckdb_aggregate_function_set_functions(
-            func,
-            Some(state_size),
-            Some(state_init),
-            Some(state_update),
-            Some(state_combine),
-            Some(state_finalize),
-        );
-
-        duckdb_aggregate_function_set_destructor(func, Some(state_destroy));
-
-        let result = duckdb_register_aggregate_function(con, func);
-        if result != DuckDBSuccess {
-            eprintln!("behavioral: failed to register sessionize function");
-        }
-
-        duckdb_destroy_aggregate_function(&mut { func });
-    }
+/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
+///
+/// # Errors
+///
+/// Returns an error if function registration fails.
+pub unsafe fn register_sessionize(
+    con: &impl quack_rs::connection::Registrar,
+) -> Result<(), quack_rs::error::ExtensionError> {
+    let builder = AggregateFunctionBuilder::new("sessionize")
+        .param(TypeId::Timestamp)
+        .param(TypeId::Interval)
+        .returns(TypeId::BigInt)
+        .state_size(FfiState::<SessionizeBoundaryState>::size_callback)
+        .init(FfiState::<SessionizeBoundaryState>::init_callback)
+        .update(state_update)
+        .combine(state_combine)
+        .finalize(state_finalize)
+        .destructor(FfiState::<SessionizeBoundaryState>::destroy_callback);
+    unsafe { con.register_aggregate(builder) }
 }
 
-/// State stored in `DuckDB`'s aggregate state buffer.
-/// Points to a heap-allocated [`SessionizeBoundaryState`].
-#[repr(C)]
-struct FfiState {
-    inner: *mut SessionizeBoundaryState,
-}
-
-// SAFETY: Returns the byte size of FfiState for DuckDB's state allocation.
-// Pure computation with no pointer dereferences.
-unsafe extern "C" fn state_size(_info: duckdb_function_info) -> idx_t {
-    std::mem::size_of::<FfiState>() as idx_t
-}
-
-// SAFETY: `state` is a DuckDB-allocated buffer of at least `state_size()` bytes.
-// We initialize the inner pointer to a heap-allocated SessionizeBoundaryState
-// which will be freed in `state_destroy`.
-unsafe extern "C" fn state_init(_info: duckdb_function_info, state: duckdb_aggregate_state) {
-    unsafe {
-        let ffi_state = &mut *(state as *mut FfiState);
-        ffi_state.inner = Box::into_raw(Box::new(SessionizeBoundaryState::new()));
-    }
-}
-
-// SAFETY: `input` is a valid DuckDB data chunk with the registered column types
-// (TIMESTAMP, INTERVAL). `states` points to `row_count` aggregate state pointers,
-// each initialized by `state_init`. All vector data pointers are valid for
-// `row_count` elements. Validity bitmaps may be null (meaning all rows are valid).
+// SAFETY: `input` is a valid DuckDB data chunk with columns (TIMESTAMP, INTERVAL)
+// as registered. `states` points to `row_count` aggregate state pointers, each
+// initialized by `FfiState::init_callback`.
 unsafe extern "C" fn state_update(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
 
-        // Vector 0: TIMESTAMP (i64 microseconds)
-        let ts_vec = duckdb_data_chunk_get_vector(input, 0);
-        let ts_data = duckdb_vector_get_data(ts_vec) as *const i64;
-        let ts_validity = duckdb_vector_get_validity(ts_vec);
-
-        // Vector 1: INTERVAL (months: i32, days: i32, micros: i64)
-        let interval_vec = duckdb_data_chunk_get_vector(input, 1);
-        let interval_data = duckdb_vector_get_data(interval_vec) as *const u8;
-        let interval_validity = duckdb_vector_get_validity(interval_vec);
+        // Vector 0: TIMESTAMP (event timestamp)
+        let ts_reader = VectorReader::new(input, 0);
+        // Vector 1: INTERVAL (gap threshold)
+        let interval_reader = VectorReader::new(input, 1);
 
         for i in 0..row_count {
-            let state_ptr = *states.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            if ffi_state.inner.is_null() {
+            let Some(state) = FfiState::<SessionizeBoundaryState>::with_state_mut(*states.add(i))
+            else {
                 continue;
-            }
-            let state = &mut *ffi_state.inner;
+            };
 
             // NULL timestamps: mark state so finalize emits NULL for this row
-            if !ts_validity.is_null() && !duckdb_validity_row_is_valid(ts_validity, i as idx_t) {
+            if !ts_reader.is_valid(i) {
                 state.mark_null_row();
                 continue;
             }
 
-            // Read interval threshold (same for all rows, but read per-row for safety)
-            if !interval_validity.is_null()
-                && !duckdb_validity_row_is_valid(interval_validity, i as idx_t)
-            {
+            // NULL gap threshold: skip the row entirely
+            if !interval_reader.is_valid(i) {
                 continue;
             }
 
-            // Parse interval: { months: i32, days: i32, micros: i64 } = 16 bytes
-            let interval_ptr = interval_data.add(i * 16);
-            let months = *(interval_ptr as *const i32);
-            let days = *(interval_ptr.add(4) as *const i32);
-            let micros = *(interval_ptr.add(8) as *const i64);
-
-            if let Some(threshold_us) = interval_to_micros(months, days, micros) {
-                state.threshold_us = threshold_us;
+            // Read interval threshold (same for all rows, but read per-row for safety).
+            // Invalid gaps (month-based or negative) abort the query instead of
+            // silently sessionizing with a zero threshold.
+            let iv = interval_reader.read_interval(i);
+            match interval_to_micros(iv.months, iv.days, iv.micros) {
+                Some(threshold_us) if threshold_us >= 0 => state.threshold_us = threshold_us,
+                Some(_) => {
+                    info.set_error("sessionize: INTERVAL gap must be non-negative");
+                    return;
+                }
+                None => {
+                    info.set_error(
+                        "sessionize: invalid INTERVAL gap: month-based intervals are \
+                         ambiguous (28-31 days) and the total must fit in signed 64-bit \
+                         microseconds; use day/hour/minute/second units instead",
+                    );
+                    return;
+                }
             }
 
-            let timestamp = *ts_data.add(i);
-            state.update(timestamp);
+            state.update(ts_reader.read_i64(i));
         }
     }
 }
 
-// SAFETY: `source` and `target` point to `count` aggregate state pointers,
-// each initialized by `state_init`. Null checks guard against uninitialized states.
+// SAFETY: `source` and `target` point to `count` aggregate state pointers.
+// `target` is the LEFT (earlier) segment in DuckDB's segment tree, `source`
+// the RIGHT (later) one; `SessionizeBoundaryState::combine` preserves that
+// orientation (cross-boundary check, right-hand `current_row_null` wins).
 unsafe extern "C" fn state_combine(
     _info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
@@ -166,26 +132,22 @@ unsafe extern "C" fn state_combine(
 ) {
     unsafe {
         for i in 0..count as usize {
-            let src_ptr = *source.add(i);
-            let tgt_ptr = *target.add(i);
-            let src_ffi = &*(src_ptr as *const FfiState);
-            let tgt_ffi = &mut *(tgt_ptr as *mut FfiState);
-
-            if src_ffi.inner.is_null() || tgt_ffi.inner.is_null() {
+            let Some(src) = FfiState::<SessionizeBoundaryState>::with_state(*source.add(i)) else {
                 continue;
-            }
+            };
+            let Some(tgt) = FfiState::<SessionizeBoundaryState>::with_state_mut(*target.add(i))
+            else {
+                continue;
+            };
 
-            let src_state = &*src_ffi.inner;
-            let tgt_state = &*tgt_ffi.inner;
-            let combined = tgt_state.combine(src_state);
-            *tgt_ffi.inner = combined;
+            *tgt = tgt.combine(src);
         }
     }
 }
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB BIGINT vector with room for `offset + count` elements. Null
-// inner pointers or empty states produce NULL output via validity bitmap.
+// valid DuckDB BIGINT vector with room for `offset + count` elements. Empty
+// states and NULL-timestamp rows produce NULL output via the validity bitmap.
 unsafe extern "C" fn state_finalize(
     _info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
@@ -194,39 +156,123 @@ unsafe extern "C" fn state_finalize(
     offset: idx_t,
 ) {
     unsafe {
-        let data = duckdb_vector_get_data(result) as *mut i64;
-        duckdb_vector_ensure_validity_writable(result);
-        let validity = duckdb_vector_get_validity(result);
+        let mut writer = VectorWriter::new(result);
 
         for i in 0..count as usize {
-            let state_ptr = *source.add(i);
-            let ffi_state = &*(state_ptr as *const FfiState);
             let idx = offset as usize + i;
 
-            if ffi_state.inner.is_null()
-                || (*ffi_state.inner).first_ts.is_none()
-                || (*ffi_state.inner).current_row_null
-            {
-                duckdb_validity_set_row_invalid(validity, idx as idx_t);
+            let Some(state) = FfiState::<SessionizeBoundaryState>::with_state(*source.add(i))
+            else {
+                writer.set_null(idx);
+                continue;
+            };
+
+            if state.first_ts.is_none() || state.current_row_null {
+                writer.set_null(idx);
             } else {
-                *data.add(idx) = (*ffi_state.inner).finalize();
+                writer.write_i64(idx, state.finalize());
             }
         }
     }
 }
 
-// SAFETY: `state` points to `count` aggregate state pointers. Each inner pointer
-// was allocated by `Box::into_raw` in `state_init`. We reclaim the Box to free
-// heap memory, then null the pointer to prevent double-free.
-unsafe extern "C" fn state_destroy(state: *mut duckdb_aggregate_state, count: idx_t) {
-    unsafe {
-        for i in 0..count as usize {
-            let state_ptr = *state.add(i);
-            let ffi_state = &mut *(state_ptr as *mut FfiState);
-            if !ffi_state.inner.is_null() {
-                drop(Box::from_raw(ffi_state.inner));
-                ffi_state.inner = std::ptr::null_mut();
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quack_rs::testing::AggregateTestHarness;
+
+    /// Mirrors the FFI combine: `target` is the left segment, `source` the right.
+    fn ffi_combine(src: &SessionizeBoundaryState, tgt: &mut SessionizeBoundaryState) {
+        *tgt = tgt.combine(src);
+    }
+
+    #[test]
+    fn test_sessionize_combine_threshold_propagation() {
+        // DuckDB's segment tree combines sources into zero-initialized targets;
+        // the gap threshold must survive that.
+        let mut source = AggregateTestHarness::<SessionizeBoundaryState>::new();
+        source.update(|s| {
+            s.threshold_us = 1_800_000_000; // 30 minutes
+            s.update(1_000_000);
+        });
+
+        let mut target = AggregateTestHarness::<SessionizeBoundaryState>::new();
+        target.combine(&source, ffi_combine);
+
+        let state = target.finalize();
+        assert_eq!(state.threshold_us, 1_800_000_000);
+        assert_eq!(state.finalize(), 1);
+    }
+
+    #[test]
+    fn test_sessionize_combine_cross_segment_boundary() {
+        // Left segment ends at t=1s, right segment starts at t=10s with a 5s
+        // threshold: the cross-segment gap is a session boundary.
+        let mut left = AggregateTestHarness::<SessionizeBoundaryState>::new();
+        left.update(|s| {
+            s.threshold_us = 5_000_000;
+            s.update(0);
+            s.update(1_000_000);
+        });
+
+        let mut right = AggregateTestHarness::<SessionizeBoundaryState>::new();
+        right.update(|s| {
+            s.threshold_us = 5_000_000;
+            s.update(10_000_000);
+        });
+
+        left.combine(&right, ffi_combine);
+
+        let state = left.finalize();
+        assert_eq!(state.finalize(), 2, "cross-segment gap must open a session");
+    }
+
+    #[test]
+    fn test_sessionize_combine_null_flag_from_right_segment() {
+        // The rightmost leaf in the frame is the current row; its NULL flag
+        // must win the combine so finalize emits NULL.
+        let mut left = AggregateTestHarness::<SessionizeBoundaryState>::new();
+        left.update(|s| {
+            s.threshold_us = 5_000_000;
+            s.update(0);
+        });
+
+        let mut right = AggregateTestHarness::<SessionizeBoundaryState>::new();
+        right.update(SessionizeBoundaryState::mark_null_row);
+
+        left.combine(&right, ffi_combine);
+
+        let state = left.finalize();
+        assert!(state.current_row_null, "right segment's NULL flag must win");
+    }
+
+    #[test]
+    fn test_sessionize_combine_three_way_associativity() {
+        let make = |timestamps: &[i64]| {
+            let mut h = AggregateTestHarness::<SessionizeBoundaryState>::new();
+            h.update(|s| {
+                s.threshold_us = 2_000_000;
+                for &ts in timestamps {
+                    s.update(ts);
+                }
+            });
+            h
+        };
+
+        // Path 1: (A ⊕ B) ⊕ C
+        let mut ab = make(&[0, 1_000_000]);
+        ab.combine(&make(&[5_000_000]), ffi_combine);
+        ab.combine(&make(&[6_000_000, 20_000_000]), ffi_combine);
+        let r1 = ab.finalize().finalize();
+
+        // Path 2: A ⊕ (B ⊕ C)
+        let mut bc = make(&[5_000_000]);
+        bc.combine(&make(&[6_000_000, 20_000_000]), ffi_combine);
+        let mut a = make(&[0, 1_000_000]);
+        a.combine(&bc, ffi_combine);
+        let r2 = a.finalize().finalize();
+
+        assert_eq!(r1, r2, "combine must be associative");
+        assert_eq!(r1, 3, "gaps at 1s→5s and 6s→20s open two boundaries");
     }
 }

@@ -126,7 +126,7 @@ impl SequenceState {
             .compiled_pattern
             .as_ref()
             .expect("compiled_pattern was set on the line above");
-        Ok(execute_pattern(pattern, &self.events, count_all))
+        execute_pattern(pattern, &self.events, count_all)
     }
 
     /// Executes `sequence_match` — returns true if the pattern matches.
@@ -167,7 +167,7 @@ impl SequenceState {
             .compiled_pattern
             .as_ref()
             .expect("compiled_pattern was set on the line above");
-        Ok(execute_pattern_events(pattern, &self.events).unwrap_or_default())
+        execute_pattern_events(pattern, &self.events)
     }
 }
 
@@ -500,7 +500,8 @@ mod tests {
         state.update(make_event(100, &[false, true])); // wrong order
         state.update(make_event(200, &[true, false]));
         let events = state.finalize_events().unwrap();
-        assert!(events.is_empty());
+        // Longest partial chain (ClickHouse semantics): (?1) matched at 200.
+        assert_eq!(events, vec![200]);
     }
 
     #[test]
@@ -539,7 +540,8 @@ mod tests {
         state.update(make_event(0, &[true, false]));
         state.update(make_event(1_000_000, &[false, true])); // 1s < 5
         let events = state.finalize_events().unwrap();
-        assert!(events.is_empty());
+        // The >=5s gate is never satisfied: longest partial chain is (?1).
+        assert_eq!(events, vec![0]);
     }
 
     #[test]
@@ -704,7 +706,8 @@ mod tests {
         state.update(make_event(1_000_000, &[false, false])); // gap
         state.update(make_event(3_000_000, &[false, true])); // 3s > 2s → fails
         let events = state.finalize_events().unwrap();
-        assert!(events.is_empty());
+        // No complete match: longest partial chain is (?1) at t=0.
+        assert_eq!(events, vec![0]);
     }
 
     #[test]

@@ -66,6 +66,17 @@ Combine modes: `'strict_increase, strict_once'`
 
 ---
 
+### window_funnel_events — When did each funnel step happen?
+
+```sql
+window_funnel_events(INTERVAL 'window', timestamp_col, cond1, ..., condN) → TIMESTAMP[]
+window_funnel_events(INTERVAL 'window', 'mode_str', timestamp_col, cond1, ...) → TIMESTAMP[]
+```
+
+**Key facts:** Returns one timestamp per matched step of the best funnel
+chain (list length equals `window_funnel`'s result). Empty list when the
+entry condition never matched. Same modes as `window_funnel`.
+
 ### sequence_match — Did pattern occur?
 
 ```sql
@@ -144,6 +155,15 @@ sequence_next_node('direction', 'base', timestamp_col, value_col,
 | NULL value in `sequence_next_node` | Stored and can be returned |
 
 ---
+
+### behavioral_version — Which build is loaded?
+
+```sql
+behavioral_version() → VARCHAR   -- e.g. '0.8.0'
+```
+
+**Key facts:** Diagnostic scalar; useful when the community channel, a pinned
+install, and a local build could serve different versions.
 
 ## Limits
 

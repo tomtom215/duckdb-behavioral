@@ -11,7 +11,7 @@
 
 use crate::sequence_next_node::{NextNodeEvent, SequenceNextNodeState};
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
 use std::sync::Arc;
@@ -77,11 +77,12 @@ pub unsafe fn register_sequence_next_node(
 // (VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, BOOLEAN...) as registered.
 // `states` points to `row_count` aggregate state pointers.
 unsafe extern "C" fn state_update(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
         let num_event_conditions = col_count.saturating_sub(FIXED_PARAMS);
@@ -108,20 +109,32 @@ unsafe extern "C" fn state_update(
                 continue;
             };
 
-            // Parse direction (once per state)
+            // Parse direction (once per state). Unknown values abort the
+            // query instead of silently returning NULL.
             if state.direction.is_none() && direction_reader.is_valid(i) {
                 let dir_str = direction_reader.read_str(i);
-                if let Some(dir) = SequenceNextNodeState::parse_direction(dir_str) {
-                    state.set_direction(dir);
-                }
+                let Some(dir) = SequenceNextNodeState::parse_direction(dir_str) else {
+                    info.set_error(&format!(
+                        "sequence_next_node: unknown direction '{dir_str}'; \
+                         expected 'forward' or 'backward'"
+                    ));
+                    return;
+                };
+                state.set_direction(dir);
             }
 
-            // Parse base (once per state)
+            // Parse base (once per state). Unknown values abort the query
+            // instead of silently returning NULL.
             if state.base.is_none() && base_reader.is_valid(i) {
                 let base_str = base_reader.read_str(i);
-                if let Some(base) = SequenceNextNodeState::parse_base(base_str) {
-                    state.set_base(base);
-                }
+                let Some(base) = SequenceNextNodeState::parse_base(base_str) else {
+                    info.set_error(&format!(
+                        "sequence_next_node: unknown base '{base_str}'; expected \
+                         'head', 'tail', 'first_match', or 'last_match'"
+                    ));
+                    return;
+                };
+                state.set_base(base);
             }
 
             // Set num_steps (once per state)

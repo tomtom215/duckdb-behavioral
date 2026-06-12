@@ -12,9 +12,10 @@
 //! for LIST output.
 
 use crate::common::event::Event;
+use crate::pattern::parser::parse_pattern;
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
 use quack_rs::vector::VectorReader;
@@ -31,7 +32,9 @@ const MAX_CONDITIONS: usize = 32;
 /// Signature: `sequence_match_events(VARCHAR, TIMESTAMP, BOOLEAN, BOOLEAN [, ...]) -> LIST(TIMESTAMP)`
 ///
 /// Returns an array of timestamps corresponding to each matched `(?N)` step in
-/// the pattern. Empty array if no match.
+/// the pattern. When the full pattern never matches, the timestamps of the
+/// LONGEST partial chain are returned (`ClickHouse` `sequenceMatchEvents`
+/// semantics); empty array when no condition ever fired.
 ///
 /// # Safety
 ///
@@ -63,11 +66,12 @@ pub unsafe fn register_sequence_match_events(
 // SAFETY: `input` is a valid DuckDB data chunk with columns (VARCHAR, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 unsafe extern "C" fn state_update(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     input: duckdb_data_chunk,
     states: *mut duckdb_aggregate_state,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
         let col_count = duckdb_data_chunk_get_column_count(input) as usize;
 
@@ -82,9 +86,16 @@ unsafe extern "C" fn state_update(
                 continue;
             };
 
+            // Validated eagerly: a malformed pattern aborts the query with the
+            // parser's position-annotated message instead of silently
+            // returning an empty list at finalize.
             if state.pattern_str.is_none() && pattern_reader.is_valid(i) {
                 let s = pattern_reader.read_str(i);
                 state.set_pattern(s);
+                if let Err(e) = parse_pattern(s) {
+                    info.set_error(&format!("invalid sequence pattern '{s}': {e}"));
+                    return;
+                }
             }
 
             if !ts_reader.is_valid(i) {
@@ -130,13 +141,14 @@ unsafe extern "C" fn state_combine(
 // valid DuckDB LIST(TIMESTAMP) vector. Each list entry is populated with the
 // matched condition timestamps. Empty list on no match or pattern error.
 unsafe extern "C" fn state_finalize(
-    _info: duckdb_function_info,
+    info: duckdb_function_info,
     source: *mut duckdb_aggregate_state,
     result: duckdb_vector,
     count: idx_t,
     offset: idx_t,
 ) {
     unsafe {
+        let info = AggregateFunctionInfo::new(info);
         let mut list_offset = ListVector::get_size(result) as u64;
 
         for i in 0..count as usize {
@@ -148,7 +160,16 @@ unsafe extern "C" fn state_finalize(
                 continue;
             };
 
-            let timestamps = state.finalize_events().unwrap_or_default();
+            let timestamps = match state.finalize_events() {
+                Ok(ts) => ts,
+                // A NULL pattern finalizes as an empty list; real execution
+                // errors (e.g. exploration budget exhaustion) abort the query.
+                Err(_) if state.pattern_str.is_none() => Vec::new(),
+                Err(e) => {
+                    info.set_error(&format!("sequence_match_events: {e}"));
+                    Vec::new()
+                }
+            };
             let ts_count = timestamps.len() as u64;
 
             // Reserve space in the list child vector

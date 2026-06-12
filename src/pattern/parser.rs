@@ -72,13 +72,23 @@ pub struct PatternError {
     pub position: usize,
 }
 
+impl PatternError {
+    /// Sentinel position for errors that are not tied to a position in the
+    /// pattern string (e.g. execution-budget exhaustion).
+    pub const NO_POSITION: usize = usize::MAX;
+}
+
 impl fmt::Display for PatternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "pattern error at position {}: {}",
-            self.position, self.message
-        )
+        if self.position == Self::NO_POSITION {
+            write!(f, "pattern error: {}", self.message)
+        } else {
+            write!(
+                f,
+                "pattern error at position {}: {}",
+                self.position, self.message
+            )
+        }
     }
 }
 
@@ -131,6 +141,14 @@ impl<'a> Parser<'a> {
                 break;
             }
             let step = self.parse_step()?;
+            // Collapse consecutive `.*` steps: `.*.*` matches exactly the
+            // same event sequences as `.*`, but each extra copy multiplies
+            // the NFA branching factor (the pathological shape behind the
+            // exploration budget). Normalizing here keeps such patterns on
+            // the fast paths.
+            if step == PatternStep::AnyEvents && steps.last() == Some(&PatternStep::AnyEvents) {
+                continue;
+            }
             steps.push(step);
         }
         Ok(steps)
@@ -186,7 +204,14 @@ impl<'a> Parser<'a> {
     fn parse_time_constraint(&mut self) -> Result<PatternStep, PatternError> {
         self.expect(b't')?;
         let op = self.parse_time_op()?;
-        let seconds = self.parse_number()? as i64;
+        let number_pos = self.pos;
+        let raw = self.parse_number()?;
+        // An unchecked `as i64` would wrap values in (i64::MAX, usize::MAX]
+        // to negative thresholds, silently inverting the constraint.
+        let seconds = i64::try_from(raw).map_err(|_| PatternError {
+            message: format!("time constraint {raw} exceeds maximum {}", i64::MAX),
+            position: number_pos,
+        })?;
         self.expect(b')')?;
         Ok(PatternStep::TimeConstraint(op, seconds))
     }
@@ -526,5 +551,64 @@ mod tests {
         };
         // Ensure PatternError implements std::error::Error
         let _: &dyn std::error::Error = &err;
+    }
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+
+    #[test]
+    fn test_consecutive_wildcards_collapse() {
+        let p = parse_pattern("(?1).*.*.*.*(?2)").unwrap();
+        assert_eq!(
+            p.steps,
+            vec![
+                PatternStep::Condition(0),
+                PatternStep::AnyEvents,
+                PatternStep::Condition(1),
+            ],
+            ".*.* must collapse to a single .*"
+        );
+    }
+
+    #[test]
+    fn test_wildcards_separated_by_steps_do_not_collapse() {
+        let p = parse_pattern("(?1).*.(?2).*(?3)").unwrap();
+        assert_eq!(
+            p.steps,
+            vec![
+                PatternStep::Condition(0),
+                PatternStep::AnyEvents,
+                PatternStep::OneEvent,
+                PatternStep::Condition(1),
+                PatternStep::AnyEvents,
+                PatternStep::Condition(2),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::*;
+
+    #[test]
+    fn test_time_constraint_at_i64_max_parses() {
+        let pattern = format!("(?1)(?t>={})(?2)", i64::MAX);
+        assert!(parse_pattern(&pattern).is_ok());
+    }
+
+    #[test]
+    fn test_time_constraint_over_i64_max_rejected() {
+        // usize::MAX > i64::MAX: an unchecked `as i64` would wrap to -1.
+        let pattern = format!("(?1)(?t>={})(?2)", u64::MAX);
+        let err = parse_pattern(&pattern).unwrap_err();
+        assert!(
+            err.message.contains("exceeds maximum"),
+            "actual: {}",
+            err.message
+        );
+        assert_eq!(err.position, 9, "position points at the number");
     }
 }
