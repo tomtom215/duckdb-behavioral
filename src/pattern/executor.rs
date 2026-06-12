@@ -8,7 +8,7 @@
 
 use crate::common::event::Event;
 use crate::common::timestamp::MICROS_PER_SECOND;
-use crate::pattern::parser::{CompiledPattern, PatternError, PatternStep};
+use crate::pattern::parser::{CompiledPattern, PatternError, PatternStep, TimeOp};
 
 /// Maximum number of active NFA states before aborting execution.
 /// Prevents pathological patterns (e.g., `.*.*.*.*`) from consuming
@@ -227,6 +227,39 @@ fn fast_wildcard(events: &[Event], conditions: &[usize], count_all: bool) -> Mat
     }
 }
 
+/// Evaluates a time-constraint gate, mirroring `ClickHouse`'s semantics
+/// (see the `TimeConstraint` arms): returns `(advance_pattern, skip_event)`.
+///
+/// Events are sorted, so the true elapsed time is non-negative and (even
+/// spanning ±infinity timestamps) fits in u64; `wrapping_sub` reinterpreted
+/// as u64 IS that gap. Dividing in u64 keeps the i64 conversion exact, and
+/// flooring to whole seconds generalizes `ClickHouse`'s whole-second
+/// `DateTime` comparisons to microsecond timestamps.
+fn time_gate(
+    op: TimeOp,
+    threshold_seconds: i64,
+    last_match_ts: Option<i64>,
+    event_ts: i64,
+) -> (bool, bool) {
+    let Some(prev_ts) = last_match_ts else {
+        // No previous match timestamp; vacuously satisfied.
+        return (true, false);
+    };
+    let elapsed_us = event_ts.wrapping_sub(prev_ts) as u64;
+    let elapsed_seconds = (elapsed_us / MICROS_PER_SECOND as u64) as i64;
+    let satisfied = op.evaluate(elapsed_seconds, threshold_seconds);
+    // Elapsed time is non-decreasing over later events, so skipping is only
+    // useful while the gate can still (or again) hold: always for >=, >, != ;
+    // only while still satisfied for <=, < ; until the threshold is passed
+    // for ==.
+    let skip = match op {
+        TimeOp::Gte | TimeOp::Gt | TimeOp::Ne => true,
+        TimeOp::Lte | TimeOp::Lt => satisfied,
+        TimeOp::Eq => elapsed_seconds <= threshold_seconds,
+    };
+    (satisfied, skip)
+}
+
 /// Full NFA-based pattern execution for complex patterns.
 ///
 /// Used when the pattern contains time constraints, `.` (`OneEvent`),
@@ -311,7 +344,8 @@ fn try_match_from(
 
         // No more events to consume
         if state.event_idx >= events.len() {
-            // Time constraints and AnyEvents can still succeed at the end
+            // ClickHouse treats trailing `.*`, `(?t<=N)`, `(?t<N)` and
+            // `(?t>=0)` as matching the empty remainder.
             match &pattern.steps[state.step_idx] {
                 PatternStep::AnyEvents => {
                     // .* can match zero events, advance to next step
@@ -319,6 +353,16 @@ fn try_match_from(
                         step_idx: state.step_idx + 1,
                         ..state
                     });
+                }
+                PatternStep::TimeConstraint(op, threshold) => {
+                    let vacuous_at_end = matches!(op, TimeOp::Lte | TimeOp::Lt)
+                        || (matches!(op, TimeOp::Gte) && *threshold == 0);
+                    if vacuous_at_end {
+                        states.push(NfaState {
+                            step_idx: state.step_idx + 1,
+                            ..state
+                        });
+                    }
                 }
                 _ => continue,
             }
@@ -363,23 +407,27 @@ fn try_match_from(
                 });
             }
             PatternStep::TimeConstraint(op, threshold_seconds) => {
-                // Time constraint doesn't consume an event, just checks timing
-                if let Some(prev_ts) = state.last_match_ts {
-                    // Events are sorted, so the true elapsed time is non-negative
-                    // and (even spanning ±infinity timestamps) fits in u64;
-                    // wrapping_sub reinterpreted as u64 IS that gap. Dividing
-                    // in u64 keeps the i64 conversion exact.
-                    let elapsed_us = event.timestamp_us.wrapping_sub(prev_ts) as u64;
-                    let elapsed_seconds = (elapsed_us / MICROS_PER_SECOND as u64) as i64;
-                    if op.evaluate(elapsed_seconds, *threshold_seconds) {
-                        // Time constraint satisfied, advance step
-                        states.push(NfaState {
-                            step_idx: state.step_idx + 1,
-                            ..state
-                        });
-                    }
-                } else {
-                    // No previous match timestamp; time constraint is vacuously true
+                // ClickHouse semantics (verified against
+                // AggregateFunctionSequenceMatch.cpp): the constraint gates
+                // the next pattern step without consuming the event, and
+                // non-matching events may be skipped — the gate is re-tested
+                // against later events whenever it could still be satisfied.
+                // Anchored at the last consumed event (`last_match_ts`).
+                let (advance_pattern, skip_event) = time_gate(
+                    *op,
+                    *threshold_seconds,
+                    state.last_match_ts,
+                    event.timestamp_us,
+                );
+                // Lazy order: advancing the pattern is explored first
+                // (pushed last), mirroring `.*`.
+                if skip_event {
+                    states.push(NfaState {
+                        event_idx: state.event_idx + 1,
+                        ..state
+                    });
+                }
+                if advance_pattern {
                     states.push(NfaState {
                         step_idx: state.step_idx + 1,
                         ..state
@@ -401,9 +449,9 @@ fn try_match_from(
 pub fn execute_pattern_events(
     pattern: &CompiledPattern,
     events: &[Event],
-) -> Result<Option<Vec<i64>>, PatternError> {
+) -> Result<Vec<i64>, PatternError> {
     if events.is_empty() || pattern.steps.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
 
     try_match_from_with_timestamps(pattern, events, 0, events.len())
@@ -416,14 +464,23 @@ fn try_match_from_with_timestamps(
     events: &[Event],
     search_start: usize,
     search_end: usize,
-) -> Result<Option<Vec<i64>>, PatternError> {
+) -> Result<Vec<i64>, PatternError> {
     let budget = nfa_budget(events.len(), pattern.steps.len());
+    let mut best_partial = Vec::new();
     for start in search_start..search_end {
-        if let Some(timestamps) = try_match_collecting(pattern, events, start, budget)? {
-            return Ok(Some(timestamps));
+        if let Some(timestamps) =
+            try_match_collecting(pattern, events, start, budget, &mut best_partial)?
+        {
+            // A complete match: every complete match has the same length, so
+            // the first one found (in lazy exploration order, ascending
+            // starts) is the result — mirroring ClickHouse.
+            return Ok(timestamps);
         }
     }
-    Ok(None)
+    // No complete match: ClickHouse's sequenceMatchEvents returns the
+    // timestamps of the longest chain matched anywhere (empty when no
+    // condition ever fired).
+    Ok(best_partial)
 }
 
 /// Tries to match from a specific start position, collecting condition timestamps.
@@ -432,6 +489,7 @@ fn try_match_collecting(
     events: &[Event],
     start: usize,
     budget: usize,
+    best_partial: &mut Vec<i64>,
 ) -> Result<Option<Vec<i64>>, PatternError> {
     // Count how many Condition steps are in the pattern
     let num_conditions = pattern
@@ -457,12 +515,20 @@ fn try_match_collecting(
             return Err(budget_error(events.len(), pattern.steps.len()));
         }
 
+        // ClickHouse's sequenceMatchEvents returns the timestamps of the
+        // LONGEST chain matched when the full pattern never matches; track
+        // the best partial across the whole exploration.
+        if state.collected.len() > best_partial.len() {
+            best_partial.clone_from(&state.collected);
+        }
+
         // Successfully matched all steps
         if state.step_idx >= pattern.steps.len() {
             return Ok(Some(state.collected));
         }
 
-        // No more events to consume
+        // No more events to consume. ClickHouse treats trailing `.*`,
+        // `(?t<=N)`, `(?t<N)` and `(?t>=0)` as matching the empty remainder.
         if state.event_idx >= events.len() {
             match &pattern.steps[state.step_idx] {
                 PatternStep::AnyEvents => {
@@ -470,6 +536,16 @@ fn try_match_collecting(
                         step_idx: state.step_idx + 1,
                         ..state
                     });
+                }
+                PatternStep::TimeConstraint(op, threshold) => {
+                    let vacuous_at_end = matches!(op, TimeOp::Lte | TimeOp::Lt)
+                        || (matches!(op, TimeOp::Gte) && *threshold == 0);
+                    if vacuous_at_end {
+                        states.push(NfaStateWithTimestamps {
+                            step_idx: state.step_idx + 1,
+                            ..state
+                        });
+                    }
                 }
                 _ => continue,
             }
@@ -512,20 +588,20 @@ fn try_match_collecting(
                 });
             }
             PatternStep::TimeConstraint(op, threshold_seconds) => {
-                if let Some(prev_ts) = state.last_match_ts {
-                    // Events are sorted, so the true elapsed time is non-negative
-                    // and (even spanning ±infinity timestamps) fits in u64;
-                    // wrapping_sub reinterpreted as u64 IS that gap. Dividing
-                    // in u64 keeps the i64 conversion exact.
-                    let elapsed_us = event.timestamp_us.wrapping_sub(prev_ts) as u64;
-                    let elapsed_seconds = (elapsed_us / MICROS_PER_SECOND as u64) as i64;
-                    if op.evaluate(elapsed_seconds, *threshold_seconds) {
-                        states.push(NfaStateWithTimestamps {
-                            step_idx: state.step_idx + 1,
-                            ..state
-                        });
-                    }
-                } else {
+                // ClickHouse gap-skip semantics — see time_gate.
+                let (advance_pattern, skip_event) = time_gate(
+                    *op,
+                    *threshold_seconds,
+                    state.last_match_ts,
+                    event.timestamp_us,
+                );
+                if skip_event {
+                    states.push(NfaStateWithTimestamps {
+                        event_idx: state.event_idx + 1,
+                        ..state.clone()
+                    });
+                }
+                if advance_pattern {
                     states.push(NfaStateWithTimestamps {
                         step_idx: state.step_idx + 1,
                         ..state
@@ -983,15 +1059,17 @@ mod tests {
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![100, 200]));
+        assert_eq!(result, vec![100, 200]);
     }
 
     #[test]
     fn test_events_no_match() {
+        // No complete match: ClickHouse's sequenceMatchEvents returns the
+        // longest partial chain — here (?1) matched at 200.
         let pattern = parse_pattern("(?1)(?2)").unwrap();
         let events = make_events(&[(100, &[false, true]), (200, &[true, false])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, None);
+        assert_eq!(result, vec![200]);
     }
 
     #[test]
@@ -1004,14 +1082,14 @@ mod tests {
         ]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
         // Only condition timestamps, not wildcard
-        assert_eq!(result, Some(vec![100, 300]));
+        assert_eq!(result, vec![100, 300]);
     }
 
     #[test]
     fn test_events_empty_input() {
         let pattern = parse_pattern("(?1)").unwrap();
         let result = execute_pattern_events(&pattern, &[]).unwrap();
-        assert_eq!(result, None);
+        assert_eq!(result, Vec::<i64>::new());
     }
 
     #[test]
@@ -1023,7 +1101,7 @@ mod tests {
             (30, &[false, false, true]),
         ]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![10, 20, 30]));
+        assert_eq!(result, vec![10, 20, 30]);
     }
 
     #[test]
@@ -1031,7 +1109,7 @@ mod tests {
         let pattern = parse_pattern("(?1)(?t>=2)(?2)").unwrap();
         let events = make_events(&[(0, &[true, false]), (3_000_000, &[false, true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![0, 3_000_000]));
+        assert_eq!(result, vec![0, 3_000_000]);
     }
 
     #[test]
@@ -1043,7 +1121,7 @@ mod tests {
             (300, &[false, true]),
         ]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![100, 300]));
+        assert_eq!(result, vec![100, 300]);
     }
 
     // --- Fast path tests ---
@@ -1175,12 +1253,13 @@ mod tests {
             (3_000_000, &[false, true]),  // 3s from (?1), <= 5
         ]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![0, 3_000_000]));
+        assert_eq!(result, vec![0, 3_000_000]);
     }
 
     #[test]
     fn test_events_wildcard_time_constraint_fails() {
-        // Time constraint not satisfied during event collection — should return None.
+        // Time constraint not satisfiable: no complete match, so the longest
+        // partial chain — just (?1) at t=0 — is returned.
         let pattern = parse_pattern("(?1).*(?t<=1)(?2)").unwrap();
         let events = make_events(&[
             (0, &[true, false]),
@@ -1188,7 +1267,7 @@ mod tests {
             (5_000_000, &[false, true]), // 5s from (?1), > 1
         ]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, None);
+        assert_eq!(result, vec![0]);
     }
 
     #[test]
@@ -1206,7 +1285,8 @@ mod tests {
         }
         let events = make_events(&event_data);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, None);
+        // No (?2) anywhere: the longest partial chain is (?1) at t=0.
+        assert_eq!(result, vec![0]);
 
         // A non-normalizable adversarial pattern (wildcards interleaved with
         // time constraints) that exceeds the exploration budget fails LOUDLY
@@ -1227,11 +1307,11 @@ mod tests {
 
     #[test]
     fn test_events_empty_pattern() {
-        // Empty pattern steps should return None.
+        // Empty pattern steps match nothing: empty result.
         let pattern = CompiledPattern { steps: vec![] };
         let events = make_events(&[(100, &[true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, None);
+        assert_eq!(result, Vec::<i64>::new());
     }
 
     #[test]
@@ -1241,13 +1321,13 @@ mod tests {
         let pattern = parse_pattern("(?1).*(?2)").unwrap();
         let events = make_events(&[(100, &[true, false]), (200, &[false, true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![100, 200]));
+        assert_eq!(result, vec![100, 200]);
     }
 
     #[test]
     fn test_events_one_event_gap_fails() {
-        // (?1).(?2) with two gap events — should not match because .
-        // matches exactly one event.
+        // (?1).(?2) with two gap events — no complete match because `.`
+        // matches exactly one event; longest partial is (?1) at 100.
         let pattern = parse_pattern("(?1).(?2)").unwrap();
         let events = make_events(&[
             (100, &[true, false]),
@@ -1256,7 +1336,7 @@ mod tests {
             (400, &[false, true]),
         ]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, None);
+        assert_eq!(result, vec![100]);
     }
 
     #[test]
@@ -1267,7 +1347,7 @@ mod tests {
         let events = make_events(&[(100, &[true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
         // Only one condition timestamp collected
-        assert_eq!(result, Some(vec![100]));
+        assert_eq!(result, vec![100]);
     }
 
     #[test]
@@ -1277,7 +1357,7 @@ mod tests {
         let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
         let events = make_events(&[(100, &[true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![100]));
+        assert_eq!(result, vec![100]);
     }
 
     #[test]
@@ -1293,7 +1373,7 @@ mod tests {
             (400, &[false, true]), // later (?2) — greedy would pick this
         ]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
-        assert_eq!(result, Some(vec![100, 200]));
+        assert_eq!(result, vec![100, 200]);
     }
 }
 
@@ -1336,9 +1416,106 @@ mod budget_tests {
         for i in 0..20_000i64 {
             events.push(Event::new(2_000_000 + i, 0b100));
         }
-        let timestamps = execute_pattern_events(&pattern, &events)
-            .expect("within budget")
-            .unwrap();
+        let timestamps = execute_pattern_events(&pattern, &events).expect("within budget");
         assert_eq!(timestamps, vec![0, 1_000_000]);
+    }
+}
+
+#[cfg(test)]
+mod time_semantics_tests {
+    use super::*;
+    use crate::pattern::parser::parse_pattern;
+
+    /// Elapsed time is floored to whole seconds before comparison — the
+    /// faithful generalization of `ClickHouse`'s `DateTime` (whole-second)
+    /// behavior to microsecond timestamps. 2.5s elapsed counts as 2.
+    #[test]
+    fn test_elapsed_seconds_floor_for_lte() {
+        let pattern = parse_pattern("(?1)(?t<=2)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(2_500_000, &[false, true]), // 2.5s -> floor 2
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// (?t==N) therefore means "elapsed within [N, N+1) seconds".
+    #[test]
+    fn test_elapsed_seconds_floor_for_eq() {
+        let pattern = parse_pattern("(?1)(?t==2)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(2_900_000, &[false, true]), // 2.9s -> floor 2
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(3_000_000, &[false, true]), // 3.0s -> floor 3
+        ];
+        assert!(!execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// `ClickHouse` gap-skip semantics: `(?1)(?t<=N)(?2)` tolerates
+    /// non-matching events between the two conditions.
+    #[test]
+    fn test_time_constraint_skips_gap_events() {
+        let pattern = parse_pattern("(?1)(?t<=10)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::new(2_000_000, 0b100), // gap event (other condition)
+            Event::new(3_000_000, 0b100), // gap event
+            Event::from_bools(5_000_000, &[false, true]),
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// The gate still rejects matches outside the window even when skipping.
+    #[test]
+    fn test_time_constraint_gate_still_enforced_with_gaps() {
+        let pattern = parse_pattern("(?1)(?t<=2)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::new(1_000_000, 0b100), // gap inside window
+            Event::from_bools(5_000_000, &[false, true]), // outside window
+        ];
+        assert!(!execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    /// `ClickHouse` end-of-events rule: trailing `(?t<=N)` / `(?t<N)` /
+    /// `(?t>=0)` match the empty remainder.
+    #[test]
+    fn test_trailing_constraints_vacuous_at_end() {
+        let events = vec![Event::from_bools(0, &[true])];
+        for pattern_str in ["(?1)(?t<=5)", "(?1)(?t<5)", "(?1)(?t>=0)"] {
+            let pattern = parse_pattern(pattern_str).unwrap();
+            assert!(
+                execute_pattern(&pattern, &events, false).unwrap().matched,
+                "{pattern_str} must match at end of events"
+            );
+        }
+        // Trailing constraints that need a future event do not match.
+        for pattern_str in ["(?1)(?t>=1)", "(?1)(?t>0)", "(?1)(?t==0)"] {
+            let pattern = parse_pattern(pattern_str).unwrap();
+            assert!(
+                !execute_pattern(&pattern, &events, false).unwrap().matched,
+                "{pattern_str} must not match at end of events"
+            );
+        }
+    }
+
+    /// `(?t>=N)` waits past arbitrarily many early events.
+    #[test]
+    fn test_gte_waits_for_later_events() {
+        let pattern = parse_pattern("(?1)(?t>=4)(?2)").unwrap();
+        let events = vec![
+            Event::from_bools(0, &[true, false]),
+            Event::from_bools(1_000_000, &[false, true]), // too early
+            Event::from_bools(2_000_000, &[false, true]), // too early
+            Event::from_bools(5_000_000, &[false, true]), // 5s >= 4 ✓
+        ];
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+        let timestamps = execute_pattern_events(&pattern, &events).unwrap();
+        assert_eq!(timestamps, vec![0, 5_000_000]);
     }
 }

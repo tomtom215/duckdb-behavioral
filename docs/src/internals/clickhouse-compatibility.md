@@ -24,7 +24,7 @@ All six ClickHouse behavioral parametric functions are implemented:
 | `windowFunnel(window, 'allow_reentry')(...)` | `window_funnel(window, 'allow_reentry', ...)` | Complete |
 | `sequenceMatch(pattern)(timestamp, cond1, ...)` | `sequence_match(pattern, timestamp, cond1, ...)` | Complete |
 | `sequenceCount(pattern)(timestamp, cond1, ...)` | `sequence_count(pattern, timestamp, cond1, ...)` | Complete |
-| N/A (duckdb-behavioral extension) | `sequence_match_events(pattern, timestamp, cond1, ...)` | Extension |
+| `sequenceMatchEvents(pattern)(timestamp, cond1, ...)` | `sequence_match_events(pattern, timestamp, cond1, ...)` | Function |
 | N/A (duckdb-behavioral extension) | `window_funnel_events(window[, mode], timestamp, cond1, ...)` | Extension |
 | `sequenceNextNode(dir, base)(ts, val, base_cond, ev1, ...)` | `sequence_next_node(dir, base, ts, val, base_cond, ev1, ...)` | Complete |
 
@@ -155,7 +155,6 @@ analytics functions:
 | Function/Feature | Description |
 |---|---|
 | `sessionize` | Window function for session ID assignment (no ClickHouse equivalent) |
-| `sequence_match_events` | Returns matched timestamps as `LIST(TIMESTAMP)` |
 | `window_funnel_events` | Returns the best funnel chain's step timestamps as `LIST(TIMESTAMP)` (ClickHouse's `windowFunnel` has no timestamp-returning companion) |
 | `'timestamp_dedup'` mode | Timestamp-based deduplication in `window_funnel` |
 | `(?t!=N)` time constraint | Not-equal operator in sequence patterns |
@@ -165,7 +164,7 @@ analytics functions:
 
 All six ClickHouse behavioral parametric functions are implemented with complete
 coverage of documented parameters, modes, and return types. The `sessionize`
-function and `sequence_match_events` function are extensions beyond ClickHouse's
+function is an extension beyond ClickHouse's
 feature set.
 
 ### Known Semantic Differences
@@ -197,6 +196,18 @@ feature set.
    timestamps saturate to `i64::MAX` and behave as infinitely distant.
    ClickHouse's `DateTime` types have no infinity values, so no equivalent
    behavior exists there.
+
+7. **Time-constraint units**: ClickHouse compares `(?t op N)` in raw
+   timestamp-column units (whole seconds for `DateTime`); we define `N` in
+   seconds over microsecond timestamps and floor the elapsed time to whole
+   seconds — the faithful generalization (`(?t==N)` means "within
+   `[N, N+1)` seconds"). The gap-skip behavior itself (non-matching events
+   between gated steps are skipped) matches ClickHouse exactly.
+
+8. **Time-constraint anchor after wildcards**: we anchor `(?t…)` at the last
+   *matched condition*. ClickHouse re-anchors at wildcard positions, which
+   makes `(?t<=N)` directly after `.*` vacuously true there — an
+   implementation artifact we deliberately do not reproduce.
 
 `sequence_next_node` itself matches ClickHouse exactly as of v0.8.0
 (verified against `AggregateFunctionSequenceNextNode.cpp`): single anchor per

@@ -126,7 +126,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (486 unit + 15 integration + 1 doc-test).
+# Run all tests (486 unit + 16 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -238,7 +238,7 @@ Every change MUST meet these requirements:
   modules -- `sequence_match` and `sequence_count` share one state type;
   `window_funnel_events` shares `WindowFunnelState`)
 - **1 doc-test** for the pattern parser
-- **15 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **16 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
@@ -315,12 +315,12 @@ behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
 ### Extensions Beyond ClickHouse
 
 - `sessionize`: Window function (no ClickHouse equivalent)
-- `sequence_match_events`: Returns matched timestamps as `LIST(TIMESTAMP)`
 - `window_funnel_events`: Returns the best funnel chain's step timestamps as
   `LIST(TIMESTAMP)` (ClickHouse's `windowFunnel` has no timestamp-returning
   companion)
 - `'timestamp_dedup'` mode: Timestamp-based deduplication in `window_funnel`
 - `(?t!=N)` time constraint: Not-equal operator in sequence patterns
+  (`.` and `.*` and the other five time operators match ClickHouse)
 - No experimental flags required (ClickHouse's `sequenceNextNode` requires
   `SET allow_experimental_funnel_functions = 1`)
 
@@ -347,6 +347,13 @@ behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
 5. **Saturating gap arithmetic**: gaps touching DuckDB's `±infinity`
    timestamps saturate to `i64::MAX`, treating them as infinitely distant
    (ClickHouse's `DateTime` has no infinity values, so no equivalent exists).
+
+6. **Time-constraint units and anchoring**: ClickHouse compares `(?t op N)`
+   in raw timestamp-column units and re-anchors at wildcard positions; we
+   define `N` in seconds (elapsed floored to whole seconds, so `(?t==N)`
+   means `[N, N+1)`) and anchor at the last matched condition. The gap-skip
+   behavior (events between gated steps are skipped) matches ClickHouse —
+   verified against `AggregateFunctionSequenceMatch.cpp`.
 
 ## Testing
 
@@ -376,7 +383,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
 Run with `cargo test`. The 486 unit tests run in <1 second (the doc-test in
-~2s). The 15 in-process integration tests add ~15s on a cold run — they build and
+~2s). The 16 in-process integration tests add ~15s on a cold run — they build and
 `LOAD` the real release `cdylib` — and are near-instant once that artifact is
 cached.
 

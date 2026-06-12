@@ -52,6 +52,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(i64::MAX, u64::MAX]` previously wrapped negative through an unchecked
   cast, inverting the constraint (e.g. `(?t>=18446744073709551615)` became
   `(?t>=-1)`). Now a position-annotated pattern error.
+- **Time constraints now match ClickHouse exactly** (verified against
+  `AggregateFunctionSequenceMatch.cpp`): `(?t op N)` gates the next pattern
+  step while *skipping* non-matching events in between — previously
+  `(?1)(?t<=N)(?2)` required the two conditions to be adjacent and silently
+  missed matches ClickHouse finds. Trailing `(?t<=N)`/`(?t<N)`/`(?t>=0)`
+  now match the empty remainder, also as in ClickHouse. Elapsed time is
+  floored to whole seconds (documented adaptation: ClickHouse compares raw
+  column units; the floor generalizes whole-second `DateTime` behavior).
+- **`sequence_match_events` returns the longest partial chain on no-match**
+  (ClickHouse `sequenceMatchEvents` semantics) instead of an empty list —
+  the empty list now means "no condition ever fired". Documentation
+  previously mis-classified this function as an extension beyond ClickHouse;
+  it is one of the six ClickHouse behavioral functions (and `.` is ClickHouse
+  syntax too — only `(?t!=N)` is our pattern-syntax extension).
 - **NFA exploration budget no longer causes silent false negatives** — the
   fixed 10,000-iteration cap could make complex patterns (time constraints,
   `.`) report "no match" on groups with more than a few thousand
@@ -85,9 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING (0.x minor)**: `ffi::sessionize::register_sessionize` now takes
   `&impl Registrar` instead of a raw `duckdb_connection`.
 
+### Removed
+
+- **`common::event::merge_sorted_events`** — dead public API (unused since
+  the in-place combine rewrite) whose timestamp-only merge contract became
+  inconsistent with the new `(timestamp, conditions)` ordering.
+
 ### Tests
 
-- 482 unit tests (was 453) and 15 in-process integration tests (was 7),
+- 486 unit tests (was 453) and 16 in-process integration tests (was 7),
   including: adversarial probes for `±infinity` timestamps and oversized
   time constraints, a ClickHouse-semantics matrix for all eight
   `sequence_next_node` direction/base combinations, parallel-combine

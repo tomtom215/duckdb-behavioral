@@ -43,7 +43,7 @@ use quack_rs::testing::InMemoryDb;
 /// `.github/workflows/e2e.yml`.
 const DUCKDB_VERSION: &str = "v1.5.3";
 /// Extension version metadata field (`-ev`); matches `Cargo.toml`'s `version`.
-const EXTENSION_VERSION: &str = "v0.7.0";
+const EXTENSION_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 /// ABI type for a quack-rs / `libduckdb-sys` C-struct extension.
 const ABI_TYPE: &str = "C_STRUCT_UNSTABLE";
 
@@ -402,13 +402,50 @@ fn sequence_match_events_aggregate() {
         matched,
         "['2024-01-01 00:00:00', '2024-01-01 00:05:00', '2024-01-01 00:10:00']"
     );
-    let empty: String = db
+    // No complete match for user 2: ClickHouse's sequenceMatchEvents
+    // returns the LONGEST PARTIAL chain — (?1) matched at the first event.
+    let partial: String = db
         .query_one(
             "SELECT CAST(sequence_match_events('(?1)(?2)(?3)', ts, c1, c2, c3) AS VARCHAR) \
              FROM e WHERE user_id = 2",
         )
         .unwrap();
-    assert_eq!(empty, "[]");
+    assert_eq!(partial, "['2024-01-01 00:00:00']");
+}
+
+/// `ClickHouse` time-constraint semantics through live SQL: the constraint
+/// gates the next step but non-matching events in between are skipped, and
+/// `sequence_match_events` returns the longest partial chain on no-match.
+#[test]
+fn clickhouse_time_constraint_semantics() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE tc(ts TIMESTAMP, a BOOLEAN, b BOOLEAN, g BOOLEAN);
+         INSERT INTO tc VALUES
+            ('2024-01-01 00:00:00', true,  false, false),
+            ('2024-01-01 00:00:02', false, false, true),  -- gap event
+            ('2024-01-01 00:00:05', false, true,  false);",
+    )
+    .unwrap();
+
+    // (?1)(?t<=10)(?2): the gap event between them is skipped (ClickHouse
+    // semantics) — previously this required strict adjacency.
+    let matched: bool = db
+        .query_one("SELECT sequence_match('(?1)(?t<=10)(?2)', ts, a, b) FROM tc")
+        .unwrap();
+    assert!(matched, "gap events inside the time window must be skipped");
+
+    // (?1)(?t>=4)(?2): 5s elapsed satisfies >=4 even with the gap event.
+    let matched: bool = db
+        .query_one("SELECT sequence_match('(?1)(?t>=4)(?2)', ts, a, b) FROM tc")
+        .unwrap();
+    assert!(matched);
+
+    // (?1)(?t<=2)(?2): 5s elapsed violates <=2 -> no match.
+    let matched: bool = db
+        .query_one("SELECT sequence_match('(?1)(?t<=2)(?2)', ts, a, b) FROM tc")
+        .unwrap();
+    assert!(!matched);
 }
 
 #[test]

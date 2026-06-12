@@ -81,6 +81,17 @@ Time constraints are evaluated relative to the timestamp of the previously
 matched condition step. The time difference is computed in seconds, matching
 ClickHouse semantics.
 
+### Time-Constraint Semantics
+
+`(?t op N)` mirrors ClickHouse (verified against its implementation): the
+constraint gates the next pattern step, and non-matching events in between
+are skipped while the gate can still hold — `(?1)(?t<=10)(?2)` matches `(?2)`
+at any event within 10 seconds of `(?1)`. Trailing `(?t<=N)`, `(?t<N)` and
+`(?t>=0)` match the empty remainder. `N` is interpreted in seconds with the
+elapsed time floored to whole seconds, so `(?t==N)` means "within `[N, N+1)`
+seconds" (the faithful generalization of ClickHouse's whole-second `DateTime`
+comparison to microsecond timestamps).
+
 ### Determinism
 
 Events sort by `(timestamp, conditions)` before matching, so results are

@@ -129,31 +129,6 @@ pub fn sort_events(events: &mut [Event]) {
     events.sort_unstable_by_key(key);
 }
 
-/// Merges two sorted event slices into a single sorted `Vec`.
-///
-/// Both input slices must be sorted by timestamp. The result preserves the
-/// relative order of events from each input (stable merge).
-///
-/// Since `Event` is `Copy`, this avoids heap allocation per element during
-/// the merge (no `clone()` needed).
-#[must_use]
-pub fn merge_sorted_events(a: &[Event], b: &[Event]) -> Vec<Event> {
-    let mut result = Vec::with_capacity(a.len() + b.len());
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        if a[i].timestamp_us <= b[j].timestamp_us {
-            result.push(a[i]);
-            i += 1;
-        } else {
-            result.push(b[j]);
-            j += 1;
-        }
-    }
-    result.extend_from_slice(&a[i..]);
-    result.extend_from_slice(&b[j..]);
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,54 +195,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_sorted_events() {
-        let a = vec![
-            Event::from_bools(100, &[true]),
-            Event::from_bools(300, &[true]),
-        ];
-        let b = vec![
-            Event::from_bools(200, &[false]),
-            Event::from_bools(400, &[false]),
-        ];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 4);
-        assert_eq!(merged[0].timestamp_us, 100);
-        assert_eq!(merged[1].timestamp_us, 200);
-        assert_eq!(merged[2].timestamp_us, 300);
-        assert_eq!(merged[3].timestamp_us, 400);
-    }
-
-    #[test]
-    fn test_merge_sorted_events_empty() {
-        let a = vec![Event::from_bools(100, &[true])];
-        let b: Vec<Event> = vec![];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 1);
-
-        let merged2 = merge_sorted_events(&b, &a);
-        assert_eq!(merged2.len(), 1);
-    }
-
-    #[test]
-    fn test_merge_sorted_events_equal_timestamps() {
-        let a = vec![Event::from_bools(100, &[true])];
-        let b = vec![Event::from_bools(100, &[false])];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 2);
-        // a's event should come first (stable merge)
-        assert!(merged[0].condition(0));
-        assert!(!merged[1].condition(0));
-    }
-
-    #[test]
-    fn test_merge_both_empty() {
-        let a: Vec<Event> = vec![];
-        let b: Vec<Event> = vec![];
-        let merged = merge_sorted_events(&a, &b);
-        assert!(merged.is_empty());
-    }
-
-    #[test]
     fn test_sort_already_sorted() {
         let mut events = vec![
             Event::from_bools(100, &[true]),
@@ -296,22 +223,6 @@ mod tests {
     #[test]
     fn test_has_any_condition_all_true() {
         assert!(Event::from_bools(0, &[true, true, true]).has_any_condition());
-    }
-
-    #[test]
-    fn test_merge_preserves_order_within_same_ts() {
-        // Multiple events at the same timestamp from each side
-        let a = vec![
-            Event::from_bools(100, &[true, false]),
-            Event::from_bools(100, &[false, true]),
-        ];
-        let b = vec![Event::from_bools(100, &[true, true])];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged.len(), 3);
-        // a's events come first since a[0].ts <= b[0].ts
-        assert_eq!(merged[0].conditions, 0b01); // true, false
-        assert_eq!(merged[1].conditions, 0b10); // false, true
-        assert_eq!(merged[2].conditions, 0b11); // true, true
     }
 
     #[test]
@@ -449,16 +360,6 @@ mod tests {
         assert_eq!(events[0].conditions, 1);
         assert_eq!(events[1].conditions, 2);
         assert_eq!(events[2].conditions, 3);
-    }
-
-    #[test]
-    fn test_merge_sorted_preserves_stability() {
-        // Merge should take from `a` first when timestamps are equal (stable merge).
-        let a = vec![Event::new(100, 0b01)];
-        let b = vec![Event::new(100, 0b10)];
-        let merged = merge_sorted_events(&a, &b);
-        assert_eq!(merged[0].conditions, 0b01); // a's element first
-        assert_eq!(merged[1].conditions, 0b10); // b's element second
     }
 
     // --- 32-condition support tests ---

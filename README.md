@@ -394,7 +394,7 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 | Metric | Value |
 |---|---|
 | Unit tests | 486 + 1 doc-test |
-| Integration tests | 15 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
+| Integration tests | 16 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
 | E2E tests | 11 workflow steps (2 platforms) + 59 SQL queries (against real DuckDB CLI) |
 | Property-based tests | 29 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
@@ -439,7 +439,7 @@ cargo build --release
 ## Development
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 486 unit + 15 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 486 unit + 16 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks

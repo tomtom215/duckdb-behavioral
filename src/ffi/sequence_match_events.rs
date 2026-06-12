@@ -32,7 +32,9 @@ const MAX_CONDITIONS: usize = 32;
 /// Signature: `sequence_match_events(VARCHAR, TIMESTAMP, BOOLEAN, BOOLEAN [, ...]) -> LIST(TIMESTAMP)`
 ///
 /// Returns an array of timestamps corresponding to each matched `(?N)` step in
-/// the pattern. Empty array if no match.
+/// the pattern. When the full pattern never matches, the timestamps of the
+/// LONGEST partial chain are returned (`ClickHouse` `sequenceMatchEvents`
+/// semantics); empty array when no condition ever fired.
 ///
 /// # Safety
 ///

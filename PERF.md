@@ -847,6 +847,14 @@ reference-hardware baseline below).
    scales `8 × events × steps` and errors loudly instead of silently
    reporting no-match.
 
+5. **ClickHouse gap-skip time-constraint semantics** (new
+   `sequence_match_time_constraint` benchmark added first to measure it):
+   `(?1)(?t<=600)(?2)` over 1M events went from 10.55 ms (94.8 Melem/s) to
+   12.08 ms (82.8 Melem/s), **+14.5%** — the skip branches are inherent to
+   correct backtracking on this shape, and the old number was fast but
+   returned non-ClickHouse (adjacency-only) results. Fast-path pattern
+   shapes are unaffected.
+
 ## Current Baseline
 
 Recorded after Session 15 dependency refresh (Criterion 0.8.2, rand 0.9.2).
