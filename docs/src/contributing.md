@@ -8,7 +8,7 @@ Guidelines for contributing to `duckdb-behavioral`.
 
 - Rust 1.87+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.5.3 (for E2E testing)
+- DuckDB CLI v1.5.4 (for E2E testing)
 
 ### Building
 
@@ -47,7 +47,7 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
 - **Pure Rust core**: Business logic in top-level modules (`sessionize.rs`,
   `retention.rs`, etc.) with zero FFI dependencies.
 - **FFI bridge via quack-rs SDK**: DuckDB C API registration confined to
-  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.14.0
+  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.15.0
   for safe builders (including `returns_logical(LogicalType)` for
   `LIST(T)` returns), state management (`FfiState<T>`), vector I/O
   (`VectorReader`/`VectorWriter`), LIST output (`ListVector`), and type
@@ -103,7 +103,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.3 -ev v0.8.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.4 -ev v0.9.0 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 
 # Load and test

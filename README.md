@@ -395,11 +395,11 @@ version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
 |---|---|
 | Unit tests | 486 + 1 doc-test |
 | Integration tests | 16 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
-| E2E tests | 11 workflow steps (2 platforms) + 59 SQL queries (against real DuckDB CLI) |
+| E2E tests | 12 workflow steps (2 platforms) + 8 SQL integration test files, 76 queries (against real DuckDB CLI) |
 | Property-based tests | 29 (proptest) |
 | Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
 | Clippy warnings | 0 (pedantic + nursery + cargo lint groups) |
-| CI jobs | 13 (check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
+| CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Benchmark files | 7 (Criterion.rs, up to 1 billion elements) |
 | Release platforms | 4 (Linux x86_64/ARM64, macOS x86_64/ARM64) |
 
@@ -472,7 +472,7 @@ for the full SemVer rules applied to SQL function signatures.
 ## Requirements
 
 - Rust 1.87+ (MSRV)
-- DuckDB 1.5.3 (pinned dependency)
+- DuckDB 1.5.4 (pinned dependency)
 - Python 3.x (for extension metadata tooling)
 
 ## License

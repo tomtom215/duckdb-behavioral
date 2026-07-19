@@ -467,7 +467,7 @@ jobs:
 
           - 486 unit tests + 1 doc-test (29 proptest)
           - 16 in-process integration tests (real extension load via InMemoryDb)
-          - 12 E2E workflow test steps per platform against real DuckDB v1.5.3
+          - 12 E2E workflow test steps per platform against real DuckDB v1.5.4
           - 8 SQL integration test files (76 queries) in test/sql/
           - Criterion.rs benchmarks up to 1 billion elements
 

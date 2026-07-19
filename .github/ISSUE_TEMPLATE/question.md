@@ -27,5 +27,5 @@ LOAD 'behavioral';
 
 ## Environment
 
-- **DuckDB version**: (e.g., v1.5.3)
+- **DuckDB version**: (e.g., v1.5.4)
 - **Extension version**: (e.g., community or built from source)
