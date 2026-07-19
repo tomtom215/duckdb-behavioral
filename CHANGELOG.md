@@ -48,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated every version reference to the `v0.9.0` / quack-rs `v0.15.0` / DuckDB
   `v1.5.4` baseline (MSRV `1.87` unchanged) across `README.md`, `CLAUDE.md`,
   `SECURITY.md`, `description.yml`, `scripts/setup.sh`, `Makefile`,
-  `docs/src/**.md`, the issue templates, and the community-submission workflow.
+  `docs/src/**.md`, the issue templates, the community-submission workflow, and
+  the `DUCKDB_VERSION` metadata constant in `tests/extension_load.rs`.
 - Corrected pre-existing drift in `README.md`: the CI-job table read `13`
   (omitting `wasm-check`) and now reads `14`, matching `ci.yml` and
   `docs/src/engineering.md`; the E2E row read `11 workflow steps + 59 SQL
