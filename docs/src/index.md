@@ -277,7 +277,7 @@ For a comprehensive technical overview, see the
 
 ## Requirements
 
-- **DuckDB 1.5.3**
+- **DuckDB 1.5.4**
 - **Rust 1.87+** (MSRV) for building from source
 - A C compiler for DuckDB system bindings
 

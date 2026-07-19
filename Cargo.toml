@@ -3,7 +3,7 @@
 
 [package]
 name = "duckdb-behavioral"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.87"
 authors = ["Tom F <tomtom215@users.noreply.github.com>"]
@@ -20,20 +20,21 @@ name = "behavioral"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-quack-rs = "=0.14.0"
-libduckdb-sys = { version = "=1.10503.1", features = ["loadable-extension"] }
+quack-rs = "=0.15.0"
+libduckdb-sys = { version = "=1.10504.0", features = ["loadable-extension"] }
 
 [dev-dependencies]
-# No `bundled` feature: dev builds link a prebuilt libduckdb downloaded by
-# libduckdb-sys (DUCKDB_DOWNLOAD_LIB=1, set in .cargo/config.toml) instead of
-# compiling DuckDB's C++ tree from source. Offline alternative: set
-# DUCKDB_LIB_DIR to a directory containing libduckdb.
-duckdb = "=1.10503.1"
+# No `bundled` feature: dev/test builds link a prebuilt libduckdb downloaded by
+# libduckdb-sys when DUCKDB_DOWNLOAD_LIB=1 (set workflow-wide in CI; locally run
+# `DUCKDB_DOWNLOAD_LIB=1 cargo test`) instead of compiling DuckDB's C++ tree from
+# source. Offline alternative: set DUCKDB_LIB_DIR to a directory containing
+# libduckdb (plus LD_LIBRARY_PATH on Linux). Never set either for release builds.
+duckdb = "=1.10504.0"
 # `bundled-test-prebuilt` exposes `quack_rs::testing::InMemoryDb` (used by the
 # in-process extension-load integration test, `tests/extension_load.rs`) while
 # linking the same prebuilt libduckdb as the `duckdb` dev-dependency above.
 # This feature is dev-only and never reaches the release `.so`.
-quack-rs = { version = "=0.14.0", features = ["bundled-test-prebuilt"] }
+quack-rs = { version = "=0.15.0", features = ["bundled-test-prebuilt"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1"
 

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-19
+
+### Changed
+
+- **quack-rs v0.15.0** — upgraded from v0.14.0. Every public API this crate uses
+  (`AggregateFunctionSetBuilder`, `AggregateFunctionBuilder`,
+  `ScalarFunctionBuilder`, `FfiState`, `VectorReader`/`VectorWriter`,
+  `ListVector`, `LogicalType::list`, `returns_logical`, `AggregateTestHarness`,
+  `Connection`/`Registrar`, `entry_point_v2!`, `testing::InMemoryDb`) is
+  unchanged: the extension compiles against the new SDK with **zero changes to
+  existing source**. v0.15.0 is purely additive — it adds `Value::as_blob()` and
+  fixes `VectorReader::read_blob()` to preserve non-UTF-8 bytes; neither blob API
+  is exercised by this aggregate-only extension. MSRV stays 1.87.
+- **DuckDB v1.5.4 support** — upgraded `libduckdb-sys` from `1.10503.1` to
+  `1.10504.0` and `duckdb` (dev) from `1.10503.1` to `1.10504.0`, tracking the
+  DuckDB v1.5.4 bugfix release. The C extension API version is unchanged
+  (`v1.2.0`) and the metadata ABI stays `C_STRUCT_UNSTABLE`, so the extension
+  source compiles unchanged. `TARGET_DUCKDB_VERSION` / `DUCKDB_TEST_VERSION`
+  (`Makefile`), `DUCKDB_VERSION` (`e2e.yml`), and `DUCKDB_RELEASE_VERSION`
+  (`scripts/setup.sh`) now pin `v1.5.4`; E2E tests run against the DuckDB v1.5.4
+  CLI, and metadata-append examples stamp `-dv v1.5.4 -ev v0.9.0`.
+
+### Security
+
+- **Dependency refresh via `cargo update`** — notably **crossbeam-epoch**
+  0.9.18 → 0.9.20 and **quinn-proto** 0.11.14 → 0.11.16, carrying the upstream
+  fixes for **RUSTSEC-2026-0204** and **RUSTSEC-2026-0185** respectively. Both
+  are dev/transitive crates reached only through `libduckdb-sys`'s build tooling
+  and the `duckdb` dev-dependency — neither is linked into the shipped `.so`,
+  which contains only `libduckdb-sys` + `quack-rs`. Routine bumps swept the
+  dev/transitive tree (`cc` 1.2.63 → 1.3.0, `serde` 1.0.228 → 1.0.229, `tokio`
+  1.52.3 → 1.53.0, plus `rustls`, `regex`, `zerocopy`, `wasm-bindgen`, …), and
+  `libduckdb-sys` 1.10504.0 drops the `windows-sys` / `windows-targets`
+  transitive subtree. `cargo deny check advisories bans licenses sources` passes
+  clean; the project MSRV stays 1.87.
+
+### Documentation
+
+- Updated every version reference to the `v0.9.0` / quack-rs `v0.15.0` / DuckDB
+  `v1.5.4` baseline (MSRV `1.87` unchanged) across `README.md`, `CLAUDE.md`,
+  `SECURITY.md`, `description.yml`, `scripts/setup.sh`, `Makefile`,
+  `docs/src/**.md`, the issue templates, the community-submission workflow, and
+  the `DUCKDB_VERSION` metadata constant in `tests/extension_load.rs`.
+- Corrected pre-existing drift in `README.md`: the CI-job table read `13`
+  (omitting `wasm-check`) and now reads `14`, matching `ci.yml` and
+  `docs/src/engineering.md`; the E2E row read `11 workflow steps + 59 SQL
+  queries` and now reads `12 workflow steps + 8 SQL files, 76 queries`, matching
+  the verified `e2e.yml` / `test/sql` counts.
+
 ## [0.8.0] - 2026-06-12
 
 ### Added
