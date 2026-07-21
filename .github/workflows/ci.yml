@@ -67,6 +67,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Run clippy
         run: cargo clippy --all-targets --message-format=json -- -D warnings 2>&1 | tee clippy-output.json
       - name: Summary
@@ -104,6 +109,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Compile check (all targets)
         id: cargo-check
         run: cargo check --all-targets
@@ -160,6 +170,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Build documentation
         id: cargo-doc
         run: cargo doc --no-deps --document-private-items
@@ -187,6 +202,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
@@ -264,6 +284,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
@@ -315,6 +340,11 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
           key: msrv-1.87
       - name: Check MSRV compilation
         id: msrv-check
@@ -343,6 +373,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Compile benchmarks (no run)
         id: bench-check
         run: cargo bench --no-run
@@ -403,6 +438,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks --locked
       - name: Check semver compatibility
@@ -439,6 +479,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked
       - name: Generate coverage report
