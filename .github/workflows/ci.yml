@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -67,6 +67,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Run clippy
         run: cargo clippy --all-targets --message-format=json -- -D warnings 2>&1 | tee clippy-output.json
       - name: Summary
@@ -95,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -104,6 +109,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Compile check (all targets)
         id: cargo-check
         run: cargo check --all-targets
@@ -125,7 +135,7 @@ jobs:
       # uses pregenerated bindings and needs no library at all.
       DUCKDB_DOWNLOAD_LIB: "0"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-emscripten
@@ -151,7 +161,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -160,6 +170,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Build documentation
         id: cargo-doc
         run: cargo doc --no-deps --document-private-items
@@ -178,7 +193,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -187,9 +202,14 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c070f87102a1c75b3183910f391c1cb887fe13c8 # v2.77.6
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: cargo-nextest
 
@@ -255,7 +275,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -264,9 +284,14 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c070f87102a1c75b3183910f391c1cb887fe13c8 # v2.77.6
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: cargo-nextest
 
@@ -310,11 +335,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@1.87
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
           key: msrv-1.87
       - name: Check MSRV compilation
         id: msrv-check
@@ -334,7 +364,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -343,6 +373,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Compile benchmarks (no run)
         id: bench-check
         run: cargo bench --no-run
@@ -361,10 +396,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Run cargo deny
         id: deny-check
-        uses: EmbarkStudios/cargo-deny-action@6c8f9facfa5047ec02d8485b6bf52b587b7777d1 # v2.0.18
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
           command: check advisories bans licenses sources
       - name: Summary
@@ -392,7 +427,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -403,6 +438,11 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks --locked
       - name: Check semver compatibility
@@ -430,7 +470,7 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -439,13 +479,18 @@ jobs:
           # while keeping build-script fingerprints, which strands warm-cache
           # builds with a dangling -L path. Persist the download explicitly.
           cache-directories: target/duckdb-download
+          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
+          # build fingerprint without the downloaded lib under
+          # target/duckdb-download, stranding the linker with a dangling
+          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
+          prefix-key: v1-rust
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked
       - name: Generate coverage report
         run: cargo tarpaulin --out xml --out html --skip-clean 2>&1 | tee coverage-output.txt
       - name: Upload to Codecov
         if: always()
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: cobertura.xml
           fail_ci_if_error: false
@@ -502,7 +547,7 @@ jobs:
       # Exercise the pristine release path: no prebuilt-libduckdb download.
       DUCKDB_DOWNLOAD_LIB: "0"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
