@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-23
+
+### Changed
+
+- **DuckDB v1.5.5 support** — upgraded `libduckdb-sys` from `1.10504.0` to
+  `1.10505.0` and `duckdb` (dev) from `1.10504.0` to `1.10505.0`, tracking the
+  DuckDB v1.5.5 bugfix release (published one day after v1.5.4). The C extension
+  API version is unchanged (`v1.2.0`) and the metadata ABI stays
+  `C_STRUCT_UNSTABLE`, so the extension source compiles unchanged; **quack-rs
+  stays 0.15.0** (its `libduckdb-sys >=1.4.4, <2` range already covers 1.10505.0)
+  and **MSRV stays 1.87**. `TARGET_DUCKDB_VERSION` / `DUCKDB_TEST_VERSION`
+  (`Makefile`), `DUCKDB_VERSION` (`e2e.yml`), `DUCKDB_RELEASE_VERSION`
+  (`scripts/setup.sh`), and the `DUCKDB_VERSION` metadata constant in
+  `tests/extension_load.rs` now pin `v1.5.5`; E2E runs against the DuckDB v1.5.5
+  CLI, and metadata-append examples stamp `-dv v1.5.5 -ev v0.9.1`. Cut to keep
+  the DuckDB community-extensions listing on the current DuckDB release line —
+  `C_STRUCT_UNSTABLE` extensions must match the loading DuckDB version exactly.
+
+### Security
+
+- **Smaller build-dependency tree** — `libduckdb-sys` 1.10505.0 swapped the
+  `reqwest` prebuilt-library downloader for the lightweight `ureq` v3, dropping
+  ~95 transitive lockfile entries (the whole `hyper` / `quinn` / `tokio` /
+  `rustls`-heavy / `icu` subtree, including the `quinn-proto` that needed a
+  security patch in 0.9.0). All are build/dev-only — none ever reached the
+  shipped `.so` — but the reduced supply-chain surface is a nice side effect.
+  The `DUCKDB_DOWNLOAD_LIB=1` dev/CI download path is unaffected (ureq + rustls).
+- **Dependency refresh via `cargo update`** — routine dev/transitive bumps
+  (`arrow` 58.3 → 58.4, plus `clap`, `libc`, `serde_json`, `syn`, `zerocopy`);
+  no advisories this cycle. `cargo deny check advisories bans licenses sources`
+  passes clean.
+
+### Documentation
+
+- Updated every version reference to the `v0.9.1` / DuckDB `v1.5.5` baseline
+  (quack-rs `0.15.0` and MSRV `1.87` unchanged) across `README.md`, `CLAUDE.md`,
+  `SECURITY.md`, `description.yml`, `scripts/setup.sh`, `Makefile`,
+  `docs/src/**.md`, the issue templates, the community-submission workflow, and
+  the `DUCKDB_VERSION` metadata constant in `tests/extension_load.rs`.
+
 ## [0.9.0] - 2026-07-19
 
 ### Changed

@@ -439,7 +439,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Layer | Technology | Purpose |
 |---|---|---|
 | Language | Rust (stable, MSRV 1.87) | Memory safety, zero-cost abstractions, `unsafe` confinement |
-| Database | DuckDB 1.5.4 | Analytical SQL engine, segment tree windowing |
+| Database | DuckDB 1.5.5 | Analytical SQL engine, segment tree windowing |
 | FFI | libduckdb-sys (C API) | Raw aggregate function registration |
 | Benchmarking | Criterion.rs | Statistical benchmarking with confidence intervals |
 | Property testing | proptest | Algebraic property verification |

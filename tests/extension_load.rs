@@ -41,7 +41,7 @@ use quack_rs::testing::InMemoryDb;
 /// `DuckDB` release version this extension targets (the `-dv` metadata field for
 /// the `C_STRUCT_UNSTABLE` ABI). Kept in sync with the `Makefile` /
 /// `.github/workflows/e2e.yml`.
-const DUCKDB_VERSION: &str = "v1.5.4";
+const DUCKDB_VERSION: &str = "v1.5.5";
 /// Extension version metadata field (`-ev`); matches `Cargo.toml`'s `version`.
 const EXTENSION_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 /// ABI type for a quack-rs / `libduckdb-sys` C-struct extension.

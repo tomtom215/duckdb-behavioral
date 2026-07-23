@@ -159,7 +159,7 @@ sequence_next_node('direction', 'base', timestamp_col, value_col,
 ### behavioral_version — Which build is loaded?
 
 ```sql
-behavioral_version() → VARCHAR   -- e.g. '0.9.0'
+behavioral_version() → VARCHAR   -- e.g. '0.9.1'
 ```
 
 **Key facts:** Diagnostic scalar; useful when the community channel, a pinned

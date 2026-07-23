@@ -472,7 +472,7 @@ for the full SemVer rules applied to SQL function signatures.
 ## Requirements
 
 - Rust 1.87+ (MSRV)
-- DuckDB 1.5.4 (pinned dependency)
+- DuckDB 1.5.5 (pinned dependency)
 - Python 3.x (for extension metadata tooling)
 
 ## License

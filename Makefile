@@ -10,11 +10,11 @@ EXTENSION_NAME=behavioral
 # Required: duckdb-rs relies on unstable C API functionality
 USE_UNSTABLE_C_API=1
 
-# Target DuckDB version (must match duckdb = "=1.10504.0" pin in Cargo.toml)
-TARGET_DUCKDB_VERSION=v1.5.4
+# Target DuckDB version (must match duckdb = "=1.10505.0" pin in Cargo.toml)
+TARGET_DUCKDB_VERSION=v1.5.5
 
 # Pin the test runner to the same DuckDB version (extension-ci-tools defaults to latest)
-DUCKDB_TEST_VERSION=1.5.4
+DUCKDB_TEST_VERSION=1.5.5
 
 all: configure debug
 
