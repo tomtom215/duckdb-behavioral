@@ -152,7 +152,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.4 -ev v0.9.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.5 -ev v0.9.1 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -183,15 +183,15 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
   and `AggregateTestHarness` for combine testing. Re-exports `libduckdb-sys`
   with `loadable-extension` feature.
-- `libduckdb-sys = "=1.10504.0"` with `loadable-extension` feature — Re-exported
+- `libduckdb-sys = "=1.10505.0"` with `loadable-extension` feature — Re-exported
   by quack-rs but pinned explicitly: the FFI modules use its raw types
   (`duckdb_function_info`, `duckdb_data_chunk`, `duckdb_aggregate_state`, …)
   in the `unsafe extern "C"` callback signatures.
-  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.4 →
-  crate v1.10504.x).
+  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.5 →
+  crate v1.10505.x).
 
 **Dev-only** (unit tests and benchmarks):
-- `duckdb = "=1.10504.0"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
+- `duckdb = "=1.10505.0"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
   for `Connection::open_in_memory()`. Not linked into the release extension.
   Dev/test builds link a **prebuilt libduckdb** downloaded by `libduckdb-sys`
   (`DUCKDB_DOWNLOAD_LIB=1`, cached in `target/duckdb-download/`) instead of
@@ -204,8 +204,8 @@ duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
   `DUCKDB_LIB_DIR` *after* a previous build does not invalidate the cached
   build-script output; clear `target/*/build/libduckdb-sys-*` (or toggle
   `DUCKDB_DOWNLOAD_LIB`) to force a re-run.
-  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.4 →
-  crate v1.10504.x).
+  Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.5 →
+  crate v1.10505.x).
 - `quack-rs` v0.15.0 with `bundled-test-prebuilt` feature — Provides
   `testing::InMemoryDb` (incl. `open_unsigned()`) for the in-process
   extension-load integration test (`tests/extension_load.rs`). Links the same
@@ -244,7 +244,7 @@ Every change MUST meet these requirements:
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
   through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
-- **E2E tests** against real DuckDB v1.5.4 CLI: 12 workflow test steps
+- **E2E tests** against real DuckDB v1.5.5 CLI: 12 workflow test steps
   (2 platforms) plus 8 SQL integration test files with 76 queries covering
   all 8 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
   no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
@@ -489,7 +489,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
 
 - **Extension metadata version uses DuckDB release version**: The
   `append_extension_metadata.py -dv` flag takes the DuckDB release version
-  (e.g., `v1.5.4`). The community extension Makefile sets this automatically
+  (e.g., `v1.5.5`). The community extension Makefile sets this automatically
   from `TARGET_DUCKDB_VERSION`. The ABI type is `C_STRUCT_UNSTABLE`.
 
 - **Window usage needs no special registration**: `sessionize` is registered as

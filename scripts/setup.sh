@@ -33,7 +33,7 @@ set -euo pipefail
 # version of the DuckDB CLI loading the extension (DuckDB compares this
 # field exactly and refuses to load on a mismatch). Mirrors the Makefile's
 # TARGET_DUCKDB_VERSION used by the official `make release` build.
-readonly DUCKDB_RELEASE_VERSION="v1.5.4"
+readonly DUCKDB_RELEASE_VERSION="v1.5.5"
 
 # Extension version from Cargo.toml
 readonly EXT_VERSION="v0.7.0"

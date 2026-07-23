@@ -8,7 +8,7 @@ Guidelines for contributing to `duckdb-behavioral`.
 
 - Rust 1.87+ (the project's MSRV)
 - A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.5.4 (for E2E testing)
+- DuckDB CLI v1.5.5 (for E2E testing)
 
 ### Building
 
@@ -103,7 +103,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.4 -ev v0.9.0 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.5.5 -ev v0.9.1 --abi-type C_STRUCT_UNSTABLE \
   -o /tmp/behavioral.duckdb_extension
 
 # Load and test
