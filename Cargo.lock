@@ -1115,9 +1115,9 @@ dependencies = [
 
 [[package]]
 name = "quack-rs"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eb7fd39a59a340dc4df6b5f002de61bf44c6f3a64a528748d69bef3b8463ace"
+checksum = "4d4bf222b328f61b897441cc4a61c3a4644fb2ca1c8885271a820e56c6680c0e"
 dependencies = [
  "cc",
  "duckdb",

@@ -20,7 +20,7 @@ name = "behavioral"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-quack-rs = "=0.15.0"
+quack-rs = "=0.16.0"
 libduckdb-sys = { version = "=1.10505.0", features = ["loadable-extension"] }
 
 [dev-dependencies]
@@ -34,7 +34,7 @@ duckdb = "=1.10505.0"
 # in-process extension-load integration test, `tests/extension_load.rs`) while
 # linking the same prebuilt libduckdb as the `duckdb` dev-dependency above.
 # This feature is dev-only and never reaches the release `.so`.
-quack-rs = { version = "=0.15.0", features = ["bundled-test-prebuilt"] }
+quack-rs = { version = "=0.16.0", features = ["bundled-test-prebuilt"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1"
 
