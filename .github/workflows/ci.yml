@@ -73,6 +73,8 @@ jobs:
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
       - name: Run clippy
+        # bash -eo pipefail: without it the step's status is tee's (always 0).
+        shell: bash
         run: cargo clippy --all-targets --message-format=json -- -D warnings 2>&1 | tee clippy-output.json
       - name: Summary
         if: always()
@@ -214,9 +216,13 @@ jobs:
           tool: cargo-nextest
 
       - name: Run unit tests
+        # bash -eo pipefail: without it the step's status is tee's (always 0).
+        shell: bash
         run: cargo nextest run --all-targets --profile ci 2>&1 | tee test-output.txt
 
       - name: Run doc tests
+        # bash -eo pipefail: without it the step's status is tee's (always 0).
+        shell: bash
         run: cargo test --doc 2>&1 | tee -a test-output.txt
 
       - name: Upload test results
@@ -449,6 +455,8 @@ jobs:
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks --locked
       - name: Check semver compatibility
+        # bash -eo pipefail: without it the step's status is tee's (always 0).
+        shell: bash
         run: cargo semver-checks check-release --baseline-rev origin/main 2>&1 | tee semver-output.txt
       - name: Summary
         if: always()
@@ -490,6 +498,8 @@ jobs:
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked
       - name: Generate coverage report
+        # bash -eo pipefail: without it the step's status is tee's (always 0).
+        shell: bash
         run: cargo tarpaulin --out xml --out html --skip-clean 2>&1 | tee coverage-output.txt
       - name: Upload to Codecov
         if: always()
