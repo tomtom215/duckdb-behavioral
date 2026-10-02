@@ -673,11 +673,7 @@ fn sequence_next_node_direction_base_matrix() {
         run("forward", "head", "is_home"),
         vec![some("product"), some("search")]
     );
-    assert_eq!(
-        run("forward", "tail", "is_home"),
-        vec![None, None],
-        "tail = literal last event"
-    );
+    // ("forward", "tail") is an error: see sequence_next_node_rejects_end_anchored_chains.
     assert_eq!(
         run("forward", "first_match", "is_home"),
         vec![some("product"), some("search")]
@@ -687,11 +683,7 @@ fn sequence_next_node_direction_base_matrix() {
         vec![some("product"), some("search")]
     );
     // backward
-    assert_eq!(
-        run("backward", "head", "is_product"),
-        vec![None, None],
-        "head = literal first event"
-    );
+    // ("backward", "head") is an error: see sequence_next_node_rejects_end_anchored_chains.
     assert_eq!(
         run("backward", "tail", "is_product"),
         vec![None, some("search")]
@@ -940,5 +932,63 @@ fn sequence_pattern_clickhouse_parity_fixes() {
             .unwrap_err()
             .to_string();
         assert!(err.contains(needle), "{sql}: {err}");
+    }
+}
+
+/// A gap that varies per row: each row starts a new session when its gap to
+/// the previous row exceeds that row's own threshold, however `DuckDB`'s
+/// segment tree splits the frame. Combine used to judge the boundary between
+/// two segments by the left segment's threshold, which changed results from
+/// 20 rows on. Checked against a lag-based reference.
+#[test]
+fn sessionize_varying_gap_matches_reference() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE vg AS SELECT i, TIMESTAMP '2024-01-01' + to_seconds(2 * i) AS ts,
+             CASE WHEN i % 2 = 1 THEN INTERVAL 100 SECOND ELSE INTERVAL 0 SECOND END AS gap
+         FROM range(200) r(i);",
+    )
+    .unwrap();
+    let mismatches: i64 = db
+        .query_one(
+            "WITH ext AS (
+                 SELECT i, sessionize(ts, gap) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS s
+                 FROM vg),
+             starts AS (
+                 SELECT i, ts, CASE WHEN ts - lag(ts) OVER (ORDER BY ts) > gap
+                                    THEN 1 ELSE 0 END AS new_session
+                 FROM vg),
+             ref AS (
+                 SELECT i, 1 + sum(new_session)
+                     OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS s
+                 FROM starts)
+             SELECT count(*) FROM ext JOIN ref USING (i) WHERE ext.s <> ref.s",
+        )
+        .unwrap();
+    assert_eq!(mismatches, 0);
+}
+
+/// `forward` + `tail` and `backward` + `head` start the chain at an end of
+/// the sequence, so no adjacent event exists. `ClickHouse` rejects both; the
+/// extension used to return NULL silently.
+#[test]
+fn sequence_next_node_rejects_end_anchored_chains() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE nn AS SELECT * FROM (VALUES
+            (TIMESTAMP '2024-01-01 00:00:00', 'a'),
+            (TIMESTAMP '2024-01-01 00:00:01', 'b')) t(ts, v);",
+    )
+    .unwrap();
+    for (direction, base) in [("forward", "tail"), ("backward", "head")] {
+        let sql = format!(
+            "SELECT sequence_next_node('{direction}', '{base}', ts, v, true, v = 'a') FROM nn"
+        );
+        let err = db
+            .query_one::<String>(&sql)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot be combined"), "{sql}: {err}");
     }
 }

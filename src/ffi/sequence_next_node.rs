@@ -9,7 +9,7 @@
 //! `read_str()` which replaces the hand-rolled `read_varchar()` helper that
 //! handled the undocumented `duckdb_string_t` 16-byte inline/pointer format).
 
-use crate::sequence_next_node::{NextNodeEvent, SequenceNextNodeState};
+use crate::sequence_next_node::{Base, Direction, NextNodeEvent, SequenceNextNodeState};
 use libduckdb_sys::*;
 use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::TypeId;
@@ -129,6 +129,26 @@ quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
                     return;
                 };
                 state.set_base(base);
+            }
+
+            // As in ClickHouse: a forward chain from the last event (or a
+            // backward chain from the first) has no adjacent event to return.
+            match (state.direction, state.base) {
+                (Some(Direction::Forward), Some(Base::Tail)) => {
+                    info.set_error(
+                        "sequence_next_node: base 'tail' cannot be combined with direction \
+                         'forward' (the chain would start at the last event)",
+                    );
+                    return;
+                }
+                (Some(Direction::Backward), Some(Base::Head)) => {
+                    info.set_error(
+                        "sequence_next_node: base 'head' cannot be combined with direction \
+                         'backward' (the chain would start at the first event)",
+                    );
+                    return;
+                }
+                _ => {}
             }
 
             // Set num_steps (once per state)
