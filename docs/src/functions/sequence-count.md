@@ -41,7 +41,9 @@ GROUP BY user_id;
 3. Each time the pattern matches, the count increments and the NFA restarts
    from the event following the last matched event.
 4. Matches are non-overlapping: once a set of events is consumed by a match,
-   those events cannot participate in another match.
+   those events cannot participate in another match. A match that consumes no
+   events (for example `.*`, or `(?t<=6).*`) still advances one event, as in
+   ClickHouse, so `sequence_count('.*', ...)` counts one match per event.
 
 ### Example
 
@@ -75,6 +77,9 @@ message instead of silently returning `NULL`:
 invalid sequence pattern '(?1)(?': pattern error at position 6: ...
 ```
 
+An out-of-range condition number and a time constraint with no `(?N)` or `.`
+before it are errors too (see [`sequence_match`](./sequence-match.md#errors)).
+
 A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
 conventions.
 
@@ -84,7 +89,7 @@ conventions.
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
+| Finalize | As [`sequence_match`](./sequence-match.md#implementation) |
 | Space | O(n) -- all collected events |
 
 At benchmark scale, `sequence_count` processes **100 million events in 1.18 s**

@@ -36,14 +36,17 @@ Controls which direction to scan for the next event:
 
 ## Base
 
-Controls which starting point to use when multiple matches exist:
+Selects the single anchor event the chain starts from:
 
-| Base | Forward behavior | Backward behavior |
+| Base | Anchor | Valid with |
 |---|---|---|
-| `'head'` | Start from the first `base_condition` event | Start from the first `base_condition` event |
-| `'tail'` | Start from the last `base_condition` event | Start from the last `base_condition` event |
-| `'first_match'` | Return the first complete match result | Return the first complete match result (scanning right-to-left) |
-| `'last_match'` | Return the last complete match result | Return the last complete match result (scanning right-to-left) |
+| `'head'` | The first event; it must satisfy `base_condition` | `forward` only |
+| `'tail'` | The last event; it must satisfy `base_condition` | `backward` only |
+| `'first_match'` | The first event satisfying `base_condition` and `event1` | both |
+| `'last_match'` | The last event satisfying `base_condition` and `event1` | both |
+
+If the chain does not match from that anchor, the result is `NULL`; other
+anchors are not tried.
 
 ## Usage
 
@@ -81,11 +84,14 @@ GROUP BY user_id;
 
 ## Behavior
 
-Matches ClickHouse's `sequenceNextNode` exactly (verified against its
-implementation):
+Follows ClickHouse's `sequenceNextNode` (differential testing against
+ClickHouse 26.9.8.3 found no difference for events with distinct
+`(timestamp, value)`):
 
-1. Events are sorted by `(timestamp, value)` — the value tie-break makes
-   results deterministic when same-timestamp events arrive in arbitrary order.
+1. Events are sorted by `(timestamp, value, base_condition, conditions)`.
+   ClickHouse sorts by `(timestamp, value)` and keeps events tying on both in
+   arrival order, so its result can change with row order; the extra keys
+   make the order total here.
 2. A **single anchor** is selected by `base`:
    - `head` / `tail`: the literal first/last event in sorted order, which must
      itself satisfy `base_condition` — otherwise the result is `NULL`.
@@ -97,9 +103,7 @@ implementation):
    chain is **not** retried at other anchors.
 4. On a full match, the value of the event immediately after (`forward`) or
    before (`backward`) the chain is returned; `NULL` when that position falls
-   off either end. Consequently `forward`+`tail` and `backward`+`head` always
-   return `NULL` for one or more steps — the adjacent node would be past the
-   end of the data (ClickHouse behaves identically).
+   off either end.
 5. Returns `NULL` if no anchor exists or the chain does not match.
 
 ## Differences from ClickHouse
@@ -120,9 +124,16 @@ instead of silently returning `NULL`:
 - **Unknown direction** — expected `'forward'` or `'backward'`
 - **Unknown base** — expected `'head'`, `'tail'`, `'first_match'`, or
   `'last_match'`
+- **`forward` with `tail`, `backward` with `head`** — the chain would start at
+  an end of the sequence, so there is never an adjacent event (ClickHouse
+  rejects these too)
 
 A `NULL` direction is treated as `'forward'` and a `NULL` base as
 `'first_match'`.
+
+NULL inputs: a row with a NULL timestamp is skipped; a NULL value is kept as an
+event and can be returned as the next value; a NULL `base_condition` or event
+condition counts as false. (ClickHouse skips any row with a NULL argument.)
 
 ## Implementation
 

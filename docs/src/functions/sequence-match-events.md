@@ -82,25 +82,33 @@ message instead of silently returning `NULL`:
 invalid sequence pattern '(?1)(?': pattern error at position 6: ...
 ```
 
-A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
-conventions.
+An out-of-range condition number and a time constraint with no `(?N)` or `.`
+before it are errors too (see [`sequence_match`](./sequence-match.md#errors)).
+
+A `NULL` pattern yields an empty list.
 
 ## Implementation
 
 The NFA executor uses a separate `NfaStateWithTimestamps` type that tracks
 `collected: Vec<i64>` alongside the standard state index. This keeps the
 timestamp collection path separate from the performance-critical
-`execute_pattern` and `count_pattern` code paths.
+`execute_pattern` code path (which serves both `sequence_match` and
+`sequence_count`).
 
 | Operation | Complexity |
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
+| Finalize | Backtracking search; up to quadratic in n when the pattern does not match |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `sequence_match_events` processes **100 million events in 1.07 s**
-(93 Melem/s).
+The last recorded benchmark (PERF.md Session 15) is 100 million events in
+1.07 s.
+
+When a pattern matches, the timestamps are those of the events that matched.
+ClickHouse's `sequenceMatchEvents` can instead report an earlier, abandoned
+attempt of the same length; see
+[ClickHouse Compatibility](../internals/clickhouse-compatibility.md#known-semantic-differences).
 
 ## See Also
 

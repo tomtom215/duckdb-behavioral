@@ -23,7 +23,7 @@ window_funnel_events(window INTERVAL, mode VARCHAR, timestamp TIMESTAMP,
 | `window` | `INTERVAL` | Maximum time window from the first step |
 | `mode` | `VARCHAR` | Optional comma-separated mode string |
 | `timestamp` | `TIMESTAMP` | Event timestamp |
-| `cond1..condN` | `BOOLEAN` | Funnel step conditions (2 to 32) |
+| `cond1..condN` | `BOOLEAN` | Funnel step conditions (1 to 32) |
 
 **Returns:** `TIMESTAMP[]` -- one timestamp per matched funnel step, in match
 order. The list length always equals `window_funnel`'s return value for the
@@ -64,30 +64,27 @@ WHERE len(chain) = 3;
 
 ## Behavior
 
-- Identical event selection to `window_funnel`: greedy forward scan from each
-  entry-condition event, all six [modes](./window-funnel.md#modes) supported.
-- The **best chain** wins: the chain reaching the highest step. Among chains
-  reaching the same maximum, the earliest entry wins (mirroring
-  `window_funnel`'s greedy scan order).
-- An event that satisfies several consecutive conditions advances multiple
-  steps and contributes its timestamp once per step, so the list length always
-  equals the step count.
-- With `allow_reentry`, a chain reset starts recording from the new entry
-  event.
+- Same scan as `window_funnel` (ClickHouse's `windowFunnel` algorithm), all
+  [modes](./window-funnel.md#modes) supported.
+- Returns the chain that reached the most steps. Among chains reaching that
+  many, the one with the latest entry is returned (the chain the scan keeps
+  per step; on a tie, the one completed last).
+- An event that fills several steps contributes its timestamp once per step,
+  so the list length always equals the step count.
 
 ## Errors
 
 Shares `window_funnel`'s validation: unknown mode strings, month-based or
-negative windows abort the query with a descriptive SQL error. A row whose
-window is `NULL` is skipped; a `NULL` mode means no mode.
+negative windows, and `allow_reentry` without `strict_order` abort the query
+with a descriptive SQL error. A row whose window is `NULL` is skipped; a
+`NULL` mode means no mode.
 
 ## Implementation
 
 Shares `WindowFunnelState` and the update/combine FFI callbacks with
-`window_funnel` — only finalize differs. The greedy scan is generic over a
-zero-sized step recorder, so `window_funnel`'s hot path compiles to identical
-code while `window_funnel_events` records the winning chain into a reusable
-scratch buffer (no per-candidate allocation).
+`window_funnel` — only finalize differs. The scan is generic over how a chain
+stores its step timestamps: `window_funnel` stores none, `window_funnel_events`
+stores one timestamp per step.
 
 This function is an extension beyond ClickHouse: `windowFunnel` has no
 timestamp-returning companion there.

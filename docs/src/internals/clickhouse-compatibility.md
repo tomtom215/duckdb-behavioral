@@ -10,23 +10,25 @@ remaining gaps.
 
 ### Behavioral Parametric Functions
 
-All six ClickHouse behavioral parametric functions are implemented:
+All six ClickHouse behavioral parametric functions are implemented. "Verified"
+means differential testing against ClickHouse 26.9.8.3 found no difference
+outside the deliberate ones listed under
+[Known Semantic Differences](#known-semantic-differences).
 
 | ClickHouse Function | duckdb-behavioral | Status |
 |---|---|---|
-| `retention(cond1, cond2, ...)` | `retention(cond1, cond2, ...)` | Complete |
-| `windowFunnel(window)(timestamp, cond1, ...)` | `window_funnel(window, timestamp, cond1, ...)` | Complete |
-| `windowFunnel(window, 'strict')(...)` | `window_funnel(window, 'strict', ...)` | Complete |
-| `windowFunnel(window, 'strict_order')(...)` | `window_funnel(window, 'strict_order', ...)` | Complete |
-| `windowFunnel(window, 'strict_deduplication')(...)` | `window_funnel(window, 'strict_deduplication', ...)` | Complete (alias for `'strict'`) |
-| `windowFunnel(window, 'strict_increase')(...)` | `window_funnel(window, 'strict_increase', ...)` | Complete |
-| `windowFunnel(window, 'strict_once')(...)` | `window_funnel(window, 'strict_once', ...)` | Complete |
-| `windowFunnel(window, 'allow_reentry')(...)` | `window_funnel(window, 'allow_reentry', ...)` | Complete |
-| `sequenceMatch(pattern)(timestamp, cond1, ...)` | `sequence_match(pattern, timestamp, cond1, ...)` | Complete |
-| `sequenceCount(pattern)(timestamp, cond1, ...)` | `sequence_count(pattern, timestamp, cond1, ...)` | Complete |
-| `sequenceMatchEvents(pattern)(timestamp, cond1, ...)` | `sequence_match_events(pattern, timestamp, cond1, ...)` | Function |
+| `retention(cond1, cond2, ...)` | `retention(cond1, cond2, ...)` | Verified |
+| `windowFunnel(window)(timestamp, cond1, ...)` | `window_funnel(window, timestamp, cond1, ...)` | Verified |
+| `windowFunnel(window, 'strict_deduplication')(...)` | `window_funnel(window, 'strict_deduplication', ...)` (also `'strict'`) | Verified |
+| `windowFunnel(window, 'strict_order')(...)` | `window_funnel(window, 'strict_order', ...)` | Verified |
+| `windowFunnel(window, 'strict_increase')(...)` | `window_funnel(window, 'strict_increase', ...)` | Verified; ClickHouse defect fixed (difference 1) |
+| `windowFunnel(window, 'strict_once')(...)` | `window_funnel(window, 'strict_once', ...)` | Verified; deterministic ties (difference 2) |
+| `windowFunnel(window, 'strict_order', 'allow_reentry')(...)` | `window_funnel(window, 'strict_order, allow_reentry', ...)` | Verified |
+| `sequenceMatch(pattern)(timestamp, cond1, ...)` | `sequence_match(pattern, timestamp, cond1, ...)` | Verified; anchoring differs (difference 4) |
+| `sequenceCount(pattern)(timestamp, cond1, ...)` | `sequence_count(pattern, timestamp, cond1, ...)` | Verified; anchoring differs (difference 4) |
+| `sequenceMatchEvents(pattern)(timestamp, cond1, ...)` | `sequence_match_events(pattern, timestamp, cond1, ...)` | Verified; reports the matching events (difference 5) |
+| `sequenceNextNode(dir, base)(ts, val, base_cond, ev1, ...)` | `sequence_next_node(dir, base, ts, val, base_cond, ev1, ...)` | Verified; deterministic ties (difference 2) |
 | N/A (duckdb-behavioral extension) | `window_funnel_events(window[, mode], timestamp, cond1, ...)` | Extension |
-| `sequenceNextNode(dir, base)(ts, val, base_cond, ev1, ...)` | `sequence_next_node(dir, base, ts, val, base_cond, ev1, ...)` | Complete |
 
 ### Non-Behavioral Parametric Functions (Out of Scope)
 
@@ -76,142 +78,151 @@ Key differences:
 | Window parameter | Seconds as integer | DuckDB `INTERVAL` type |
 | Mode parameter | Second argument in parameter list | Optional `VARCHAR` before timestamp |
 | Function name | camelCase | snake_case |
-| Session function | Not a built-in behavioral function | `sessionize` (window function) |
-| Condition limit | 32 | 32 |
+| Session function | Not a built-in behavioral function | `sessionize` (used with `OVER`) |
+| Condition limit | 32 (`sequenceNextNode`: 64) | 32 |
+| Timestamp unit | Column units (seconds for `DateTime`) | Microseconds; `(?t)` thresholds in seconds |
 
 The `sessionize` function has no direct ClickHouse equivalent. ClickHouse
 provides session analysis through different mechanisms.
+
+## How Parity Was Verified
+
+Each function was run in both engines on the same randomly generated event
+groups (whole-second timestamps, frequent ties, events matching zero, one or
+several conditions, every mode combination) and the results compared group by
+group. ClickHouse ran as `clickhouse local` 26.9.8.3; every difference was
+minimized and explained from ClickHouse's source at tag `v26.9.8.3-stable`.
+
+| Function | Cases | Outcome |
+|---|---|---|
+| `retention` | 102,500 groups | Identical |
+| `window_funnel` (24 mode combinations, 3 windows each) | 1,296,000 (two seeds) | Equal in every case to an exhaustive reference that follows ClickHouse's algorithm but keeps every chain and orders ties canonically. ClickHouse equals that reference for 17 combinations; the other 7 differ only by differences 1 and 2 |
+| `sequence_match` / `sequence_count` | 14,857 groups with time constraints only after `(?N)` or `.`, or none | Identical apart from 4 `sequence_count` cases where ClickHouse's answer changed between runs of the same rows (difference 6) |
+| `sequence_match_events` | same | Identical apart from difference 5 |
+| `sequence_next_node` (6 valid direction/base pairs, 1 to 4 conditions) | 240,000 with distinct (timestamp, value) per event | Identical. With ties, identical when the rows reach ClickHouse in the extension's tie order |
 
 ## Semantic Compatibility
 
 ### retention
 
-Fully compatible. The anchor condition semantics match ClickHouse: `result[0]`
-reflects the anchor, `result[i]` requires both the anchor and condition `i` to
-have been true in the group.
+Compatible. `result[0]` reflects the anchor condition; `result[i]` requires
+both the anchor and condition `i` to have been true in the group.
 
 ### window_funnel
 
-All five ClickHouse modes are implemented, plus one extension mode:
+`window_funnel` runs ClickHouse's `windowFunnel` scan
+(`AggregateFunctionWindowFunnel.cpp`): each event contributes one entry per
+condition it satisfies (so one event can fill several steps, the entry step
+included), entries are visited in `(timestamp, condition)` order, and per
+funnel level the chain with the latest entry is kept. The modes follow
+ClickHouse:
 
-- **Default**: Greedy forward scan, multi-step advancement per event.
-- **strict** / **strict_deduplication**: In ClickHouse, these are aliases for
-  the same behavior — the chain breaks when the previously-matched condition
-  fires again. Our extension accepts both SQL strings and maps them to the same
-  internal mode (`STRICT`, 0x01).
-- **strict_order**: No earlier conditions may fire between matched steps.
-- **strict_increase**: Strictly increasing timestamps required between steps.
-- **strict_once**: At most one step advancement per event.
-- **allow_reentry**: Entry condition resets the funnel mid-chain.
-- **timestamp_dedup** _(extension)_: Timestamp-based deduplication — events with
-  the same timestamp as the previously-matched step are skipped. This mode is
-  not present in ClickHouse and is accessed via the SQL string `'timestamp_dedup'`.
+- **strict_deduplication** (also `'strict'`, which ClickHouse 26.9 rejects):
+  a condition firing again for a step already reached stops the scan.
+- **strict_order**: once a chain has been entered, an event matching no
+  condition, or a step arriving before its predecessor, stops the scan.
+- **strict_increase**: each step must be strictly later than the one before.
+- **strict_once**: an event fills at most one step of a chain.
+- **allow_reentry**: requires `strict_order` (an error otherwise, as in
+  ClickHouse); a step arriving before its predecessor is skipped instead of
+  stopping the scan.
+- **timestamp_dedup** _(extension)_: same as `strict_increase`.
 
-Modes are independently combinable (e.g., `'strict_increase, strict_once'`),
-matching ClickHouse semantics.
+### sequence_match, sequence_count, sequence_match_events
 
-> **Note on `strict` semantics**: Our `STRICT` mode includes an additional guard:
-> if an event matches both the previously-matched condition AND the next target
-> condition, it does NOT break the chain (it advances instead). ClickHouse's
-> `strict` mode may break the chain unconditionally when the previous condition
-> fires, regardless of whether the current condition also fires. This difference
-> only manifests when events satisfy multiple conditions simultaneously, which is
-> uncommon in typical funnel data.
-
-### sequence_match and sequence_count
-
-Pattern syntax matches ClickHouse:
-
-- `(?N)` condition references (1-indexed)
-- `.` single event wildcard
-- `.*` zero-or-more event wildcard
-- `(?t>=N)`, `(?t<=N)`, `(?t>N)`, `(?t<N)`, `(?t==N)`, `(?t!=N)` time constraints (seconds)
-
-The NFA executor uses lazy matching for `.*`, consistent with ClickHouse
-semantics.
-
-### sequence_match_events
-
-Analogous to ClickHouse's pattern matching with timestamp extraction. Returns
-the timestamps of each `(?N)` step as a `LIST(TIMESTAMP)`.
+Pattern syntax matches ClickHouse: `(?N)` conditions (1-indexed, at most the
+number of conditions passed), `.`, `.*`, and `(?t op N)` with `op` one of
+`>=`, `<=`, `>`, `<`, `==`, plus the extension operator `!=`. A time
+constraint gates the next step without consuming events, and non-matching
+events between gated steps are skipped, as in ClickHouse. `sequence_count`
+counts non-overlapping matches; a match that consumes no events (for example
+`.*`) advances one event, as in ClickHouse.
 
 ### sequence_next_node
 
-Implements ClickHouse's `sequenceNextNode` for flow analysis. Uses simple
-sequential matching (not NFA patterns) with direction and base parameters.
-
-The `direction` parameter (`'forward'` / `'backward'`) controls scan direction.
-The `base` parameter (`'head'` / `'tail'` / `'first_match'` / `'last_match'`)
-controls which starting point to use.
-
-Uses a dedicated `NextNodeEvent` struct with per-event `Arc<str>` storage
-(separate from the `Copy` `Event` struct used by other functions).
+Matches ClickHouse's `sequenceNextNode`: a single anchor per base
+(`head`/`tail` = the literal first/last event, which must satisfy
+`base_condition`; `first_match`/`last_match` = the first/last event satisfying
+`base_condition` and `event1`), the chain must match consecutive events, and a
+failed chain is not retried at another anchor. `forward` with `tail` and
+`backward` with `head` are rejected, as in ClickHouse.
 
 ## Extensions Beyond ClickHouse
 
-`duckdb-behavioral` includes functionality beyond ClickHouse's behavioral
-analytics functions:
-
 | Function/Feature | Description |
 |---|---|
-| `sessionize` | Window function for session ID assignment (no ClickHouse equivalent) |
-| `window_funnel_events` | Returns the best funnel chain's step timestamps as `LIST(TIMESTAMP)` (ClickHouse's `windowFunnel` has no timestamp-returning companion) |
-| `'timestamp_dedup'` mode | Timestamp-based deduplication in `window_funnel` |
+| `sessionize` | Session IDs over an ordered window (no ClickHouse equivalent) |
+| `window_funnel_events` | The step timestamps of the chain `window_funnel` reports, as `LIST(TIMESTAMP)` |
+| `'timestamp_dedup'` mode | Alias of `strict_increase` |
 | `(?t!=N)` time constraint | Not-equal operator in sequence patterns |
 | No experimental flags | `sequence_next_node` works without `SET allow_experimental_funnel_functions = 1` |
 
-## Feature Parity Status
+## Known Semantic Differences
 
-All six ClickHouse behavioral parametric functions are implemented with complete
-coverage of documented parameters, modes, and return types. The `sessionize`
-function is an extension beyond ClickHouse's
-feature set.
+Deliberate, because ClickHouse's behaviour is defective or depends on row
+order:
 
-### Known Semantic Differences
+1. **`windowFunnel` with `strict_increase` (without `strict_once`) loses
+   chains in ClickHouse.** It keeps one chain per level, and a later entry
+   overwrites a valid earlier chain that it then cannot use under the strict
+   comparison: events `c1@0, c1@1, c2@1` give 1, although `c1@0 -> c2@1` is a
+   valid chain. ClickHouse's own `strict_once` path, which keeps every chain,
+   gives 2. The extension keeps the best chain ending before each timestamp
+   and gives 2. Combined with `strict_deduplication`, the kept chain can make
+   a later repeat count, so the extension's answer can also be lower.
 
-1. **`strict` mode guard**: Our implementation does not break the chain when an
-   event matches both the previously-matched condition and the next target
-   condition. ClickHouse may break unconditionally. This affects only events
-   satisfying multiple conditions simultaneously.
+2. **Ties that ClickHouse leaves in arrival order.** `windowFunnel` with
+   `strict_once` orders same-timestamp rows by arrival, and with
+   `strict_deduplication` its answer then depends on row order (rows
+   `c2@2, c1&c2&c3@2, c3@3` give 2 or 3). `sequenceNextNode` keeps events tying
+   on `(timestamp, value)` in arrival order. The extension orders ties by a
+   total key (the condition bitmask; for `sequence_next_node`,
+   `(timestamp, value, base_condition, conditions)`), so results never depend
+   on row order or thread count. Every differing `windowFunnel` case checked
+   (547) is an answer ClickHouse itself returns for some ordering of the rows.
 
-2. **`strict_deduplication` mapping**: In ClickHouse, `'strict_deduplication'`
-   is an alias for `'strict'`. Our extension correctly maps both strings to the
-   same behavior as of Session 16. Previous versions (≤ Session 15) mapped
-   `'strict_deduplication'` to a different timestamp-based dedup behavior.
+3. **`sequenceMatch` and friends also order same-timestamp events by
+   arrival** (`::sort` on timestamp only); the extension orders them by
+   condition bitmask.
 
-3. **Window parameter type**: ClickHouse accepts an integer (seconds); our
-   extension accepts DuckDB's `INTERVAL` type. The semantics are equivalent.
+4. **Time-constraint anchor.** The extension measures `(?t op N)` from the
+   event consumed by the last `(?N)` or `.` step. ClickHouse resets the anchor
+   at `.*` to the event after the last match, so `(?1).*(?t>0)(?2)` can never
+   match there and `(?t<=N)` directly after `.*` is vacuously true. A
+   constraint before any `(?N)` or `.` is an error in the extension;
+   ClickHouse measures it from wherever its implicit leading `.*` is.
 
-4. **Tie ordering model**: ClickHouse's `windowFunnel` stores one entry per
-   matched condition and stable-sorts `(timestamp, event_index)` pairs; we
-   store one bitmask event per row and sort by `(timestamp, conditions)`.
-   Both orderings are deterministic; they can differ when a single row
-   satisfies multiple conditions simultaneously.
+5. **`sequenceMatchEvents` reports an abandoned attempt.** ClickHouse replaces
+   its best chain only when a strictly longer one appears, so after a failed
+   attempt it can report that attempt's timestamps for a later successful
+   match of the same length (`(?1)(?t==2)` over `c1@0, c1@3, c2@5` reports
+   `[0]`). The extension reports the events that matched (`[3]`).
 
-5. **`sequenceNextNode` condition limit**: ClickHouse allows up to 64 event
-   conditions (`std::bitset<64>`); our shared `u32` bitmask supports 32
-   (the `windowFunnel`/`sequenceMatch` limit).
+6. **ClickHouse reads past its action list** for a pattern ending in `.*`,
+   `(?t<…)`, `(?t<=…)` or `(?t>=0)` when the match consumes the last event
+   (`AggregateFunctionSequenceMatch.cpp`, the trailing-skip loop has no end
+   check). Its answer for such a group changed between runs; the extension's
+   does not.
 
-6. **Saturating gap arithmetic**: gaps touching DuckDB's `±infinity`
-   timestamps saturate to `i64::MAX` and behave as infinitely distant.
-   ClickHouse's `DateTime` types have no infinity values, so no equivalent
-   behavior exists there.
+Other differences:
 
-7. **Time-constraint units**: ClickHouse compares `(?t op N)` in raw
-   timestamp-column units (whole seconds for `DateTime`); we define `N` in
-   seconds over microsecond timestamps and floor the elapsed time to whole
-   seconds — the faithful generalization (`(?t==N)` means "within
-   `[N, N+1)` seconds"). The gap-skip behavior itself (non-matching events
-   between gated steps are skipped) matches ClickHouse exactly.
+7. **NULL inputs.** ClickHouse skips a row with any NULL argument. The
+   extension treats a NULL condition as false; a NULL timestamp skips the row;
+   `sequence_next_node` keeps NULL values as events and can return NULL as the
+   next value.
 
-8. **Time-constraint anchor after wildcards**: we anchor `(?t…)` at the last
-   *matched condition*. ClickHouse re-anchors at wildcard positions, which
-   makes `(?t<=N)` directly after `.*` vacuously true there — an
-   implementation artifact we deliberately do not reproduce.
+8. **Units.** Windows are DuckDB `INTERVAL`s (month-based ones are rejected);
+   timestamps are microseconds and `(?t op N)` thresholds are seconds, with
+   the elapsed time floored to whole seconds (`(?t==N)` means `[N, N+1)`).
+   Gaps touching DuckDB's `±infinity` timestamps are computed exactly.
 
-`sequence_next_node` itself matches ClickHouse exactly as of v0.8.0
-(verified against `AggregateFunctionSequenceNextNode.cpp`): single anchor per
-base (`head`/`tail` = the literal first/last event), consecutive-event
-chains with no anchor retry, and `(timestamp, value)` tie ordering. Earlier
-versions matched gap-tolerant chains and anchored `head`/`tail` at the
-first/last event satisfying the base condition.
+9. **Accepted input.** The extension accepts whitespace between pattern
+   elements, a single `'strict'` mode string, and two time constraints in a
+   row after an event; ClickHouse rejects all three. ClickHouse accepts an
+   empty pattern and thresholds above `i64::MAX`; the extension rejects both.
+
+10. **Empty input.** Over zero rows `retention` returns `[]` and
+    `sequence_match` / `sequence_count` return NULL; ClickHouse returns zeros.
+
+11. **`sequenceNextNode` condition limit.** ClickHouse allows 64 event
+    conditions; the extension 32.

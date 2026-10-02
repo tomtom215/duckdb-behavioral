@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Results change for some inputs (see **Behaviour changes**); a minor version
+bump is appropriate.
+
+### Fixed
+
+- **`window_funnel` / `window_funnel_events` now follow ClickHouse's
+  `windowFunnel`.** Differential testing against ClickHouse 26.9.8.3 found
+  the previous greedy scan disagreeing in 5–30% of random groups for every
+  mode combination but one. The engine is now a port of ClickHouse's
+  algorithm:
+  - An event satisfying several conditions fills several steps, the entry
+    step included.
+  - `strict_order` is broken by condition-less events and by a step arriving
+    early.
+  - `strict_deduplication` stops on any repeat of a reached step.
+  - `allow_reentry` skips early steps instead of resetting the chain.
+
+  Two ClickHouse defects are deliberately not reproduced:
+  - ClickHouse loses valid chains under `strict_increase`.
+  - Under `strict_once`, ClickHouse orders tied rows by arrival. The
+    extension orders them by bitmask instead, and uses bipartite matching
+    rather than exponential chain enumeration.
+
+  Over 1,296,000 cases the extension equals an exhaustive reference.
+- **`sequence_match` / `sequence_count`**: patterns mixing adjacent
+  conditions with `.*` (`(?1)(?2).*(?3)`) lost the adjacency requirement and
+  reported false matches and inflated counts.
+- **`sequence_count`** never returned for a pattern that can match zero
+  events (`.*`).
+- **`sequence_next_node`**: rows tying on (timestamp, value) gave results that
+  depended on row order (flipping from 33 tied rows); the sort key is now
+  total.
+- **`sessionize`**: with a gap that varies per row, results depended on how
+  DuckDB's segment tree split the frame. The boundary between segments is
+  now judged by the right segment's first row. A ±infinity gap is also now
+  computed exactly in combine.
+- **`window_funnel(NULL::INTERVAL, ...)`** returned 1 (a zero-length window)
+  instead of skipping the row.
+- **`interval_to_micros`** rejected a mixed-sign interval whose total fits in
+  `i64`.
+- **Panics no longer kill DuckDB.** The release profile set
+  `panic = "abort"` and every aggregate callback was an unguarded
+  `extern "C" fn`. Callbacks now use quack-rs's guarded
+  `aggregate_*_callback!` macros under `panic = "unwind"`, so a panic becomes
+  a SQL error.
+- **The extension loads on any DuckDB release from 1.3.2.** It was built for
+  the unstable C API (`C_STRUCT_UNSTABLE`), which pins a binary to one DuckDB
+  release (v1.5.5). The community channel therefore stopped serving it when
+  DuckDB v1.5.6 shipped. It uses only the stable C API (76 of 546 slots,
+  highest 306 of the 357-slot stable prefix) and is now stamped `C_STRUCT` /
+  C API v1.2.0. CI loads one binary into DuckDB 1.3.2, 1.4.4, 1.5.0 and
+  1.5.6.
+
+### Behaviour changes
+
+- Errors now raised (previously silently accepted, now rejected as in
+  ClickHouse or because the input has no defined meaning):
+  - `window_funnel` with `'allow_reentry'` but without `'strict_order'`.
+  - A `(?N)` larger than the number of conditions passed.
+  - A time constraint before any `(?N)` or `.` (it used to be treated as
+    always true).
+  - `sequence_next_node` with `forward` + `tail` or `backward` + `head`
+    (these always returned NULL).
+- `window_funnel` / `window_funnel_events` accept a single condition, as
+  ClickHouse does.
+- `'timestamp_dedup'` is documented as what it always computed: an alias of
+  `strict_increase`. `'strict'` stays accepted as an alias of
+  `'strict_deduplication'` (ClickHouse 26.9 rejects it).
+- `window_funnel_events` returns the chain with the latest entry among those
+  reaching the most steps.
+
+### Changed
+
+- quack-rs 0.15.0 → 0.18.0. libduckdb-sys / duckdb 1.10505.0 → 1.10506.0
+  (DuckDB v1.5.5 → v1.5.6). State callbacks are installed with
+  `ffi_state::<T>()`.
+- rustls 0.23.42 → 0.23.45 (RUSTSEC-2026-0285; build-time downloader only).
+- CI: the MSRV job now actually runs 1.87 (`cargo +1.87`; the toolchain file
+  had redirected it to stable). `e2e.yml` gains a `compat` job.
+
+### Documentation
+
+- Documented DuckDB's C API defect duckdb/duckdb#26109, verified under
+  valgrind on 1.5.6: `agg(... ORDER BY ...)`, `OVER ()` and whole-partition
+  frames read out of bounds and usually segfault for every C API aggregate.
+  The FAQ had suggested `ORDER BY` inside the call for speed.
+- Documented that patterns combining `.*` with a time constraint are matched
+  by a backtracking search whose cost grew roughly quadratically in
+  measurement (10.8 s at 32,000 events in one group).
+- Corrected the parity claims to the differential-testing results. Also
+  corrected install/load instructions (a bare `.so` cannot be loaded), NULL
+  handling, example outputs, counts, and performance-number provenance.
+
+
 ## [0.9.1] - 2026-07-23
 
 ### Changed

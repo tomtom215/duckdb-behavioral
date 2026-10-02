@@ -70,3 +70,6 @@ The Makefile set `USE_UNSTABLE_C_API=1` under a comment saying the Rust bindings
 
 **19. A toolchain file overrides the toolchain your CI step installs.**
 `rust-toolchain.toml` pins `channel = "stable"`, so the MSRV job's `dtolnay/rust-toolchain@1.87` followed by a bare `cargo check` ran stable and never tested 1.87. Invoke the toolchain explicitly (`cargo +1.87`).
+
+**20. A parity claim is only as good as a differential test against the real system.**
+The docs said "complete ClickHouse parity", backed by reading ClickHouse's source and docs. Running both engines on the same random event groups (`clickhouse local` makes this cheap) showed `window_funnel` disagreeing in 5–30% of groups in almost every mode, and found three wrong-result or hang bugs in the `sequence_*` fast paths that 486 unit tests missed. The same comparison also exposed defects in ClickHouse itself. An exhaustive reference (ClickHouse's algorithm, keeping every chain) let each remaining difference be attributed instead of argued about. Re-run the comparison whenever matching code changes.

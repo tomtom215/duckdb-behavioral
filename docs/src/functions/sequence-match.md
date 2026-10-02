@@ -40,15 +40,15 @@ Patterns are composed of the following elements:
 
 | Pattern | Description |
 |---|---|
-| `(?N)` | Match an event where condition N (1-indexed) is true |
+| `(?N)` | Match an event where condition N (1-indexed, at most the number of conditions passed) is true |
 | `.` | Match exactly one event (any conditions) |
 | `.*` | Match zero or more events (any conditions) |
-| `(?t>=N)` | Time constraint: at least N seconds since previous match |
-| `(?t<=N)` | Time constraint: at most N seconds since previous match |
-| `(?t>N)` | Time constraint: more than N seconds since previous match |
-| `(?t<N)` | Time constraint: less than N seconds since previous match |
-| `(?t==N)` | Time constraint: exactly N seconds since previous match |
-| `(?t!=N)` | Time constraint: not exactly N seconds since previous match |
+| `(?t>=N)` | Time constraint: at least N seconds since the last `(?N)` or `.` event |
+| `(?t<=N)` | Time constraint: at most N seconds since the last `(?N)` or `.` event |
+| `(?t>N)` | Time constraint: more than N seconds since the last `(?N)` or `.` event |
+| `(?t<N)` | Time constraint: less than N seconds since the last `(?N)` or `.` event |
+| `(?t==N)` | Time constraint: exactly N seconds since the last `(?N)` or `.` event |
+| `(?t!=N)` | Time constraint: not exactly N seconds since the last `(?N)` or `.` event |
 
 ### Pattern Examples
 
@@ -77,9 +77,13 @@ Patterns are composed of the following elements:
    for `.*` (prefer advancing the pattern over consuming additional events).
 4. Returns `true` if any accepting state is reached.
 
-Time constraints are evaluated relative to the timestamp of the previously
-matched condition step. The time difference is computed in seconds, matching
-ClickHouse semantics.
+Time constraints are evaluated relative to the timestamp of the event consumed
+by the last `(?N)` or `.` step, in seconds. A constraint before any such step
+has nothing to measure from and is an error. ClickHouse instead measures a
+constraint that follows `.*` from the event after the last match, so
+`(?1).*(?t<=3600)(?2)` means "`(?2)` within an hour of `(?1)`" here but not
+there; see
+[ClickHouse Compatibility](../internals/clickhouse-compatibility.md#known-semantic-differences).
 
 ### Time-Constraint Semantics
 
@@ -95,7 +99,9 @@ comparison to microsecond timestamps).
 ### Determinism
 
 Events sort by `(timestamp, conditions)` before matching, so results are
-deterministic regardless of thread count or physical row order.
+deterministic regardless of thread count or physical row order. Events that
+satisfy no condition are dropped before matching (as in ClickHouse), so `.`
+and `.*` never consume them and they do not break adjacency.
 
 ## Errors
 
@@ -105,6 +111,11 @@ message instead of silently returning `NULL`:
 ```text
 invalid sequence pattern '(?1)(?': pattern error at position 6: ...
 ```
+
+So do a condition number above the number of conditions passed
+(`condition (?3) is out of range; 2 conditions were passed`) and a time
+constraint with no `(?N)` or `.` before it (`time constraint must follow an
+event condition`).
 
 A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
 conventions.
@@ -120,11 +131,11 @@ parse time, so ordinary patterns never approach the budget.
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
+| Finalize | O(n) for patterns of conditions and `.*` / adjacent conditions only (fast paths); otherwise a backtracking search, up to quadratic in n when it does not match (see the [FAQ](../faq.md)) |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `sequence_match` processes **100 million events in 1.05 s**
-(95 Melem/s).
+The last recorded benchmark (PERF.md Session 15) is 100 million events in
+1.05 s for the fast-path pattern `(?1).*(?2).*(?3)`.
 
 ## See Also
 

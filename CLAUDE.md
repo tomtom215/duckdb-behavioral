@@ -79,18 +79,28 @@ src/
    used by the in-process extension-load integration test (see [Testing](#testing)).
 
 3. **Function sets for variadic signatures**: Since `duckdb_aggregate_function_set_varargs`
-   doesn't exist, we register function sets with 31 overloads (2-32 boolean parameters)
-   via `AggregateFunctionSetBuilder::overloads(2..=32, ...)` which automatically calls
-   `duckdb_aggregate_function_set_name` on each overload.
+   doesn't exist, we register function sets via
+   `AggregateFunctionSetBuilder::overloads(range, ...)`, which automatically calls
+   `duckdb_aggregate_function_set_name` on each overload: `retention` and
+   `sequence_*` 31 overloads (2..=32 conditions), `window_funnel` /
+   `window_funnel_events` 64 (1..=32 conditions, with and without a mode),
+   `sequence_next_node` 32 (base + 1..=32 event conditions).
 
 4. **Combinable `FunnelMode` bitflags**: `window_funnel` modes are represented as a
    `u8` bitflag struct (`FunnelMode(u8)`) rather than a mutually exclusive enum. This
    enables ClickHouse-compatible mode combinations (e.g., `strict | strict_increase`).
-   Five ClickHouse modes are defined: `STRICT` (accepts both `'strict'` and
-   `'strict_deduplication'` SQL strings, matching ClickHouse aliases), `STRICT_ORDER`,
-   `STRICT_INCREASE`, `STRICT_ONCE`, `ALLOW_REENTRY`. One extension mode is defined:
-   `STRICT_DEDUPLICATION` (SQL: `'timestamp_dedup'`), providing timestamp-based
-   deduplication not present in ClickHouse.
+   Five ClickHouse modes are defined: `STRICT` (SQL `'strict_deduplication'`;
+   `'strict'` is a backward-compatible alias that ClickHouse 26.9 rejects),
+   `STRICT_ORDER`, `STRICT_INCREASE`, `STRICT_ONCE`, `ALLOW_REENTRY` (requires
+   `STRICT_ORDER`, an error otherwise). `STRICT_DEDUPLICATION` (SQL:
+   `'timestamp_dedup'`) is an extension alias of `STRICT_INCREASE`.
+
+   The funnel engine is a port of ClickHouse's `windowFunnel`
+   (`AggregateFunctionWindowFunnel.cpp`): one entry per true condition,
+   visited in `(timestamp, condition)` order, latest-entry chain kept per
+   level. Two ClickHouse defects are deliberately fixed (see
+   [ClickHouse Parity Status](#clickhouse-parity-status)); `strict_once` uses
+   bipartite matching instead of chain enumeration.
 
 5. **O(1) combine for sessionize**: The `SessionizeBoundaryState` tracks `first_ts`,
    `last_ts`, and `boundaries` count, enabling O(1) combine for DuckDB's segment
@@ -128,7 +138,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (487 unit + 18 integration + 1 doc-test).
+# Run all tests (515 unit + 21 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -244,21 +254,21 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **487 unit tests** covering all functions, edge cases, combine associativity,
+- **515 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
   modules -- `sequence_match` and `sequence_count` share one state type;
   `window_funnel_events` shares `WindowFunnelState`)
 - **1 doc-test** for the pattern parser
-- **18 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **21 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
   through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
 - **E2E tests** against real DuckDB v1.5.6 CLI: 12 workflow test steps
-  (2 platforms) plus 8 SQL integration test files with 76 queries covering
+  (2 platforms) plus 8 SQL logic test files with 78 directives (44 result-checked queries) covering
   all 8 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
   no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
   all 8 direction/base combinations)
@@ -284,7 +294,9 @@ Performance engineering is documented in [`PERF.md`](PERF.md), which contains
 optimization history with before/after measurements, algorithmic complexity
 analysis, and the benchmark improvement protocol.
 
-**Current baseline (Criterion 0.8.2, 95% CI):**
+**Last recorded baseline (Criterion 0.8.2, 95% CI; PERF.md Session 15, before
+v0.8.0, not re-measured since — the `window_funnel` engine has since been
+replaced):**
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
@@ -304,9 +316,15 @@ string sharing in `sequence_next_node`.
 
 ## ClickHouse Parity Status
 
-**Complete.** All six ClickHouse behavioral parametric functions are implemented.
-Verified against the
-[ClickHouse parametric functions documentation](https://clickhouse.com/docs/sql-reference/aggregate-functions/parametric-functions).
+All six ClickHouse behavioral parametric functions are implemented and were
+differentially tested against ClickHouse 26.9.8.3 (`clickhouse local`) on
+random event groups (ties, multi-condition events, every mode combination).
+Every remaining difference is listed below with its cause. Treat any other
+difference as a bug. To re-check, download the ClickHouse static binary
+(`clickhouse-common-static-<ver>-amd64.tgz` from the ClickHouse GitHub
+release) and compare per group; for `window_funnel`, an exhaustive reference
+(ClickHouse's algorithm keeping every chain, ties ordered canonically) must
+equal the extension in every case.
 
 ### Scope
 
@@ -324,9 +342,9 @@ Full justification: [`docs/src/internals/clickhouse-compatibility.md`](docs/src/
 
 ### `windowFunnel` Mode Mapping
 
-ClickHouse's `'strict'` and `'strict_deduplication'` are aliases for the same
-behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
-`'timestamp_dedup'` as a mode not present in ClickHouse.
+`'strict_deduplication'` maps to `STRICT` (0x01); `'strict'` is accepted as an
+alias (ClickHouse 26.9 rejects it). `'timestamp_dedup'` (0x04) is an alias of
+`strict_increase`. `'allow_reentry'` requires `'strict_order'`.
 
 ### Extensions Beyond ClickHouse
 
@@ -334,7 +352,7 @@ behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
 - `window_funnel_events`: Returns the best funnel chain's step timestamps as
   `LIST(TIMESTAMP)` (ClickHouse's `windowFunnel` has no timestamp-returning
   companion)
-- `'timestamp_dedup'` mode: Timestamp-based deduplication in `window_funnel`
+- `'timestamp_dedup'` mode: alias of `strict_increase` in `window_funnel`
 - `(?t!=N)` time constraint: Not-equal operator in sequence patterns
   (`.` and `.*` and the other five time operators match ClickHouse)
 - No experimental flags required (ClickHouse's `sequenceNextNode` requires
@@ -342,34 +360,42 @@ behavior. Both SQL strings map to `STRICT` (0x01). The extension also provides
 
 ### Known Semantic Differences
 
-1. **`strict` mode guard**: Our implementation adds a `!event.condition(current_step)`
-   guard -- if an event matches both the previously-matched condition AND the
-   next target condition, we advance rather than break. ClickHouse may break
-   unconditionally. Only affects events satisfying multiple conditions simultaneously.
+Deliberate (ClickHouse is defective or order-dependent):
 
-2. **Window parameter type**: ClickHouse uses integer seconds; we use DuckDB
-   `INTERVAL`. Functionally equivalent.
+1. **`windowFunnel` `strict_increase` without `strict_once`**: ClickHouse keeps
+   one chain per level and loses a valid one (`c1@0, c1@1, c2@1` → 1); we keep
+   the best chain ending before the current timestamp (→ 2). With
+   `strict_deduplication` this can also make our answer lower.
+2. **Arrival-order ties**: ClickHouse's `windowFunnel` + `strict_once` (with
+   `strict_deduplication` its answer changes with row order),
+   `sequenceNextNode` ties on `(timestamp, value)`, and `sequenceMatch` ties on
+   timestamp all depend on arrival order. We sort by total keys:
+   `(timestamp, conditions)` for `Event`, `(timestamp, value, base_condition,
+   conditions)` for `sequence_next_node`.
+3. **Time-constraint anchor**: we measure `(?t op N)` from the event consumed
+   by the last `(?N)` or `.`; ClickHouse resets at `.*` to the next event (so
+   `(?1).*(?t>0)(?2)` never matches there). A constraint before any `(?N)`/`.`
+   is a parse error here.
+4. **`sequenceMatchEvents`** can report an abandoned attempt in ClickHouse;
+   we report the matching events.
+5. **ClickHouse UB**: its trailing-skip loop for patterns ending in `.*` /
+   `(?t<…)` / `(?t<=…)` / `(?t>=0)` reads past the action list; results vary
+   between runs.
 
-3. **Tie ordering model**: ClickHouse's `windowFunnel` stores one entry per
-   matched condition and stable-sorts `(timestamp, event_index)` pairs; we
-   store one bitmask event per row and sort by `(timestamp, conditions)`.
-   Both are deterministic; orderings can differ when one row satisfies
-   multiple conditions simultaneously.
+Other:
 
-4. **`sequenceNextNode` condition limit**: ClickHouse allows up to 64 event
-   conditions (`std::bitset<64>`); our shared `u32` bitmask supports 32
-   (matching `windowFunnel`/`sequenceMatch`).
-
-5. **Saturating gap arithmetic**: gaps touching DuckDB's `±infinity`
-   timestamps saturate to `i64::MAX`, treating them as infinitely distant
-   (ClickHouse's `DateTime` has no infinity values, so no equivalent exists).
-
-6. **Time-constraint units and anchoring**: ClickHouse compares `(?t op N)`
-   in raw timestamp-column units and re-anchors at wildcard positions; we
-   define `N` in seconds (elapsed floored to whole seconds, so `(?t==N)`
-   means `[N, N+1)`) and anchor at the last matched condition. The gap-skip
-   behavior (events between gated steps are skipped) matches ClickHouse —
-   verified against `AggregateFunctionSequenceMatch.cpp`.
+6. **NULLs**: ClickHouse skips rows with any NULL argument; we treat NULL
+   conditions as false, skip NULL timestamps, keep NULL `sequence_next_node`
+   values.
+7. **Units**: `INTERVAL` windows (months rejected); microsecond timestamps,
+   `(?t)` thresholds in seconds with elapsed time floored (`(?t==N)` means
+   `[N, N+1)`); gaps touching `±infinity` computed exactly in `u64`.
+8. **Accepted input**: we accept pattern whitespace, `'strict'`, and two
+   consecutive time constraints after an event; ClickHouse accepts an empty
+   pattern and `u64` thresholds.
+9. **Empty input**: `retention` → `[]`, `sequence_match`/`count` → NULL
+   (ClickHouse: zeros).
+10. **`sequenceNextNode` limit**: ClickHouse 64 conditions, ours 32.
 
 ## Testing
 
@@ -398,8 +424,8 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
-Run with `cargo test`. The 487 unit tests run in <1 second (the doc-test in
-~2s). The 18 in-process integration tests add ~15s on a cold run — they build and
+Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 515 unit tests run in <1 second (the doc-test in
+~2s). The 21 in-process integration tests add ~15s on a cold run — they build and
 `LOAD` the real release `cdylib` — and are near-instant once that artifact is
 cached.
 
@@ -414,7 +440,7 @@ cached.
 
 **E2E tests** (against real DuckDB CLI):
 - 12 workflow test steps per platform (Linux + macOS) in `e2e.yml`
-- 8 SQL integration test files with 76 queries in `test/sql/`
+- 8 SQL logic test files with 78 directives (44 result-checked queries) in `test/sql/`
 - Covers all 8 functions with basic usage, timeouts, all 6 modes, GROUP BY,
   no-match, NULL inputs, empty tables, 5+ conditions, all direction x base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`
@@ -461,19 +487,27 @@ GitHub Actions workflows in `.github/workflows/`:
 
 The entry point uses `quack-rs` which depends on `libduckdb-sys`. When updating:
 
+A new DuckDB release does not require a new build to load the extension (it is
+stamped for the stable C API, v1.2.0). To build against the new headers:
+
 1. Update `libduckdb-sys` version in `[dependencies]` and `duckdb` in `[dev-dependencies]`
-2. Update `TARGET_DUCKDB_VERSION` and `DUCKDB_TEST_VERSION` in `Makefile`
-3. Update `DUCKDB_VERSION` in `.github/workflows/e2e.yml`
+2. Update `DUCKDB_TEST_VERSION` in `Makefile`. Do **not** change
+   `TARGET_DUCKDB_VERSION`: it is the C API version (`v1.2.0`), and raising it
+   raises the minimum DuckDB that can load the binary
+3. Update `DUCKDB_VERSION` and the `compat` matrix in `.github/workflows/e2e.yml`
 4. Update `DUCKDB_RELEASE_VERSION` in `scripts/setup.sh`
+4a. Re-run the stable-prefix check (Stable C API note below) in case a
+   quack-rs upgrade started using a newer C API function
 5. Update DuckDB-version references in docs (`CLAUDE.md`, `README.md`,
    `docs/src/**/*.md`, `CONTRIBUTING.md`, `SECURITY.md`)
 6. Check whether the new `libduckdb-sys`/`duckdb`/`criterion` MSRVs raise
    the project MSRV; if so, update `rust-version` in `Cargo.toml`,
    `MSRV (X.Y)` in `.github/workflows/ci.yml`, and badges/text in docs
 7. Run full unit test suite (`cargo test`)
-8. **MANDATORY**: E2E test -- build release, append metadata with the new
-   `-dv vX.Y.Z` (DuckDB release version, exact-match against the loading
-   CLI), and verify all 8 functions in DuckDB CLI
+8. **MANDATORY**: E2E test -- `make configure release test_release`, then load
+   `build/release/behavioral.duckdb_extension` (stamped `C_STRUCT`, `-dv
+   v1.2.0`) into the new DuckDB CLI and at least one older one, and verify all
+   8 functions
 
 ### Performance optimization session
 
@@ -574,24 +608,31 @@ Hard-won knowledge from developing this extension. Consult before making changes
 
 ### ClickHouse Semantics
 
-- **`strict` and `strict_deduplication` are aliases in ClickHouse**: Both map to
-  `STRICT` (0x01). The extension's `'timestamp_dedup'` mode (0x04) provides
-  timestamp-based deduplication — a behavior not in ClickHouse.
+- **`windowFunnel` semantics are subtle; port, don't reinterpret**: one entry
+  per true condition (an event can fill several steps, the entry included),
+  `strict_order` is broken by condition-less events and by a step arriving
+  before its predecessor, `strict_deduplication` stops on any repeat of a
+  reached level (even an expired one), `allow_reentry` only skips early steps.
+  The pre-0.10 greedy scan got six of these wrong while its docs claimed
+  parity; differential testing found them.
 
 - **`sequenceNextNode` always returns `Nullable(String)`**: Not polymorphic.
   Simplifies FFI to a single VARCHAR return type.
 
-- **`sequence_next_node` matches ClickHouse exactly** (verified against
-  `AggregateFunctionSequenceNextNode.cpp`): a single anchor per `base`
-  (`head`/`tail` = the literal first/last event, which must satisfy
-  `base_condition`; `first_match`/`last_match` = first/last event satisfying
-  base AND `event1`), chains match **consecutive** sorted events only, failed
-  chains are not retried at other anchors, and events sort by
-  `(timestamp, value)` for deterministic ties.
+- **`sequence_next_node` follows ClickHouse** (differentially tested): a single
+  anchor per `base` (`head`/`tail` = the literal first/last event, which must
+  satisfy `base_condition`; `first_match`/`last_match` = first/last event
+  satisfying base AND `event1`), chains match **consecutive** sorted events
+  only, failed chains are not retried, `forward`+`tail` / `backward`+`head` are
+  errors. Ties sort by `(timestamp, value, base_condition, conditions)`.
 
-- **Multi-step funnel advancement**: A single event can advance multiple funnel steps
-  when it satisfies consecutive conditions (use `while`, not `if`). `strict_once`
-  constrains to one step per event.
+- **Sequence fast paths must preserve adjacency**: `fast_wildcard` is only
+  valid when no two `(?N)` steps are adjacent; `(?1)(?2).*(?3)` must go to the
+  NFA. An empty match in `sequence_count` must still advance one event.
+
+- **Multi-step funnel advancement**: an event satisfying several conditions
+  fills several steps, including the entry step; `strict_once` and
+  `strict_increase` limit it to one.
 
 ### Build & Community Extension
 

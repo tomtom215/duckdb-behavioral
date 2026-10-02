@@ -64,23 +64,28 @@ INSTALL behavioral FROM community;
 LOAD behavioral;
 ```
 
-Or build from source:
+Or build from source (DuckDB loads only `.duckdb_extension` files that carry
+its metadata footer; `make` adds it):
 
 ```bash
-cargo build --release
-duckdb -unsigned -cmd "LOAD 'target/release/libbehavioral.so';"
+git submodule update --init --recursive
+make configure release
+duckdb -unsigned -c "LOAD 'build/release/behavioral.duckdb_extension'; SELECT behavioral_version();"
 ```
 
-**Verify it works** — run these one-liners after loading:
+**Verify it works** — run these after loading:
 
 ```sql
--- Session IDs (should return 1)
-SELECT sessionize(TIMESTAMP '2024-01-01 10:00:00', INTERVAL '30 minutes') OVER () as session_id;
+-- Session IDs (should return 1, 1, 2)
+SELECT sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) AS session_id
+FROM (VALUES (TIMESTAMP '2024-01-01 10:00'), (TIMESTAMP '2024-01-01 10:10'),
+             (TIMESTAMP '2024-01-01 12:00')) t(ts);
 
 -- Retention (should return [true, false])
 SELECT retention(true, false);
 
--- Funnel progress (should return 2)
+-- Funnel progress (should return 2: one event satisfying conditions 1 and 2
+-- fills both steps, as in ClickHouse)
 SELECT window_funnel(INTERVAL '1 hour', TIMESTAMP '2024-01-01', true, true, false);
 ```
 
@@ -97,13 +102,18 @@ SELECT window_funnel(INTERVAL '1 hour', TIMESTAMP '2024-01-01', true, true, fals
 | `sequence_match_events` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `LIST(TIMESTAMP)` | Return matched condition timestamps |
 | `sequence_next_node` | `(VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, ...)` | `VARCHAR` | Next event value after pattern match |
 
-All functions support **2 to 32 boolean conditions**, matching ClickHouse's limit.
+Condition limits: `window_funnel` / `window_funnel_events` take 1 to 32
+conditions, `retention` and the `sequence_*` pattern functions 2 to 32, and
+`sequence_next_node` a base condition plus 1 to 32 event conditions.
 `behavioral_version()` returns the loaded extension version for diagnostics.
-Invalid configuration (unknown modes, malformed patterns, month-based
-intervals) raises descriptive SQL errors instead of silently wrong results.
-Results are **deterministic under parallel execution**: events sort with full
-tie-breaking keys, so thread count and row order never change a result. Gap
-arithmetic saturates at DuckDB's `±infinity` timestamps instead of wrapping.
+Invalid configuration (unknown modes, malformed patterns, out-of-range
+condition numbers, month-based intervals) raises descriptive SQL errors
+instead of silently wrong results.
+Results are **deterministic under parallel execution**: events sort with total
+tie-breaking keys, so thread count and row order never change a result (in two
+places ClickHouse's results do depend on row order; see
+[ClickHouse Parity](#clickhouse-parity-status)). Gaps touching DuckDB's
+`±infinity` timestamps are computed exactly instead of wrapping.
 Detailed documentation, examples, and edge case behavior for each function:
 [Function Reference](https://tomtom215.github.io/duckdb-behavioral/functions/sessionize.html)
 
@@ -313,8 +323,13 @@ GROUP BY user_id;
 
 ## Performance
 
-All measurements below are Criterion.rs 0.8.2 with 95% confidence intervals,
-validated across multiple runs on commodity hardware.
+All measurements below are Criterion.rs 0.8.2 microbenchmarks of the Rust
+state machines (not SQL queries) with 95% confidence intervals, recorded in
+[`PERF.md`](PERF.md) Session 15, before v0.8.0. They have not been re-measured
+since: v0.8.0 changed hot paths, and the `window_funnel` engine was replaced
+with ClickHouse's algorithm in this release (in an interleaved before/after
+run its `finalize` benchmark ranged from no measurable change to ~16% slower,
+see `CHANGELOG.md`).
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
@@ -346,8 +361,8 @@ validated across multiple runs on commodity hardware.
 | Event bitmask | 5–13x | `Vec<bool>` replaced with `u32` bitmask, enabling `Copy` semantics |
 | In-place combine | up to 2,436x | O(N) amortized extend instead of O(N^2) merge-allocate |
 | NFA lazy matching | 1,961x at 1M events | Swapped exploration order so `.*` tries advancing before consuming |
-| `Arc<str>` values | 2.1–5.8x | Reference-counted strings for O(1) clone in `sequence_next_node` |
-| NFA fast paths | 39–61% | Pattern classification dispatches common shapes to O(n) linear scans |
+| `Arc<str>` values | 1.8–5.8x | Reference-counted strings for O(1) clone in `sequence_next_node` |
+| NFA fast paths | 39–60% | Pattern classification dispatches common shapes to O(n) linear scans |
 
 Five attempted optimizations were measured, found to be regressions, and reverted.
 All negative results are documented in [`PERF.md`](PERF.md).
@@ -359,8 +374,10 @@ reproducible benchmark instructions: [`PERF.md`](PERF.md).
 
 This extension is listed in the
 [DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
-repository ([PR #1306](https://github.com/duckdb/community-extensions/pull/1306),
-merged 2026-02-15). Install with:
+repository ([PR #1306](https://github.com/duckdb/community-extensions/pull/1306)).
+The published v0.9.1 was built for exactly one DuckDB release (v1.5.5); from
+this release the extension uses the stable C API, so one build serves every
+DuckDB release the community repository builds for. Install with:
 
 ```sql
 INSTALL behavioral FROM community;
@@ -386,19 +403,22 @@ workflow automates the full pre-submission pipeline in 5 phases:
 
 Push changes to this repository, re-run the submission workflow to pin the new
 ref, then open a new PR against `duckdb/community-extensions` updating the ref
-field in `extensions/behavioral/description.yml`. When DuckDB releases a new
-version, update `libduckdb-sys`, `TARGET_DUCKDB_VERSION`, and the
-`extension-ci-tools` submodule.
+field in `extensions/behavioral/description.yml`. A new DuckDB release needs
+no extension change to load the binary. To build against its headers, bump
+`libduckdb-sys` / `duckdb`, `DUCKDB_TEST_VERSION`, the E2E `DUCKDB_VERSION`
+and `compat` matrix; leave `TARGET_DUCKDB_VERSION` at the C API version
+(`v1.2.0`).
 
 ## Quality
 
 | Metric | Value |
 |---|---|
-| Unit tests | 486 + 1 doc-test |
-| Integration tests | 16 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
-| E2E tests | 12 workflow steps (2 platforms) + 8 SQL integration test files, 76 queries (against real DuckDB CLI) |
+| Unit tests | 515 + 1 doc-test |
+| Integration tests | 21 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
+| E2E tests | 12 workflow steps (2 platforms) + 8 SQL logic test files (against real DuckDB CLI), plus a compat job loading one binary into DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
+| Differential tests | `window_funnel`, `retention`, `sequence_*` and `sequence_next_node` fuzzed against ClickHouse 26.9.8.3 (see below) |
 | Property-based tests | 29 (proptest) |
-| Mutation testing | 88.4% kill rate (130/147, cargo-mutants) |
+| Mutation testing | 88.4% kill rate (130/147, cargo-mutants), measured on v0.4.x and not re-measured since |
 | Clippy warnings | 0 (pedantic + nursery + cargo lint groups) |
 | CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Benchmark files | 7 (Criterion.rs, up to 1 billion elements) |
@@ -410,37 +430,58 @@ E2E tests against real DuckDB, CodeQL static analysis, SemVer validation, and
 
 ## ClickHouse Parity Status
 
-**COMPLETE** — All ClickHouse behavioral analytics functions are implemented.
+All six ClickHouse behavioral parametric functions are implemented, and each
+was fuzzed against ClickHouse 26.9.8.3 (`clickhouse local`) with random event
+groups: ties, events matching several conditions, every mode combination.
 
-| Function | Status |
+| Function | Result of differential testing |
 |---|---|
-| `retention` | Complete |
-| `window_funnel` (6 modes) | Complete |
-| `sequence_match` | Complete |
-| `sequence_count` | Complete |
-| `sequence_match_events` | Complete |
-| `sequence_next_node` | Complete |
-| 32-condition support | Complete |
-| `sessionize` | Extension-only (no ClickHouse equivalent) |
-| `window_funnel_events` | Extension-only (no ClickHouse equivalent) |
+| `retention` | Identical in all 102,500 groups |
+| `window_funnel` | Ported to ClickHouse's algorithm; identical for 17 of 24 mode combinations. The rest differ only where ClickHouse is defective (below) |
+| `sequence_match` / `sequence_count` | Identical when time constraints follow `(?N)` or `.`; differ by design after `.*` (below) |
+| `sequence_match_events` | As above; also reports the events that actually matched where ClickHouse reports an abandoned attempt |
+| `sequence_next_node` | Identical in 240,000 NULL-free cases with distinct (timestamp, value) per event; with ties, identical whenever ClickHouse receives rows in the extension's tie order (below) |
+| `sessionize`, `window_funnel_events` | Extension-only (checked against SQL references) |
+
+Deliberate differences, each because ClickHouse's behaviour is defective or
+depends on row order:
+
+- `window_funnel` with `strict_increase` (without `strict_once`): ClickHouse
+  keeps one chain per level and loses a valid one (`c1@0, c1@1, c2@1` gives 1;
+  the extension gives 2).
+- `window_funnel` with `strict_deduplication` + `strict_once`, and
+  `sequence_next_node` with rows tying on timestamp and value: ClickHouse's
+  answer changes with row order; the extension orders ties deterministically.
+- `sequence_*` time constraints after `.*` are measured from the last matched
+  event; ClickHouse measures from the event after it, so
+  `(?1).*(?t>0)(?2)` can never match there. A constraint before any `(?N)` or
+  `.` is an error.
+
+Other differences: NULL conditions count as false (ClickHouse skips the
+row), timestamps are microseconds with `(?t)` thresholds in seconds, windows
+are `INTERVAL`s, and `retention` over zero rows returns `[]`. The complete
+list is in the
+[ClickHouse Compatibility](https://tomtom215.github.io/duckdb-behavioral/internals/clickhouse-compatibility.html)
+page.
 
 ## Building
 
 **Prerequisites**: Rust 1.87+ (MSRV), a C compiler (for DuckDB sys bindings)
 
 ```bash
-# Build the extension (release mode)
-cargo build --release
-
-# The loadable extension will be at:
-# target/release/libbehavioral.so   (Linux)
-# target/release/libbehavioral.dylib (macOS)
+git submodule update --init --recursive   # extension-ci-tools
+make configure release                    # cargo build --release + metadata footer
+# Loadable extension: build/release/behavioral.duckdb_extension
 ```
+
+`cargo build --release` alone produces `target/release/libbehavioral.so`
+(`.dylib` on macOS), which DuckDB refuses to load until the metadata footer is
+appended; see [Getting Started](https://tomtom215.github.io/duckdb-behavioral/getting-started.html).
 
 ## Development
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 486 unit + 16 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 515 unit + 21 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks
