@@ -891,7 +891,7 @@ fn null_window_skips_the_row() {
     assert_eq!(events("w"), "['2024-01-01 00:00:00']");
 }
 
-/// Sequence pattern defects found by differential testing against ClickHouse
+/// Sequence pattern defects found by differential testing against `ClickHouse`
 /// 26.9.8.3, checked through the loaded extension.
 #[test]
 fn sequence_pattern_clickhouse_parity_fixes() {
@@ -934,7 +934,11 @@ fn sequence_pattern_clickhouse_parity_fixes() {
             "time constraint must follow an event condition",
         ),
     ] {
-        let err = db.query_one::<i64>(sql).map(|_| ()).unwrap_err().to_string();
+        let err = db
+            .query_one::<i64>(sql)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains(needle), "{sql}: {err}");
     }
 }
