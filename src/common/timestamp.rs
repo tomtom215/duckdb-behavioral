@@ -41,13 +41,28 @@ pub fn interval_to_micros(months: i32, days: i32, micros: i64) -> Option<i64> {
     if months != 0 {
         return None;
     }
-    let day_micros = i64::from(days).checked_mul(MICROS_PER_DAY)?;
-    day_micros.checked_add(micros)
+    // Exact total in i128 (cannot overflow: |days * MICROS_PER_DAY| < 2^68),
+    // then one range check. Checking the day product alone would reject a
+    // mixed-sign interval whose total fits in i64.
+    let total = i128::from(days) * i128::from(MICROS_PER_DAY) + i128::from(micros);
+    i64::try_from(total).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_interval_to_micros_mixed_sign_total_in_range() {
+        // The day part alone overflows i64, the total does not.
+        let days = i32::try_from(i64::MAX / MICROS_PER_DAY + 1).unwrap();
+        let micros = -MICROS_PER_DAY;
+        let expected = (i64::MAX / MICROS_PER_DAY) * MICROS_PER_DAY;
+        assert_eq!(interval_to_micros(0, days, micros), Some(expected));
+        // A total past i64::MAX is still rejected.
+        assert_eq!(interval_to_micros(0, i32::MAX, i64::MAX), None);
+        assert_eq!(interval_to_micros(0, i32::MIN, i64::MIN), None);
+    }
 
     #[test]
     fn test_interval_to_micros_basic() {
