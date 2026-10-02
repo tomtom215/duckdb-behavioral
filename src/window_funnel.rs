@@ -7,7 +7,13 @@
 //! where each subsequent event occurs within `window_size` of the **first**
 //! event in the chain. Returns an integer 0..N indicating the max step reached.
 //!
-//! This matches `ClickHouse` `windowFunnel()` semantics.
+//! Follows `ClickHouse`'s `windowFunnel` (`AggregateFunctionWindowFunnel.cpp`,
+//! v26.9.8.3): each event contributes one entry per condition it satisfies,
+//! entries are visited in `(timestamp, condition)` order, and per funnel level
+//! the chain with the latest entry is kept. Differential testing against
+//! `ClickHouse` 26.9.8.3 agrees for every mode combination except where
+//! `ClickHouse` itself is defective (see [`FunnelMode::STRICT_INCREASE`] and
+//! [`FunnelMode::STRICT_ONCE`]).
 //!
 //! # SQL Usage
 //!
@@ -25,26 +31,20 @@
 //!
 //! # Modes
 //!
-//! Modes are combinable via bitwise OR, matching `ClickHouse` semantics where
-//! multiple mode strings can be specified simultaneously. Each mode adds an
-//! independent constraint on top of the default greedy forward scan.
+//! Modes combine (comma-separated in SQL), as in `ClickHouse`:
 //!
-//! - **Default** (0x00): Steps can be non-consecutive. Multiple entries into
-//!   step 1 are tried. The longest chain wins.
-//! - **Strict** (0x01, SQL: `'strict'` or `'strict_deduplication'`): If the
-//!   previously-matched condition fires again before the next condition is
-//!   matched, the chain breaks. Matches `ClickHouse`'s `strict`/`strict_deduplication`.
-//! - **Strict Order** (0x02, SQL: `'strict_order'`): Events must satisfy
-//!   conditions in exact sequential order with no earlier conditions firing between steps.
-//! - **Timestamp Dedup** (0x04, SQL: `'timestamp_dedup'`): _Extension mode_.
-//!   Events with identical timestamps as the previously-matched step are skipped.
-//!   Not present in `ClickHouse`.
-//! - **Strict Increase** (0x08, SQL: `'strict_increase'`): Requires strictly
-//!   increasing timestamps between matched funnel steps.
-//! - **Strict Once** (0x10, SQL: `'strict_once'`): Each event can advance the
-//!   funnel by at most one step, even if it satisfies multiple conditions.
-//! - **Allow Reentry** (0x20, SQL: `'allow_reentry'`): If the entry condition
-//!   fires again mid-chain, the funnel resets from that new entry point.
+//! - **Default**: an event satisfying several conditions can fill several
+//!   steps, including the entry event itself.
+//! - **`strict_deduplication`** (also accepted as `'strict'`, which
+//!   `ClickHouse` now rejects): a condition firing again for a step already
+//!   reached stops the scan.
+//! - **`strict_order`**: any other event between steps (one matching no
+//!   condition, or a step arriving before its predecessor) stops the scan.
+//! - **`strict_increase`**: a step must be strictly later than the step before
+//!   it. `'timestamp_dedup'` (an extension mode) means the same.
+//! - **`strict_once`**: an event fills at most one step of a chain.
+//! - **`allow_reentry`** (requires `strict_order`): a step arriving before its
+//!   predecessor is skipped instead of stopping the scan.
 
 use crate::common::event::{sort_events, Event};
 
@@ -58,7 +58,7 @@ use crate::common::event::{sort_events, Event};
 /// # Bitmask Layout
 ///
 /// ```text
-/// Bit 0 (0x01): STRICT             (ClickHouse: 'strict' / 'strict_deduplication')
+/// Bit 0 (0x01): STRICT             (ClickHouse: 'strict_deduplication'; 'strict' alias)
 /// Bit 1 (0x02): STRICT_ORDER       (ClickHouse: 'strict_order')
 /// Bit 2 (0x04): STRICT_DEDUPLICATION (Extension: 'timestamp_dedup')
 /// Bit 3 (0x08): STRICT_INCREASE    (ClickHouse: 'strict_increase')
@@ -72,36 +72,43 @@ impl FunnelMode {
     /// Default mode: no constraints beyond the basic greedy scan.
     pub const DEFAULT: Self = Self(0);
 
-    /// If the previously-matched condition fires again before the next
-    /// condition is matched, the chain breaks. This prevents backwards
-    /// movement in the funnel. Corresponds to `ClickHouse`'s `'strict'` and
-    /// `'strict_deduplication'` modes (which are aliases in `ClickHouse`).
+    /// `'strict_deduplication'`: a condition firing again for a step that has
+    /// already been reached (by any chain, even one whose window has passed)
+    /// stops the scan. `'strict'` is accepted as an alias for backward
+    /// compatibility; `ClickHouse` 26.9 rejects it.
     pub const STRICT: Self = Self(0x01);
 
-    /// Events must satisfy conditions in exact sequential order. No out-of-order
-    /// conditions allowed between matched steps.
+    /// `'strict_order'`: once a chain has been entered, an event matching no
+    /// condition, or a step arriving before its predecessor has been reached,
+    /// stops the scan. A repeated entry or step does not.
     pub const STRICT_ORDER: Self = Self(0x02);
 
-    /// **Extension mode** (not in `ClickHouse`). Events with identical
-    /// timestamps as the previously-matched step are skipped for the
-    /// next condition. Use SQL string `'timestamp_dedup'`.
-    ///
-    /// Note: In `ClickHouse`, the SQL string `'strict_deduplication'` is an
-    /// alias for `'strict'` (prevents backwards movement). Our extension
-    /// maps `'strict_deduplication'` to `STRICT` to match `ClickHouse`
-    /// semantics. This timestamp-based dedup mode is available via the
-    /// `'timestamp_dedup'` SQL string.
+    /// **Extension mode** `'timestamp_dedup'` (not in `ClickHouse`): a step
+    /// cannot be filled at the timestamp of the step before it, which is
+    /// exactly [`STRICT_INCREASE`](Self::STRICT_INCREASE); kept as an alias.
     pub const STRICT_DEDUPLICATION: Self = Self(0x04);
 
-    /// Requires strictly increasing timestamps between matched funnel steps.
-    /// Same-timestamp events cannot advance the funnel.
+    /// `'strict_increase'`: each step must be strictly later than the step
+    /// before it, checked for every step (so one event cannot fill two).
+    ///
+    /// Without `strict_once`, `ClickHouse` keeps a single chain per level and
+    /// loses a valid chain when a later one overwrites it (rows `c1@0, c1@1,
+    /// c2@1` give 1 instead of 2). This implementation keeps the best chain
+    /// that ends before each timestamp, so it can return more steps than
+    /// `ClickHouse`, or fewer combined with `strict_deduplication`, because
+    /// the kept chain makes a later repeat count as one.
     pub const STRICT_INCREASE: Self = Self(0x08);
 
-    /// Each event can advance the funnel by at most one step.
+    /// `'strict_once'`: an event fills at most one step of a chain.
+    ///
+    /// Same-timestamp events are ordered by their condition bitmask, so the
+    /// result does not depend on the order rows arrive in. `ClickHouse` orders
+    /// them by arrival, and combined with `strict_deduplication` its result
+    /// can change with row order.
     pub const STRICT_ONCE: Self = Self(0x10);
 
-    /// If the entry condition fires again mid-chain, the funnel resets
-    /// from that new entry point.
+    /// `'allow_reentry'` (requires `strict_order`, as in `ClickHouse`): a step
+    /// arriving before its predecessor is skipped instead of stopping the scan.
     pub const ALLOW_REENTRY: Self = Self(0x20);
 
     /// Creates a `FunnelMode` from a raw bitmask.
@@ -209,45 +216,421 @@ impl std::fmt::Display for FunnelMode {
     }
 }
 
-/// Records the timestamps of matched funnel steps during a scan.
-///
-/// Two implementations exist: [`NoRecord`] (zero-sized no-op — monomorphization
-/// keeps [`WindowFunnelState::finalize`]'s hot path identical to a
-/// non-recording scan) and `Vec<i64>` (used by
-/// [`WindowFunnelState::finalize_events`]).
-trait StepRecorder {
-    /// Called when a chain (re)starts at an entry event (also on `allow_reentry`).
-    fn restart(&mut self, entry_ts: i64);
-    /// Called each time the chain advances one step.
-    fn record(&mut self, ts: i64);
+/// Maximum number of funnel steps (one per `u32` condition bit).
+const MAX_STEPS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
+
+/// Where a chain records the timestamp each step was reached. `finalize`
+/// needs none ([`NoPath`]); `finalize_events` needs all of them
+/// ([`StepPath`]). Keeping the 256-byte path out of `finalize`'s chains keeps
+/// its per-step copies small.
+trait PathStore: Copy + std::fmt::Debug {
+    fn start(ts: i64) -> Self;
+    /// Records that steps `from..=to` were reached at `ts`.
+    fn set(&mut self, from: usize, to: usize, ts: i64);
+    fn steps(&self, reached: usize) -> Vec<i64>;
 }
 
-/// No-op recorder for the plain `finalize` path.
-struct NoRecord;
+/// Records nothing.
+#[derive(Debug, Clone, Copy)]
+struct NoPath;
 
-impl StepRecorder for NoRecord {
-    #[inline]
-    fn restart(&mut self, _entry_ts: i64) {}
-    #[inline]
-    fn record(&mut self, _ts: i64) {}
-}
-
-impl StepRecorder for Vec<i64> {
-    #[inline]
-    fn restart(&mut self, entry_ts: i64) {
-        self.clear();
-        self.push(entry_ts);
+impl PathStore for NoPath {
+    fn start(_ts: i64) -> Self {
+        Self
     }
-    #[inline]
-    fn record(&mut self, ts: i64) {
-        self.push(ts);
+    fn set(&mut self, _from: usize, _to: usize, _ts: i64) {}
+    fn steps(&self, _reached: usize) -> Vec<i64> {
+        Vec::new()
+    }
+}
+
+/// The timestamp at which each step was reached.
+#[derive(Debug, Clone, Copy)]
+struct StepPath([i64; MAX_STEPS]);
+
+impl PathStore for StepPath {
+    fn start(ts: i64) -> Self {
+        let mut path = [0; MAX_STEPS];
+        path[0] = ts;
+        Self(path)
+    }
+    fn set(&mut self, from: usize, to: usize, ts: i64) {
+        for step in &mut self.0[from..=to] {
+            *step = ts;
+        }
+    }
+    fn steps(&self, reached: usize) -> Vec<i64> {
+        self.0[..reached].to_vec()
+    }
+}
+
+/// One partial funnel chain: the timestamp of its entry event, and (with
+/// [`StepPath`]) the timestamp at which each step `0..=level` was reached.
+#[derive(Debug, Clone, Copy)]
+struct Chain<P> {
+    first: i64,
+    path: P,
+}
+
+impl<P: PathStore> Chain<P> {
+    /// A chain entered (step 0 reached) at `ts`.
+    fn start(ts: i64) -> Self {
+        Self {
+            first: ts,
+            path: P::start(ts),
+        }
+    }
+
+    /// This chain extended through steps `from..=to`, all reached at `ts`.
+    fn extended(mut self, from: usize, to: usize, ts: i64) -> Self {
+        self.path.set(from, to, ts);
+        self
+    }
+}
+
+/// The chains known to have reached one funnel level.
+///
+/// Only the chain with the latest entry matters for future steps (a later
+/// entry keeps every later event inside the window that an earlier entry
+/// would), so one chain is kept per "age": `prev` among chains whose last
+/// step is before the timestamp being processed, `cur` among chains that
+/// reached this level at that timestamp. `strict_increase` may extend only
+/// `prev`. Once a level is non-empty it stays non-empty, as in `ClickHouse`.
+#[derive(Debug, Clone, Copy)]
+struct Level<P> {
+    prev: Option<Chain<P>>,
+    cur: Option<Chain<P>>,
+}
+
+impl<P: PathStore> Level<P> {
+    const EMPTY: Self = Self {
+        prev: None,
+        cur: None,
+    };
+
+    const fn is_set(&self) -> bool {
+        self.prev.is_some() || self.cur.is_some()
+    }
+
+    /// The chain with the latest entry (`cur` on a tie: it was written last).
+    fn best(&self) -> Option<Chain<P>> {
+        match (self.prev, self.cur) {
+            (Some(p), Some(c)) => Some(if c.first >= p.first { c } else { p }),
+            (p, c) => c.or(p),
+        }
+    }
+
+    fn offer(&mut self, chain: &Chain<P>) {
+        if self.cur.is_none_or(|c| chain.first >= c.first) {
+            self.cur = Some(*chain);
+        }
+    }
+
+    /// Moves `cur` into `prev` when the timestamp advances.
+    fn roll(&mut self) {
+        if let Some(c) = self.cur.take() {
+            if self.prev.is_none_or(|p| c.first >= p.first) {
+                self.prev = Some(c);
+            }
+        }
+    }
+}
+
+/// Signals that the scan must stop: the result is the highest level reached.
+struct Stop;
+
+/// Mutable scan state shared by both per-timestamp-group evaluators.
+struct Scan<P> {
+    /// One entry per funnel step (`steps` long).
+    levels: Vec<Level<P>>,
+    /// Bit `i` set when `levels[i].cur` may be set (rolled at the next group).
+    dirty: u32,
+    /// An entry (condition 1) event has been seen.
+    first_event: bool,
+    window: u64,
+    steps: usize,
+    mode: FunnelMode,
+    /// `strict_increase`, or the `timestamp_dedup` extension mode, which
+    /// skips a step at the timestamp of the step before it, i.e. the same.
+    strict_increase: bool,
+}
+
+impl<P: PathStore> Scan<P> {
+    /// `ts` is within the window opened at `first`. Events are sorted, so
+    /// `ts >= first` and the gap, even spanning `DuckDB`'s ±infinity
+    /// timestamps, fits in `u64`; `wrapping_sub` reinterpreted as `u64` is
+    /// exactly that gap.
+    const fn in_window(&self, ts: i64, first: i64) -> bool {
+        ts.wrapping_sub(first) as u64 <= self.window
+    }
+
+    fn offer(&mut self, level: usize, chain: &Chain<P>) {
+        self.levels[level].offer(chain);
+        self.dirty |= 1 << level;
+    }
+
+    fn roll(&mut self) {
+        let mut dirty = self.dirty;
+        while dirty != 0 {
+            let level = dirty.trailing_zeros() as usize;
+            self.levels[level].roll();
+            dirty &= dirty - 1;
+        }
+        self.dirty = 0;
+    }
+
+    /// Number of levels reached and the latest-entry chain at the highest.
+    /// Levels are reached in order, so the set ones form a prefix.
+    fn result(&self) -> (usize, Option<Chain<P>>) {
+        let reached = self.levels.iter().take_while(|l| l.is_set()).count();
+        let chain = reached
+            .checked_sub(1)
+            .and_then(|top| self.levels[top].best());
+        (reached, chain)
+    }
+
+    /// The checks `ClickHouse` makes for an entry of condition `idx >= 1`
+    /// before trying to extend a chain. `Ok(true)` means "try to extend",
+    /// `Ok(false)` means "skip this entry".
+    fn pre_extend(&self, idx: usize) -> Result<bool, Stop> {
+        // strict_deduplication: a condition repeating a step already reached
+        // stops the scan.
+        if self.mode.has(FunnelMode::STRICT) && self.levels[idx].is_set() {
+            return Err(Stop);
+        }
+        // strict_order: a step arriving before its predecessor stops the scan
+        // (allow_reentry skips it instead).
+        if self.mode.has(FunnelMode::STRICT_ORDER)
+            && self.first_event
+            && !self.levels[idx - 1].is_set()
+        {
+            return if self.mode.has(FunnelMode::ALLOW_REENTRY) {
+                Ok(false)
+            } else {
+                Err(Stop)
+            };
+        }
+        Ok(self.levels[idx - 1].is_set())
+    }
+
+    /// Handles the `strict_order` placeholder entries for rows matching no
+    /// condition: they end the scan once a chain has been entered.
+    fn no_condition_rows(&self, group: &[Event]) -> Result<(), Stop> {
+        if self.mode.has(FunnelMode::STRICT_ORDER)
+            && self.first_event
+            && group.iter().any(|e| e.conditions == 0)
+        {
+            return Err(Stop);
+        }
+        Ok(())
+    }
+
+    /// Processes one timestamp group without `strict_once`: an event matching
+    /// several conditions may fill several steps (`ClickHouse`'s
+    /// `getEventLevelNonStrictOnce`).
+    fn group_any(&mut self, group: &[Event], ts: i64) -> Result<(), Stop> {
+        self.no_condition_rows(group)?;
+        let present = group.iter().fold(0u32, |acc, e| acc | e.conditions);
+        for idx in 0..self.steps {
+            if present & (1 << idx) == 0 {
+                continue;
+            }
+            if idx == 0 {
+                self.offer(0, &Chain::start(ts));
+                self.first_event = true;
+                continue;
+            }
+            // Identical entries repeat the same effect, except that a second
+            // one sees the level the first one set (strict_deduplication).
+            let count = group.iter().filter(|e| e.condition(idx)).take(2).count();
+            for _ in 0..count {
+                if !self.pre_extend(idx)? {
+                    continue;
+                }
+                let prev = &self.levels[idx - 1];
+                // strict_increase extends only chains whose last step is
+                // earlier than `ts`. (ClickHouse keeps a single chain per
+                // level and can lose the valid earlier one here.)
+                let source = if self.strict_increase {
+                    prev.prev
+                } else {
+                    prev.best()
+                };
+                if let Some(chain) = source.filter(|c| self.in_window(ts, c.first)) {
+                    self.offer(idx, &chain.extended(idx, idx, ts));
+                    if idx + 1 == self.steps {
+                        return Err(Stop);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Processes one timestamp group under `strict_once`: each event fills at
+    /// most one step of a chain.
+    ///
+    /// `ClickHouse` enumerates every chain, which is exponential in the
+    /// number of same-timestamp events matching several conditions (one
+    /// 30-event group exceeded 6 GiB). Within one timestamp, whether a chain
+    /// at level `idx - 1` that avoids event `u` exists reduces to whether the
+    /// steps it spans can be given distinct events: a bipartite matching over
+    /// at most 32 steps. Same-timestamp events are visited in
+    /// `(timestamp, conditions)` order, so the answer does not depend on the
+    /// order rows arrive in (`ClickHouse`'s does).
+    fn group_once(&mut self, group: &[Event], ts: i64) -> Result<(), Stop> {
+        self.no_condition_rows(group)?;
+        let mut matcher = Matcher::new(group, self.steps);
+        for idx in 0..self.steps {
+            if idx == 0 {
+                if group.iter().any(|e| e.condition(0)) {
+                    self.offer(0, &Chain::start(ts));
+                    self.first_event = true;
+                }
+                continue;
+            }
+            for (u, event) in group.iter().enumerate() {
+                if !event.condition(idx) || !self.pre_extend(idx)? {
+                    continue;
+                }
+                if let Some(chain) = self.extend_once(&mut matcher, idx, u, ts) {
+                    self.offer(idx, &chain);
+                    if idx + 1 == self.steps {
+                        return Err(Stop);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The latest-entry chain that event `u` (matching condition `idx`) can
+    /// extend under `strict_once`, if any.
+    ///
+    /// Candidate bases: a chain entered in this group (entry at `ts`, steps
+    /// `0..idx` filled by distinct events of the group other than `u`), or
+    /// a chain from an earlier timestamp at level `j` extended through steps
+    /// `j + 1..idx` by distinct events of the group other than `u`. Under
+    /// `strict_increase` no step may be filled at the same timestamp as the
+    /// one before it, so only a chain at level `idx - 1` from an earlier
+    /// timestamp qualifies.
+    fn extend_once(
+        &self,
+        matcher: &mut Matcher,
+        idx: usize,
+        u: usize,
+        ts: i64,
+    ) -> Option<Chain<P>> {
+        if !self.strict_increase && matcher.distinct_events_exist(0, idx, u) {
+            return Some(Chain::start(ts).extended(0, idx, ts));
+        }
+        let lowest = if self.strict_increase { idx - 1 } else { 0 };
+        let mut best: Option<(usize, Chain<P>)> = None;
+        for j in lowest..idx {
+            let Some(base) = self.levels[j].prev else {
+                continue;
+            };
+            if !self.in_window(ts, base.first) || best.is_some_and(|(_, b)| b.first >= base.first) {
+                continue;
+            }
+            if matcher.distinct_events_exist(j + 1, idx, u) {
+                best = Some((j, base));
+            }
+        }
+        best.map(|(j, base)| base.extended(j + 1, idx, ts))
+    }
+}
+
+/// Answers "can steps `lo..hi` each get a distinct event of this
+/// same-timestamp group, none of them event `exclude`?" for `strict_once`.
+///
+/// Each step keeps at most `MAX_STEPS + 1` candidate events: a step needs one
+/// event, the other steps use at most `MAX_STEPS - 1` and one more may be
+/// excluded, so a step with that many candidates can always be served and
+/// extra candidates never change an answer. Answers are cached per step
+/// range; the excluded event is part of the key only when it is a candidate,
+/// since excluding any other event changes nothing. This bounds the work for
+/// a large group by the number of conditions rather than the group size.
+struct Matcher {
+    candidates: Vec<Vec<usize>>,
+    cache: std::collections::HashMap<(usize, usize, Option<usize>), bool>,
+}
+
+impl Matcher {
+    fn new(group: &[Event], steps: usize) -> Self {
+        let candidates = (0..steps)
+            .map(|step| {
+                (0..group.len())
+                    .filter(|&e| group[e].condition(step))
+                    .take(MAX_STEPS + 1)
+                    .collect()
+            })
+            .collect();
+        Self {
+            candidates,
+            cache: std::collections::HashMap::new(),
+        }
+    }
+
+    fn distinct_events_exist(&mut self, lo: usize, hi: usize, exclude: usize) -> bool {
+        if lo >= hi {
+            return true;
+        }
+        let relevant = self.candidates[lo..hi].iter().any(|c| c.contains(&exclude));
+        let key = (lo, hi, relevant.then_some(exclude));
+        if let Some(&known) = self.cache.get(&key) {
+            return known;
+        }
+        let answer = Self::matching_exists(&self.candidates[lo..hi], exclude);
+        self.cache.insert(key, answer);
+        answer
+    }
+
+    /// Kuhn's augmenting-path bipartite matching of steps to events.
+    fn matching_exists(candidates: &[Vec<usize>], exclude: usize) -> bool {
+        fn augment(
+            step: usize,
+            candidates: &[Vec<usize>],
+            exclude: usize,
+            owner: &mut Vec<(usize, usize)>,
+            seen: &mut Vec<usize>,
+        ) -> bool {
+            for &event in &candidates[step] {
+                if event == exclude || seen.contains(&event) {
+                    continue;
+                }
+                seen.push(event);
+                match owner.iter().position(|&(e, _)| e == event) {
+                    None => {
+                        owner.push((event, step));
+                        return true;
+                    }
+                    Some(pos) => {
+                        let other = owner[pos].1;
+                        if augment(other, candidates, exclude, owner, seen) {
+                            // `other` now owns a different event; give this one to `step`.
+                            owner[pos] = (event, step);
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        let mut owner: Vec<(usize, usize)> = Vec::with_capacity(candidates.len());
+        let mut seen = Vec::new();
+        (0..candidates.len()).all(|step| {
+            seen.clear();
+            augment(step, candidates, exclude, &mut owner, &mut seen)
+        })
     }
 }
 
 /// State for the `window_funnel` aggregate function.
 ///
-/// Collects timestamped events during `update`, then processes them in `finalize`
-/// using a greedy forward scan algorithm.
+/// Collects timestamped events during `update`, then evaluates the funnel in
+/// `finalize`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct WindowFunnelState {
@@ -275,15 +658,16 @@ impl WindowFunnelState {
 
     /// Adds an event to the state.
     ///
-    /// Only events where at least one condition is true are stored.
-    /// Events where all conditions are false cannot participate in any funnel
-    /// and are filtered to reduce memory usage.
+    /// Events where no condition is true cannot fill a funnel step and are
+    /// dropped to save memory, except under `strict_order`, where such an
+    /// event interrupts the chain (as in `ClickHouse`). The mode must be set
+    /// before the event is added.
     ///
     /// `num_conditions` is the total number of funnel steps. This is passed
     /// explicitly because the `Event` bitmask does not carry length information.
     pub fn update(&mut self, event: Event, num_conditions: usize) {
         self.num_conditions = num_conditions;
-        if event.has_any_condition() {
+        if event.has_any_condition() || self.mode.has(FunnelMode::STRICT_ORDER) {
             self.events.push(event);
         }
     }
@@ -294,27 +678,9 @@ impl WindowFunnelState {
     /// `finalize()` sorts them before scanning.
     #[must_use]
     pub fn combine(&self, other: &Self) -> Self {
-        let mut events = Vec::with_capacity(self.events.len() + other.events.len());
-        events.extend_from_slice(&self.events);
-        events.extend_from_slice(&other.events);
-        // Propagate window_size and mode from whichever state has them set,
-        // matching combine_in_place behavior for DuckDB's zero-initialized targets.
-        let window_size_us = if self.window_size_us != 0 {
-            self.window_size_us
-        } else {
-            other.window_size_us
-        };
-        let mode = if self.mode.is_default() {
-            other.mode
-        } else {
-            self.mode
-        };
-        Self {
-            events,
-            window_size_us,
-            num_conditions: self.num_conditions.max(other.num_conditions),
-            mode,
-        }
+        let mut combined = self.clone();
+        combined.combine_in_place(other);
+        combined
     }
 
     /// Combines another state into `self` in-place by appending its events.
@@ -337,197 +703,75 @@ impl WindowFunnelState {
         }
     }
 
-    /// Computes the maximum funnel step reached.
-    ///
-    /// Algorithm:
-    /// 1. Sort events by timestamp
-    /// 2. For each event matching condition 0 (funnel entry):
-    ///    a. Greedily scan forward within the window
-    ///    b. Try to match conditions 1, 2, ..., N in order
-    ///    c. Track the maximum step reached
-    /// 3. Return the global maximum across all entry points
-    ///
-    /// Time complexity: O(n * k) where n = events, k = conditions.
-    /// In practice, much faster due to early termination.
+    /// Computes the number of funnel steps reached (0..=`num_conditions`).
     #[must_use]
     pub fn finalize(&mut self) -> i64 {
-        if self.events.is_empty() || self.num_conditions == 0 {
-            return 0;
-        }
-
-        sort_events(&mut self.events);
-        let mut max_step: i64 = 0;
-
-        for i in 0..self.events.len() {
-            // Only start from events matching condition 0
-            if !self.events[i].condition(0) {
-                continue;
-            }
-
-            let entry_ts = self.events[i].timestamp_us;
-            let step = self.scan_funnel(i, entry_ts, &mut NoRecord);
-            max_step = max_step.max(step);
-
-            // Early termination: can't do better than matching all conditions
-            if max_step == self.num_conditions as i64 {
-                break;
-            }
-        }
-
-        max_step
+        self.evaluate::<NoPath>().0 as i64
     }
 
-    /// Computes the step timestamps of the best funnel chain.
+    /// Computes the step timestamps of the chain that reached the most steps.
     ///
-    /// Returns one timestamp per matched step, in match order: the entry event
-    /// plus each advancing event. An event that advances multiple steps
-    /// contributes its timestamp once per step, so the result length always
-    /// equals [`finalize`](Self::finalize)'s step count. Among chains reaching
-    /// the same maximum step, the earliest entry wins (mirroring `finalize`'s
-    /// greedy scan order). Returns an empty vector when no entry condition
-    /// matches.
+    /// Returns one timestamp per step reached, so the length always equals
+    /// [`finalize`](Self::finalize)'s result. Among chains reaching that many
+    /// steps, the one with the latest entry is returned (the chain the scan
+    /// keeps; on a tie, the one completed last). An event that fills several
+    /// steps contributes its timestamp once per step. Empty when no entry
+    /// condition matches.
     #[must_use]
     pub fn finalize_events(&mut self) -> Vec<i64> {
-        if self.events.is_empty() || self.num_conditions == 0 {
-            return Vec::new();
+        match self.evaluate::<StepPath>() {
+            (reached, Some(chain)) => chain.path.steps(reached),
+            (_, None) => Vec::new(),
         }
-
-        sort_events(&mut self.events);
-        let mut best_step: i64 = 0;
-        let mut best: Vec<i64> = Vec::new();
-        let mut scratch: Vec<i64> = Vec::new();
-
-        for i in 0..self.events.len() {
-            if !self.events[i].condition(0) {
-                continue;
-            }
-
-            let entry_ts = self.events[i].timestamp_us;
-            let step = self.scan_funnel(i, entry_ts, &mut scratch);
-            if step > best_step {
-                best_step = step;
-                std::mem::swap(&mut best, &mut scratch);
-
-                // Early termination: can't do better than matching all conditions
-                if best_step == self.num_conditions as i64 {
-                    break;
-                }
-            }
-        }
-
-        debug_assert_eq!(
-            best.len() as i64,
-            if best_step == 0 { 0 } else { best_step },
-            "recorded chain length must equal the step count"
-        );
-        best
     }
 
-    /// Scans forward from an entry point trying to match funnel steps.
+    /// Runs `ClickHouse`'s `windowFunnel` scan over the sorted events.
     ///
-    /// Each active mode flag adds an independent constraint check. Constraints
-    /// are evaluated in order: `STRICT`, `STRICT_ORDER`, `STRICT_DEDUPLICATION`,
-    /// `STRICT_INCREASE`. If any constraint fails, the event is handled per
-    /// that constraint's semantics (break, return, continue, or skip).
+    /// Each event contributes one entry per true condition (plus, under
+    /// `strict_order`, one placeholder when none is true), visited in
+    /// `(timestamp, condition)` order. For each level the latest-entry chain
+    /// is tracked; an entry for condition `k` extends the chain at level
+    /// `k - 1` when it is within the window of that chain's entry. Mode
+    /// checks may stop the scan early. The result is the number of levels
+    /// reached.
     ///
-    /// `recorder` observes the chain: `restart` at the entry (and on
-    /// `allow_reentry` resets), `record` on each step advance.
-    fn scan_funnel<R: StepRecorder>(
-        &self,
-        start_idx: usize,
-        entry_ts: i64,
-        recorder: &mut R,
-    ) -> i64 {
-        let mut current_step: usize = 1; // Already matched step 0
-        let mut prev_matched_ts = entry_ts;
-        recorder.restart(entry_ts);
+    /// Time: O(n log n) for the sort, then O(n * k) for the scan, plus a
+    /// bounded matching per same-timestamp entry under `strict_once`.
+    fn evaluate<P: PathStore>(&mut self) -> (usize, Option<Chain<P>>) {
+        let steps = self.num_conditions.min(MAX_STEPS);
+        if self.events.is_empty() || steps == 0 {
+            return (0, None);
+        }
+        sort_events(&mut self.events);
 
-        for j in (start_idx + 1)..self.events.len() {
-            let event = &self.events[j];
+        let mode = self.mode;
+        let mut scan = Scan {
+            levels: vec![Level::EMPTY; steps],
+            dirty: 0,
+            first_event: false,
+            window: self.window_size_us as u64,
+            steps,
+            mode,
+            strict_increase: mode.has(FunnelMode::STRICT_INCREASE)
+                || mode.has(FunnelMode::STRICT_DEDUPLICATION),
+        };
 
-            // Check window: event must be within window_size of the ENTRY
-            // event. Events are sorted, so the true gap is non-negative and
-            // (even spanning DuckDB's ±infinity timestamps) fits in u64;
-            // two's-complement wrapping_sub reinterpreted as u64 IS that gap.
-            // window_size_us is validated non-negative at the FFI boundary.
-            // Same cost as a plain sub + compare.
-            if event.timestamp_us.wrapping_sub(entry_ts) as u64 > self.window_size_us as u64 {
+        for group in self
+            .events
+            .chunk_by(|a, b| a.timestamp_us == b.timestamp_us)
+        {
+            let ts = group[0].timestamp_us;
+            scan.roll();
+            let outcome = if mode.has(FunnelMode::STRICT_ONCE) {
+                scan.group_once(group, ts)
+            } else {
+                scan.group_any(group, ts)
+            };
+            if outcome.is_err() {
                 break;
-            }
-
-            // --- Mode: ALLOW_REENTRY ---
-            // If entry condition fires again mid-chain, reset the funnel
-            if self.mode.has(FunnelMode::ALLOW_REENTRY) && current_step > 1 && event.condition(0) {
-                current_step = 1;
-                prev_matched_ts = event.timestamp_us;
-                recorder.restart(event.timestamp_us);
-                // Continue scanning from this new entry; don't also try to
-                // match the next step on this same event
-                continue;
-            }
-
-            // --- Mode: STRICT ---
-            if self.mode.has(FunnelMode::STRICT)
-                && current_step > 0
-                && event.condition(current_step - 1)
-                && !event.condition(current_step)
-            {
-                break;
-            }
-
-            // --- Mode: STRICT_ORDER ---
-            if self.mode.has(FunnelMode::STRICT_ORDER) {
-                let mut earlier_fired = false;
-                for k in 0..current_step {
-                    if event.condition(k) {
-                        earlier_fired = true;
-                        break;
-                    }
-                }
-                if earlier_fired {
-                    return current_step as i64;
-                }
-            }
-
-            // --- Mode: STRICT_DEDUPLICATION ---
-            if self.mode.has(FunnelMode::STRICT_DEDUPLICATION)
-                && event.timestamp_us == prev_matched_ts
-                && event.condition(current_step)
-            {
-                continue;
-            }
-
-            // --- Mode: STRICT_INCREASE ---
-            if self.mode.has(FunnelMode::STRICT_INCREASE)
-                && event.condition(current_step)
-                && event.timestamp_us <= prev_matched_ts
-            {
-                continue;
-            }
-
-            // Check if this event matches the next expected condition.
-            // In default mode, a single event can advance multiple steps
-            // (e.g., an event satisfying both cond2 and cond3 advances 2 steps).
-            // STRICT_ONCE limits this to at most 1 step per event.
-            while event.condition(current_step) {
-                current_step += 1;
-                prev_matched_ts = event.timestamp_us;
-                recorder.record(event.timestamp_us);
-
-                // Matched all conditions
-                if current_step >= self.num_conditions {
-                    return self.num_conditions as i64;
-                }
-
-                // --- Mode: STRICT_ONCE ---
-                // Each event advances at most one step
-                if self.mode.has(FunnelMode::STRICT_ONCE) {
-                    break;
-                }
             }
         }
-
-        current_step as i64
+        scan.result()
     }
 }
 
@@ -624,11 +868,11 @@ mod tests {
     fn test_all_conditions_same_row() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        // All conditions true in a single event - step 0 matches,
-        // but steps 1+ need SUBSEQUENT events
+        // One event satisfying every condition fills every step (one entry
+        // per true condition, as in ClickHouse; verified against
+        // windowFunnel(3600) on ClickHouse 26.9.8.3, which returns 3).
         state.update(make_event(0, &[true, true, true]), 3);
-        // Only step 0 is reached since there are no subsequent events
-        assert_eq!(state.finalize(), 1);
+        assert_eq!(state.finalize(), 3);
     }
 
     #[test]
@@ -712,16 +956,17 @@ mod tests {
     }
 
     #[test]
-    fn test_strict_order_irrelevant_events_dont_break() {
-        // Events that don't match any earlier condition don't break the chain
+    fn test_strict_order_unrelated_event_breaks_chain() {
+        // Under strict_order an event matching no condition interrupts the
+        // chain ("doesn't allow interventions of other events"). ClickHouse
+        // 26.9.8.3 windowFunnel(3600, 'strict_order') returns 1 here.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
         state.mode = FunnelMode::STRICT_ORDER;
         state.update(make_event(0, &[true, false, false]), 3);
-        // Event with no conditions set is filtered out by update()
         state.update(make_event(1_000, &[false, false, false]), 3);
         state.update(make_event(2_000, &[false, true, false]), 3);
-        assert_eq!(state.finalize(), 2);
+        assert_eq!(state.finalize(), 1);
     }
 
     #[test]
@@ -2004,5 +2249,339 @@ mod infinity_tests {
             "infinitely distant step must not match"
         );
         assert_eq!(state.finalize_events(), vec![-i64::MAX]);
+    }
+}
+
+// Expected values checked against ClickHouse 26.9.8.3 (`clickhouse local`,
+// `windowFunnel`, whole-second `DateTime` timestamps). Where ClickHouse has
+// a defect (a lost chain under `strict_increase`, row-order dependence under
+// `strict_deduplication` + `strict_once`), the expected value comes from an
+// exhaustive reference that follows ClickHouse's algorithm but keeps every
+// chain and orders tied rows canonically; ClickHouse's answer is noted.
+#[cfg(test)]
+mod clickhouse_parity_tests {
+    use super::*;
+
+    const S: i64 = 1_000_000;
+
+    #[test]
+    fn ch_entry_row_fills_later_steps() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 3.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT;
+        s.update(Event::new(0, 0b11), 3);
+        s.update(Event::new(S, 0b100), 3);
+        assert_eq!(s.finalize(), 3);
+    }
+
+    #[test]
+    fn ch_strict_increase_checked_per_step() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 2.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_INCREASE);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b110), 3);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn ch_strict_order_later_step_early_stops() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 1.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_ORDER);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b100), 3);
+        s.update(Event::new(2 * S, 0b10), 3);
+        s.update(Event::new(3 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 1);
+    }
+
+    #[test]
+    fn ch_strict_order_entry_repeat_restarts() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 3.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_ORDER);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b1), 3);
+        s.update(Event::new(3 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 3);
+    }
+
+    #[test]
+    fn ch_strict_order_step_repeat_overwrites() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 3.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_ORDER);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b10), 3);
+        s.update(Event::new(3 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 3);
+    }
+
+    #[test]
+    fn ch_allow_reentry_skips_early_steps() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 3.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT
+            .with(FunnelMode::STRICT_ORDER)
+            .with(FunnelMode::ALLOW_REENTRY);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b1), 3);
+        s.update(Event::new(3 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 3);
+    }
+
+    #[test]
+    fn ch_allow_reentry_keeps_reached_level() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 2.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT
+            .with(FunnelMode::STRICT_ORDER)
+            .with(FunnelMode::ALLOW_REENTRY);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b1), 3);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn ch_dedup_stops_on_repeat_even_if_advancing() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 2.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b110), 3);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn ch_dedup_ignores_entry_repeats() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 2.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = S;
+        s.mode = FunnelMode::DEFAULT
+            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_INCREASE)
+            .with(FunnelMode::STRICT_ONCE);
+        s.update(Event::new(0, 0b1), 2);
+        s.update(Event::new(S, 0b1), 2);
+        s.update(Event::new(S, 0b10), 2);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn ch_dedup_sees_expired_levels() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 2.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 2 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b10), 3);
+        s.update(Event::new(5 * S, 0b1), 3);
+        s.update(Event::new(6 * S, 0b10), 3);
+        s.update(Event::new(7 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn ch_ties_ordered_by_condition() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 4.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT;
+        s.update(Event::new(0, 0b1), 4);
+        s.update(Event::new(0, 0b100), 4);
+        s.update(Event::new(0, 0b1010), 4);
+        assert_eq!(s.finalize(), 4);
+    }
+
+    #[test]
+    fn ch_strict_once_tie_row() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 2.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_ONCE);
+        s.update(Event::new(0, 0b10), 2);
+        s.update(Event::new(0, 0b11), 2);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn ch_strict_once_one_step_per_row() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 1.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_ONCE);
+        s.update(Event::new(0, 0b11), 2);
+        assert_eq!(s.finalize(), 1);
+    }
+
+    #[test]
+    fn ch_single_condition() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 1.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT;
+        s.update(Event::new(3 * S, 0b1), 1);
+        assert_eq!(s.finalize(), 1);
+    }
+
+    #[test]
+    fn ch_window_boundary_inclusive() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 2.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 5 * S;
+        s.mode = FunnelMode::DEFAULT;
+        s.update(Event::new(0, 0b1), 2);
+        s.update(Event::new(5 * S, 0b10), 2);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn ch_window_boundary_exclusive() {
+        // ClickHouse 26.9.8.3 windowFunnel returns 1.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 5 * S;
+        s.mode = FunnelMode::DEFAULT;
+        s.update(Event::new(0, 0b1), 2);
+        s.update(Event::new(6 * S, 0b10), 2);
+        assert_eq!(s.finalize(), 1);
+    }
+
+    #[test]
+    fn fixed_strict_increase_keeps_earlier_chain() {
+        // ClickHouse 26.9.8.3 returns 1 (it loses a valid chain or depends on row order); expected value from the exhaustive reference.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_INCREASE);
+        s.update(Event::new(0, 0b1), 2);
+        s.update(Event::new(S, 0b1), 2);
+        s.update(Event::new(S, 0b10), 2);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn fixed_strict_increase_keeps_earlier_step() {
+        // ClickHouse 26.9.8.3 returns 2 (it loses a valid chain or depends on row order); expected value from the exhaustive reference.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_INCREASE);
+        s.update(Event::new(0, 0b1), 3);
+        s.update(Event::new(S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 3);
+    }
+
+    #[test]
+    fn fixed_dedup_strict_increase_sees_kept_chain() {
+        // ClickHouse 26.9.8.3 returns 3 (it loses a valid chain or depends on row order); expected value from the exhaustive reference.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 7 * S;
+        s.mode = FunnelMode::DEFAULT
+            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_INCREASE);
+        s.update(Event::new(2 * S, 0b1), 3);
+        s.update(Event::new(5 * S, 0b11), 3);
+        s.update(Event::new(7 * S, 0b10), 3);
+        s.update(Event::new(8 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn fixed_dedup_strict_once_tie_order() {
+        // ClickHouse 26.9.8.3 returns 2 (it loses a valid chain or depends on row order); expected value from the exhaustive reference.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = S;
+        s.mode = FunnelMode::DEFAULT
+            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_ONCE);
+        s.update(Event::new(2 * S, 0b10), 3);
+        s.update(Event::new(2 * S, 0b111), 3);
+        s.update(Event::new(3 * S, 0b100), 3);
+        assert_eq!(s.finalize(), 2);
+    }
+
+    #[test]
+    fn dedup_strict_once_result_is_independent_of_row_order() {
+        // ClickHouse returns 2 or 3 for these rows depending on insertion order.
+        let rows = [(2, 0b010), (2, 0b111), (3, 0b100)];
+        let mode = FunnelMode::DEFAULT
+            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_ONCE);
+        let orders: [[usize; 3]; 6] = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        let results: Vec<i64> = orders
+            .iter()
+            .map(|order| {
+                let mut s = WindowFunnelState::new();
+                s.window_size_us = S;
+                s.mode = mode;
+                for &i in order {
+                    s.update(Event::new(rows[i].0 * S, rows[i].1), 3);
+                }
+                s.finalize()
+            })
+            .collect();
+        assert!(results.iter().all(|&r| r == results[0]), "{results:?}");
+    }
+
+    #[test]
+    fn strict_once_large_same_timestamp_group_stays_polynomial() {
+        // 200 rows at one timestamp, each matching all 32 conditions. Chain
+        // enumeration (ClickHouse's approach) exceeded 6 GiB on a 30-row
+        // group; the matching formulation answers directly: 32 distinct rows
+        // fill all 32 steps.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = S;
+        s.mode = FunnelMode::STRICT_ONCE;
+        for _ in 0..200 {
+            s.update(Event::new(0, u32::MAX), 32);
+        }
+        assert_eq!(s.finalize(), 32);
+
+        // 31 rows cannot fill 32 steps one row each.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = S;
+        s.mode = FunnelMode::STRICT_ONCE;
+        for _ in 0..31 {
+            s.update(Event::new(0, u32::MAX), 32);
+        }
+        assert_eq!(s.finalize(), 31);
+    }
+
+    #[test]
+    fn events_follow_the_reported_chain() {
+        // c1@0, c1@1, c2@1 under strict_increase: the chain is c1@0 -> c2@1.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.mode = FunnelMode::STRICT_INCREASE;
+        s.update(Event::new(0, 0b01), 2);
+        s.update(Event::new(S, 0b01), 2);
+        s.update(Event::new(S, 0b10), 2);
+        assert_eq!(s.finalize_events(), vec![0, S]);
+        // One row filling two steps contributes its timestamp twice.
+        let mut s = WindowFunnelState::new();
+        s.window_size_us = 10 * S;
+        s.update(Event::new(5 * S, 0b11), 2);
+        assert_eq!(s.finalize_events(), vec![5 * S, 5 * S]);
     }
 }

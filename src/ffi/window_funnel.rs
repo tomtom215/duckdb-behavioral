@@ -21,7 +21,7 @@ const VALID_MODES: &str = "'strict', 'strict_deduplication', 'strict_order', \
      (comma-separated for combinations)";
 
 /// Minimum number of boolean condition parameters for `window_funnel`.
-const MIN_CONDITIONS: usize = 2;
+const MIN_CONDITIONS: usize = 1;
 /// Maximum number of boolean condition parameters for `window_funnel`.
 const MAX_CONDITIONS: usize = 32;
 
@@ -189,6 +189,15 @@ pub(super) unsafe fn update_impl(
                 if state.mode.is_default() && mode_reader.is_valid(i) {
                     let s = mode_reader.read_str(i);
                     match FunnelMode::parse_modes(s) {
+                        Ok(mode)
+                            if mode.has(FunnelMode::ALLOW_REENTRY)
+                                && !mode.has(FunnelMode::STRICT_ORDER) =>
+                        {
+                            info.set_error(&format!(
+                                "{func}: mode 'allow_reentry' requires 'strict_order'"
+                            ));
+                            return;
+                        }
                         Ok(mode) => state.mode = mode,
                         Err(unknown) => {
                             info.set_error(&format!(

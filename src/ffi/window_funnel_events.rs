@@ -17,7 +17,7 @@ use quack_rs::vector::complex::ListVector;
 use super::window_funnel::{state_combine, update_impl};
 
 /// Minimum number of boolean condition parameters for `window_funnel_events`.
-const MIN_CONDITIONS: usize = 2;
+const MIN_CONDITIONS: usize = 1;
 /// Maximum number of boolean condition parameters for `window_funnel_events`.
 const MAX_CONDITIONS: usize = 32;
 
