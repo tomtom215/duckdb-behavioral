@@ -151,7 +151,11 @@ sequence_next_node('direction', 'base', timestamp_col, value_col,
 |---|---|
 | NULL timestamp | Row is ignored |
 | NULL boolean condition | Treated as `false` |
-| NULL pattern string | No match (returns false/0/empty) |
+| NULL pattern string | `sequence_match`/`sequence_count` return NULL; `sequence_match_events` returns `[]` |
+| Empty pattern string | Error (malformed pattern) |
+| NULL `window_funnel` window | Row is ignored |
+| NULL `window_funnel` mode | No mode (default behaviour) |
+| NULL `sequence_next_node` direction / base | Treated as `'forward'` / `'first_match'` |
 | NULL value in `sequence_next_node` | Stored and can be returned |
 
 ---

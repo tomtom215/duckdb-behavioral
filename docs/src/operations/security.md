@@ -34,8 +34,8 @@ The extension has exactly **two** runtime dependencies:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `quack-rs` | `=0.15.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
-| `libduckdb-sys` | `=1.10505.0` | DuckDB C API bindings (re-exported by quack-rs; kept explicitly for `sessionize` window function FFI) |
+| `quack-rs` | `=0.18.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
+| `libduckdb-sys` | `=1.10506.0` | DuckDB C API bindings (re-exported by quack-rs; pinned explicitly because the FFI callbacks use its raw types) |
 
 Both versions are **pinned exactly** to prevent silent dependency updates.
 `quack-rs` provides `entry_point_v2!`, `Connection`/`Registrar` trait,
@@ -52,7 +52,7 @@ release extension binary:
 | Crate | Purpose |
 |-------|---------|
 | `duckdb` | In-memory connection for unit tests |
-| `quack-rs` (`bundled-test`) | `InMemoryDb` for the in-process extension-load integration test |
+| `quack-rs` (`bundled-test-prebuilt`) | `InMemoryDb` for the in-process extension-load integration test |
 | `criterion` | Benchmarking framework |
 | `proptest` | Property-based testing |
 
@@ -76,7 +76,7 @@ Release builds use the following Cargo profile for deterministic output:
 opt-level = 3
 lto = true          # Full link-time optimization
 codegen-units = 1   # Single codegen unit
-panic = "abort"     # No unwinding overhead
+panic = "unwind"    # Required: quack-rs turns callback panics into SQL errors
 strip = true        # Strip debug symbols
 ```
 

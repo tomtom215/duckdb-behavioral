@@ -277,7 +277,7 @@ For a comprehensive technical overview, see the
 
 ## Requirements
 
-- **DuckDB 1.5.5**
+- **DuckDB 1.3.2 or later** (built against 1.5.6; stable C API, so one binary serves every release CI checks: 1.3.2, 1.4.4, 1.5.0, 1.5.6)
 - **Rust 1.87+** (MSRV) for building from source
 - A C compiler for DuckDB system bindings
 

@@ -78,8 +78,8 @@ WHERE len(chain) = 3;
 ## Errors
 
 Shares `window_funnel`'s validation: unknown mode strings, month-based or
-negative windows abort the query with a descriptive SQL error. A `NULL`
-window or mode is skipped leniently.
+negative windows abort the query with a descriptive SQL error. A row whose
+window is `NULL` is skipped; a `NULL` mode means no mode.
 
 ## Implementation
 

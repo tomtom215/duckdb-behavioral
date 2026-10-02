@@ -348,7 +348,10 @@ jobs:
           key: msrv-1.87
       - name: Check MSRV compilation
         id: msrv-check
-        run: cargo check --all-targets
+        # `+1.87` is required: rust-toolchain.toml pins `channel = "stable"`,
+        # and a toolchain file overrides the toolchain installed above, so a
+        # bare `cargo check` would silently run stable instead of the MSRV.
+        run: cargo +1.87 check --all-targets
       - name: Summary
         if: always()
         run: |

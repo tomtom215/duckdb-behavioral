@@ -121,7 +121,8 @@ instead of silently returning `NULL`:
 - **Unknown base** — expected `'head'`, `'tail'`, `'first_match'`, or
   `'last_match'`
 
-`NULL` configuration parameters are skipped leniently.
+A `NULL` direction is treated as `'forward'` and a `NULL` base as
+`'first_match'`.
 
 ## Implementation
 

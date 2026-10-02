@@ -19,33 +19,37 @@ No build tools, compilation, or `-unsigned` flag required.
 
 ### Can I build from source instead?
 
-Yes. Build in release mode, then load from the DuckDB CLI or any DuckDB client:
+Yes. DuckDB only loads files ending in `.duckdb_extension` that carry its
+metadata footer, so build in release mode and append the footer first:
 
 ```bash
 cargo build --release
+git submodule update --init --recursive   # first time only
+cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension   # .dylib on macOS
+python3 extension-ci-tools/scripts/append_extension_metadata.py \
+  -l /tmp/behavioral.duckdb_extension -n behavioral \
+  -p linux_amd64 -dv v1.2.0 -ev v0.9.1 \
+  -o /tmp/behavioral.duckdb_extension
 ```
 
-```sql
--- Linux
-LOAD 'target/release/libbehavioral.so';
-
--- macOS
-LOAD 'target/release/libbehavioral.dylib';
-```
-
-Locally-built extensions require the `-unsigned` flag:
+Locally built extensions are unsigned, so load them with `-unsigned`:
 
 ```bash
-duckdb -unsigned -c "LOAD 'target/release/libbehavioral.so'; SELECT ..."
+duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT behavioral_version();"
 ```
+
+`make configure release` does the same through DuckDB's `extension-ci-tools`
+and writes `build/release/behavioral.duckdb_extension`. See
+[Getting Started](./getting-started.md) for the platform names.
 
 ### The extension fails to load. What should I check?
 
-1. **DuckDB version mismatch**: The community extension is built for DuckDB
-   v1.5.5. If you are using a different DuckDB version, the extension may not
-   be available for that version yet. For locally-built extensions, the DuckDB
-   release version stamped into the extension metadata (the `-dv` flag) must
-   match the loading CLI exactly (currently `v1.5.5`).
+1. **DuckDB version mismatch**: The community repository publishes a build
+   per DuckDB release; a release newer than the last community build may not
+   have one yet. A locally built extension is stamped for the stable C API
+   (`-dv v1.2.0`, ABI type `C_STRUCT`) and loads into any DuckDB release with
+   that C API or newer; stamping it `C_STRUCT_UNSTABLE` would pin it to the one
+   release named by `-dv`.
 
 2. **Missing `-unsigned` flag** (local builds only): DuckDB rejects unsigned
    extensions by default. Use `duckdb -unsigned` or set
@@ -85,7 +89,13 @@ so the 32-condition limit is a hard constraint of the data type.
 
 - **NULL timestamps**: Rows with NULL timestamps are ignored during update.
 - **NULL conditions**: NULL boolean conditions are treated as `false`.
-- **NULL pattern**: An empty or NULL pattern string results in no match.
+- **NULL pattern**: `sequence_match` and `sequence_count` return `NULL`;
+  `sequence_match_events` returns an empty list. An empty pattern string is
+  malformed and raises an error.
+- **NULL configuration** (other than the pattern): a `NULL` `window_funnel`
+  window skips that row; a `NULL` mode means no mode; a `NULL`
+  `sequence_next_node` direction is treated as `'forward'` and a `NULL` base as
+  `'first_match'`.
 - **sequence_next_node**: NULL event column values are stored and can be returned
   as the result. The function returns NULL when no match is found or no adjacent
   event exists.
@@ -289,10 +299,14 @@ No. All event-collecting functions (`window_funnel`, `sequence_match`,
 timestamp internally during the finalize phase. You do not need an `ORDER BY`
 clause for these aggregate functions.
 
-However, an `ORDER BY` on the timestamp column can still improve performance.
-The extension includes a presorted detection optimization: if events arrive
-already sorted (which happens when DuckDB's query planner pushes down an
-`ORDER BY`), the O(n log n) sort is skipped entirely, reducing finalize to O(n).
+Do **not** put an `ORDER BY` inside the function call
+(`window_funnel(... ORDER BY ts)`): DuckDB runs such ordered aggregates
+through a code path that crashes every C API aggregate, this extension's
+included (see [Which query shapes crash DuckDB?](#which-query-shapes-crash-duckdb)).
+It is never needed, because every function sorts by timestamp itself.
+
+When events already arrive in timestamp order, a presorted check skips the
+O(n log n) sort, reducing finalize to O(n).
 
 The `sessionize` window function **does** require `ORDER BY` in the `OVER` clause
 because it is a window function, not an aggregate:
@@ -373,9 +387,19 @@ defined by `GROUP BY` for aggregate functions or `PARTITION BY` for `sessionize`
 
 ### What happens if a single user has millions of events?
 
-The extension will process it correctly, but memory usage scales linearly with the
-number of events in that group. A single user with 10 million events will require
-approximately 160 MB of memory for event-collecting functions (16 bytes times 10M).
+Memory scales linearly with the number of events in that group: a single user
+with 10 million events needs about 160 MB for the event-collecting functions
+(16 bytes per event).
+
+Time is linear for `window_funnel`, `retention`, `sessionize`,
+`sequence_next_node`, and for `sequence_*` patterns built only from conditions
+and `.*` / `.`. A pattern that combines `.*` with a time constraint, such as
+`(?1).*(?t<5)(?2).*(?3)`, falls back to a backtracking matcher whose cost grows
+roughly quadratically with the group's event count when it does not match. One
+such group took 0.18 s at 2,000 events, 3.1 s at 16,000 and 10.8 s at 32,000
+(DuckDB 1.5.6, single runs on a shared 4-core machine). The matcher does not
+check for query interruption, so on very large groups such a query can run for
+a long time and cannot be cancelled.
 
 If you have users with extremely large event counts, consider pre-filtering to a
 relevant time window before applying behavioral functions:
@@ -452,25 +476,62 @@ correctness. However, it affects performance:
 
 ### Can I use these functions with PARTITION BY (window functions)?
 
-Only `sessionize` is a window function. All other functions are aggregate
-functions.
+Yes. DuckDB can run any aggregate as a window function, and `sessionize` is
+designed to be used that way:
 
 ```sql
--- Correct: sessionize is a window function
 SELECT sessionize(event_time, INTERVAL '30 minutes') OVER (
     PARTITION BY user_id ORDER BY event_time
 ) as session_id
 FROM events;
+```
 
--- Correct: window_funnel is an aggregate function
+The other functions are normally used with `GROUP BY`:
+
+```sql
 SELECT user_id,
   window_funnel(INTERVAL '1 hour', event_time, cond1, cond2)
 FROM events
 GROUP BY user_id;
 ```
 
-You can use `GROUP BY` with the aggregate functions to partition results by any
-column or expression -- user ID, date, campaign, device type, or any combination.
+They also work over running or sliding frames, for example
+`OVER (PARTITION BY user_id ORDER BY event_time)` gives a running funnel
+step per row. Avoid frames that cover the whole partition; see the next
+question.
+
+### Which query shapes crash DuckDB?
+
+A defect in DuckDB's C API for aggregate functions
+([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109)) makes
+DuckDB read out of bounds, and usually crash with a segmentation fault, when
+**any** aggregate registered through the C API, including every function in
+this extension, is called in these shapes:
+
+| Shape | Example |
+|---|---|
+| `ORDER BY` inside the call | `retention(c1, c2 ORDER BY ts)` |
+| Empty window | `window_funnel(...) OVER ()` |
+| Frame covering the whole partition | `OVER (PARTITION BY u ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)` |
+
+The extension cannot detect or refuse these: DuckDB passes a one-element state
+array while reporting several rows, and the C API has no bind hook through
+which an aggregate could reject the query. Verified on DuckDB 1.5.6 (still
+present) with valgrind, which also showed no invalid reads for `GROUP BY`,
+`FILTER`, `DISTINCT`, running frames (`OVER (... ORDER BY ts)`), sliding
+frames, `EXCLUDE`, or `OVER (PARTITION BY u)`.
+
+Workarounds: drop the `ORDER BY` inside the call (the functions sort by
+timestamp themselves), and compute a whole-partition value with `GROUP BY`
+and join it back:
+
+```sql
+WITH f AS (
+  SELECT user_id, window_funnel(INTERVAL '1 hour', ts, c1, c2) AS step
+  FROM events GROUP BY user_id
+)
+SELECT e.*, f.step FROM events e JOIN f USING (user_id);
+```
 
 ### Can I nest these functions or use them in subqueries?
 

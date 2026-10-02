@@ -31,7 +31,7 @@ platform where Rust and DuckDB are available.
 
 - Rust 1.87 or later (`rustup` recommended)
 - A C compiler (gcc, clang, or MSVC -- needed for DuckDB system bindings)
-- DuckDB CLI v1.5.5 (for running queries)
+- DuckDB CLI v1.3.2 or later (for running queries; CI checks v1.3.2, v1.4.4, v1.5.0 and v1.5.6)
 
 **Build steps:**
 
@@ -64,12 +64,18 @@ cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.5 -ev v0.9.1 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.2.0 -ev v0.9.1 \
   -o /tmp/behavioral.duckdb_extension
 ```
 
 > **Platform note:** Replace `linux_amd64` with your platform identifier
 > (`linux_arm64`, `osx_amd64`, `osx_arm64`) and `.so` with `.dylib` on macOS.
+>
+> **Version note:** `-dv v1.2.0` is the DuckDB *C API* version, not a DuckDB
+> release. The extension uses only the stable C API, so the default ABI type
+> (`C_STRUCT`) applies and one build loads into any DuckDB release whose C API
+> is v1.2.0 or newer. Do not pass `--abi-type C_STRUCT_UNSTABLE`: that pins the
+> binary to the single release named by `-dv`.
 
 ---
 
@@ -290,17 +296,17 @@ matched Home -> Product sequence.
 
 **"file was built for DuckDB C API version '...' but we can only load extensions built for DuckDB C API '...'"**
 
-The extension is stamped with the DuckDB release version it was built against
-(`v1.5.5`). You must use a DuckDB CLI version that matches. Check your version
-with:
+The extension declares the minimum DuckDB C API version it needs (`v1.2.0`);
+your DuckDB is older than that. Check your version with:
 
 ```bash
 duckdb --version
 ```
 
-If you see a different version, either install DuckDB v1.5.5 or rebuild the
-extension against your DuckDB version (this requires updating the
-`libduckdb-sys` dependency in `Cargo.toml`).
+**"The file was built specifically for DuckDB version '...'"**
+
+The binary was stamped `C_STRUCT_UNSTABLE`, which pins it to one DuckDB
+release. Re-append the metadata as shown above, without `--abi-type`.
 
 **"Extension ... is not signed!"**
 

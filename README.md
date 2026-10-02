@@ -52,6 +52,7 @@ behavioral analytics parity.**
 - [Building](#building)
 - [Development](#development)
 - [Documentation](#documentation)
+- [Known Limitations](#known-limitations)
 - [Requirements](#requirements)
 - [License](#license)
 
@@ -469,10 +470,22 @@ for the full SemVer rules applied to SQL function signatures.
 - **[ClickHouse Compatibility](https://tomtom215.github.io/duckdb-behavioral/internals/clickhouse-compatibility.html)** — syntax mapping, semantic parity
 - **[Contributing](https://tomtom215.github.io/duckdb-behavioral/contributing.html)** — development setup, testing, PR process
 
+## Known Limitations
+
+- **Crash in DuckDB's C API aggregate path.** `ORDER BY` inside the call
+  (`retention(c1, c2 ORDER BY ts)`), `OVER ()`, and window frames that span
+  the whole partition make DuckDB read out of bounds and usually segfault.
+  This affects every C API aggregate, not just this extension
+  ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109);
+  present in DuckDB 1.5.6). None of these shapes is needed: the functions sort
+  by timestamp themselves, and a whole-partition value is a `GROUP BY` joined
+  back. Details and the verified-safe shapes are in the
+  [FAQ](https://tomtom215.github.io/duckdb-behavioral/faq.html#which-query-shapes-crash-duckdb).
+
 ## Requirements
 
 - Rust 1.87+ (MSRV)
-- DuckDB 1.5.5 (pinned dependency)
+- DuckDB 1.3.2 or later at run time (built against 1.5.6 via `libduckdb-sys =1.10506.0`; the extension uses only the stable C API, and CI loads the same binary into 1.3.2, 1.4.4, 1.5.0 and 1.5.6)
 - Python 3.x (for extension metadata tooling)
 
 ## License

@@ -134,8 +134,8 @@ silently producing wrong results:
   day/hour/minute/second units (e.g. `INTERVAL '30 days'`)
 - **Negative window** — the window must be non-negative
 
-A `NULL` window or mode is skipped leniently (the row contributes no
-configuration), matching SQL aggregate conventions.
+A row whose window is `NULL` is skipped, like a row with a `NULL` timestamp.
+A `NULL` mode means no mode.
 
 ## Implementation
 
