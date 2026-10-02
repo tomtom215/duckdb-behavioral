@@ -25,8 +25,8 @@ sessionize(timestamp_col, INTERVAL 'gap') OVER (
 
 **Key facts:** Aggregate designed to be used with `OVER (... ORDER BY ...)`,
 where it returns 1-indexed session IDs per row. Without `OVER` it returns the
-number of sessions in the group. Never use `OVER ()` or a frame covering the
-whole partition: those shapes crash DuckDB
+number of sessions in the group. Never use `OVER ()` or a `BETWEEN UNBOUNDED
+PRECEDING AND UNBOUNDED FOLLOWING` frame: those shapes crash DuckDB
 ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109)).
 
 ---
@@ -74,7 +74,7 @@ Combine modes: `'strict_increase, strict_once'`
 ### window_funnel_events — When did each funnel step happen?
 
 ```sql
-window_funnel_events(INTERVAL 'window', timestamp_col, cond1, ..., condN) → TIMESTAMP[]
+window_funnel_events(INTERVAL 'window', timestamp_col, cond1, ..., condN) → TIMESTAMP[]  -- TIMESTAMPTZ[] for TIMESTAMPTZ input
 window_funnel_events(INTERVAL 'window', 'mode_str', timestamp_col, cond1, ...) → TIMESTAMP[]
 ```
 
@@ -197,6 +197,9 @@ install, and a local build could serve different versions.
 |---|---|
 | Boolean conditions | `window_funnel`, `window_funnel_events`: 1 – 32; `retention`, `sequence_match`, `sequence_count`, `sequence_match_events`: 2 – 32; `sequence_next_node`: base condition + 1 – 32 |
 | Interval type | No month-based intervals (days, hours, minutes, seconds only) |
+| Timestamp type | `TIMESTAMP` or `TIMESTAMPTZ` (`*_events` then return `TIMESTAMPTZ[]`); `TIMESTAMP_NS` is truncated to microseconds |
+| Pattern length | At most 1024 steps |
+| Configuration arguments | Pattern, window, mode, direction and base must be the same for every row of a group |
 | `sessionize` | Aggregate used with `OVER (... ORDER BY ...)` for per-row session IDs |
 | All other aggregates | Normally used with `GROUP BY` |
 

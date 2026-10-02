@@ -15,7 +15,7 @@ sequence_match(pattern VARCHAR, timestamp TIMESTAMP,
 | Parameter | Type | Description |
 |---|---|---|
 | `pattern` | `VARCHAR` | Pattern string using the syntax described below |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `cond1..condN` | `BOOLEAN` | Event conditions (2 to 32) |
 
 **Returns:** `BOOLEAN` -- `true` if the event stream contains a subsequence
@@ -117,8 +117,27 @@ So do a condition number above the number of conditions passed
 constraint with no `(?N)` or `.` before it (`time constraint must follow an
 event condition`).
 
+A pattern of more than 1024 steps is rejected (`pattern has more than 1024
+steps`); consecutive `.*` count once.
+
 A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
-conventions.
+conventions, as does a group with no rows or only rows whose timestamp is
+`NULL`.
+
+The `pattern` argument must be the same for every row of a group (normally a
+literal). A group with two different non-`NULL` values is an error, whatever
+the row order (`... the pattern argument must be the same for every row of a
+group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 
@@ -141,7 +160,10 @@ the extension used that search, and a group that did not match could take
 seconds (8.3–9.1 s for `(?1).*(?t<5)(?2).*(?3)` at 32,000 events). It now
 takes 0.004 s, and 0.78–0.89 s at 10 million events in one group (DuckDB
 1.5.6, 3 runs each). Finalize uses about 8 bytes per event of working
-memory, plus one byte per event for each `(?N)` or `.` step.
+memory, plus one bit per event for each `(?N)` or `.` step (an 801-step
+pattern over 1 million events peaked at 148 MB, against 819 MB before the
+bit packing). Patterns are capped at 1024 steps, and an allocation that fails
+raises an `out of memory` error instead of crashing.
 
 ## See Also
 

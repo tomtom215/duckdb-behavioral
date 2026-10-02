@@ -17,7 +17,7 @@ sequence_next_node(direction VARCHAR, base VARCHAR, timestamp TIMESTAMP,
 |---|---|---|
 | `direction` | `VARCHAR` | `'forward'` or `'backward'` |
 | `base` | `VARCHAR` | `'head'`, `'tail'`, `'first_match'`, or `'last_match'` |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `event_column` | `VARCHAR` | Value column (returned as result) |
 | `base_condition` | `BOOLEAN` | Condition for the base/anchor event |
 | `event1..eventN` | `BOOLEAN` | Sequential event conditions (1 to 32) |
@@ -129,11 +129,27 @@ instead of silently returning `NULL`:
   rejects these too)
 
 A `NULL` direction is treated as `'forward'` and a `NULL` base as
-`'first_match'`.
+`'first_match'`, so a `NULL` direction with base `'tail'` is the forbidden
+`forward`/`tail` combination. Direction and base names are case-insensitive.
 
 NULL inputs: a row with a NULL timestamp is skipped; a NULL value is kept as an
 event and can be returned as the next value; a NULL `base_condition` or event
 condition counts as false. (ClickHouse skips any row with a NULL argument.)
+
+The `direction` and `base` arguments must be the same for every row of a group
+(normally a literal). A group with two different non-`NULL` values is an
+error, whatever the row order (`... the direction argument must be the same
+for every row of a group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 

@@ -401,9 +401,11 @@ defined by `GROUP BY` for aggregate functions or `PARTITION BY` for `sessionize`
 
 Memory scales linearly with the number of events in that group: a single user
 with 10 million events needs about 160 MB for the event-collecting functions
-(16 bytes per event). While finalizing, `sequence_*` patterns outside the
-fast paths below also need about 8 bytes per event, plus one byte per event
-for each `(?N)` or `.` step.
+(16 bytes per event). While finalizing, `sequence_*` patterns that use more
+than conditions and `.*` also need about 8 bytes per event, plus one bit per event
+for each `(?N)` or `.` step; patterns are capped at 1024 steps. This memory is
+not counted against DuckDB's `memory_limit`; an allocation that fails raises
+an `out of memory` error instead of crashing.
 
 Time is linear for `window_funnel`, `retention`, `sessionize`,
 `sequence_next_node`, and for `sequence_*` patterns built only from
@@ -413,8 +415,9 @@ steps. With one group of 10 million events, `sequence_count` took 0.78–0.90 s
 for `(?1).*(?t<5)(?2).*(?3)` and for `(?1)(?t>=5)(?3)` (DuckDB 1.5.6, 3 runs
 each). Through v0.9.1 these patterns used a backtracking search that was
 quadratic when the pattern did not complete: 8.3–9.1 s at 32,000 events, and
-32–35 s for `sequence_match_events`. The matchers do not check for query
-interruption, so a single very large group cannot be cancelled mid-finalize.
+32–35 s for `sequence_match_events`. DuckDB's C API gives an aggregate no
+way to observe an interrupt, so a query cannot be cancelled while one group
+is being finalized.
 
 If you have users with extremely large event counts, consider pre-filtering to a
 relevant time window before applying behavioral functions:
@@ -514,8 +517,10 @@ GROUP BY user_id;
 
 They also work over running or sliding frames, for example
 `OVER (PARTITION BY user_id ORDER BY event_time)` gives a running funnel
-step per row. Avoid frames that cover the whole partition; see the next
-question.
+step per row; over large partitions that is slow (see
+[Why is my windowed query slow](#why-is-my-windowed-query-slow-or-using-a-lot-of-memory)).
+Avoid `OVER ()` and `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frames; see
+the next question.
 
 ### Which query shapes crash DuckDB?
 
@@ -525,22 +530,28 @@ DuckDB read out of bounds, and usually crash with a segmentation fault, when
 **any** aggregate registered through the C API, including every function in
 this extension, is called in these shapes:
 
-| Shape | Example |
-|---|---|
-| `ORDER BY` inside the call | `retention(c1, c2 ORDER BY ts)` |
-| Empty window | `window_funnel(...) OVER ()` |
-| Frame covering the whole partition | `OVER (PARTITION BY u ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)` |
+- **`ORDER BY` inside the call**, such as `retention(c1, c2 ORDER BY ts)`.
+  Drop it: every function sorts by timestamp itself.
+- **An empty window**, `OVER ()`. Use `OVER (PARTITION BY 1)` instead.
+- **A frame written `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`**,
+  with `ROWS` or `RANGE`. Use `OVER (PARTITION BY u)` with no `ORDER BY`,
+  which covers the whole partition without crashing.
 
-The extension cannot detect or refuse these: DuckDB passes a one-element state
-array while reporting several rows, and the C API has no bind hook through
-which an aggregate could reject the query. Verified on DuckDB 1.5.6 (still
-present) with valgrind, which also showed no invalid reads for `GROUP BY`,
-`FILTER`, `DISTINCT`, running frames (`OVER (... ORDER BY ts)`), sliding
-frames, `EXCLUDE`, or `OVER (PARTITION BY u)`.
+Verified on DuckDB 1.5.6, where all three exit with a segmentation fault
+(and on 1.3.2 and 1.4.4). The safe alternatives return the same values as
+the equivalent `GROUP BY` (0 mismatches over 50 partitions of 400 rows).
+Other frames that cover the whole partition do not crash: `OVER (PARTITION
+BY u)`, `ROWS BETWEEN 100000 PRECEDING AND 100000 FOLLOWING`, and `ROWS
+BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING` all ran cleanly.
 
-Workarounds: drop the `ORDER BY` inside the call (the functions sort by
-timestamp themselves), and compute a whole-partition value with `GROUP BY`
-and join it back:
+The extension cannot detect or refuse the crashing shapes: DuckDB passes a
+one-element state array while reporting several rows, and the C API has no
+bind hook through which an aggregate could reject the query. Valgrind showed
+no invalid reads for `GROUP BY`, `FILTER`, `DISTINCT`, running frames
+(`OVER (... ORDER BY ts)`), sliding frames, `EXCLUDE`, or `OVER (PARTITION
+BY u)`.
+
+A whole-partition value can also be computed with `GROUP BY` and joined back:
 
 ```sql
 WITH f AS (
@@ -549,6 +560,29 @@ WITH f AS (
 )
 SELECT e.*, f.step FROM events e JOIN f USING (user_id);
 ```
+
+### Why is my windowed query slow or using a lot of memory?
+
+Over a running frame (`OVER (ORDER BY ts)`) every row is a separate
+aggregate over all rows before it, so the event-collecting functions
+(`window_funnel`, `window_funnel_events`, the `sequence_*` functions,
+`sequence_next_node`) do work quadratic in the partition size. DuckDB also
+keeps about 2,048 of those frames in memory at once. For `window_funnel`
+over one 3-condition partition (DuckDB 1.5.6, one thread):
+
+| Rows in the partition | Time | Peak memory |
+|---|---|---|
+| 10,000 | 0.74 s | 287 MB |
+| 20,000 | 2.5 s | 603 MB |
+| 40,000 | 11.1 s | 1.25 GB |
+
+This is inherent to running frames through DuckDB's C API, which has no
+window-specific callback. Partition by user (`PARTITION BY user_id ORDER BY
+ts`) so each partition stays small, bound the frame (`ROWS BETWEEN 1000
+PRECEDING AND CURRENT ROW`; the cost is then proportional to rows times frame
+width), or use
+`GROUP BY` when one value per user is enough. `sessionize` is not affected:
+its state is a few integers.
 
 ### Can I nest these functions or use them in subqueries?
 

@@ -12,6 +12,44 @@ bump is appropriate.
 
 ### Fixed
 
+- **A long pattern on a large group no longer aborts DuckDB.**
+  - What happened: the sequence matcher's working memory (one byte per
+    event per step) sits outside DuckDB's `memory_limit`, and a failed
+    allocation aborted the process. `repeat('.', 60000)` over 60,000 rows
+    under a 3 GB limit exited with code 134.
+  - Changes:
+    - The working memory is now one bit per event per step: an 801-step
+      pattern over 1M events peaked at 148 MB (819 MB before).
+    - Patterns are capped at 1024 steps.
+    - Allocation failures in the matcher, and while collecting events in
+      update and combine, raise an `out of memory` error and the session
+      continues.
+- **Configuration arguments that differ between rows of a group are an
+  error.**
+  - What happened: the pattern, window, mode, direction and base were taken
+    from the first row each partial state happened to see. Results depended
+    on row order and thread scheduling: the same two rows gave 2 in one
+    order and 1 in the other. An invalid value on a later row was ignored.
+  - Now: every update and combine compares the values, so the error does
+    not depend on order. `NULL`s are still ignored.
+- **`window_funnel` with `strict_once` is 19–28× faster.** Measured on
+  DuckDB 1.5.6:
+  - 250k rows in 1,000 groups with 31 conditions: 4.0–4.1 s → 0.18–0.21 s
+    (default mode 0.09–0.10 s).
+  - A 1M-row same-timestamp burst: 6.5 s → 0.23 s.
+  - Results matched the exhaustive reference in all 648,000 fuzzed cases.
+- **`sequence_match_events` without a full match is up to 3× faster** for
+  gaps of nothing, `.*` or one time constraint other than `==`. A 201-step
+  pattern over 1M events took 10.1 s → 3.3 s.
+- **`sequence_next_node` with a `NULL` direction and base `'tail'`** returned
+  `NULL`. A `NULL` direction means `'forward'`, so this is now the documented
+  `forward`/`tail` error. The check runs at finalize, independent of row order.
+- **Error messages**:
+  - Multi-byte characters are named whole (`'é'` printed as `'Ã'` before).
+  - Long patterns are shortened to 60 characters plus their length.
+- **CI could not fail**: the clippy, test, semver and coverage steps piped
+  into `tee` under `bash -e` without `pipefail`, so their status was always 0.
+
 - **Sequence patterns no longer take quadratic time per group.**
   `sequence_match`, `sequence_count` and `sequence_match_events` matched any
   pattern beyond the two fast-path shapes with a backtracking search that
@@ -91,6 +129,14 @@ bump is appropriate.
 
 ### Behaviour changes
 
+- A group whose configuration arguments differ between rows is an error (see
+  **Fixed**).
+- Patterns longer than 1024 steps are rejected.
+- `window_funnel` mode names are case-insensitive, like `sequence_next_node`'s
+  direction and base (`'STRICT_ORDER'` was an error).
+- `sequence_match` / `sequence_count` return `NULL` for a group whose
+  timestamps are all `NULL`, as for an empty group (was `false` / `0`).
+
 - Errors now raised (previously silently accepted, now rejected as in
   ClickHouse or because the input has no defined meaning):
   - `window_funnel` with `'allow_reentry'` but without `'strict_order'`.
@@ -107,6 +153,15 @@ bump is appropriate.
 - `window_funnel_events` returns the chain with the latest entry among those
   reaching the most steps.
 
+### Added
+
+- **`TIMESTAMPTZ` is accepted wherever `TIMESTAMP` is.** Before, it was a
+  binder error, and the `::TIMESTAMP` workaround converts to local time,
+  which can reorder events around a daylight-saving change.
+  `window_funnel_events` and `sequence_match_events` return `TIMESTAMPTZ[]`
+  for `TIMESTAMPTZ` input. The extension now registers 540 overloads, and
+  `LOAD` still takes 0.03–0.12 s.
+
 ### Changed
 
 - quack-rs 0.15.0 → 0.18.0. libduckdb-sys / duckdb 1.10505.0 → 1.10506.0
@@ -115,14 +170,24 @@ bump is appropriate.
 - rustls 0.23.42 → 0.23.45 (RUSTSEC-2026-0285; build-time downloader only).
 - CI: the MSRV job now actually runs 1.87 (`cargo +1.87`; the toolchain file
   had redirected it to stable). `e2e.yml` gains a `compat` job.
-- Rust API: `pattern::executor::execute_pattern` and
-  `execute_pattern_events` now return `MatchResult` / `Vec<i64>` directly
-  instead of a `Result`, since matching can no longer fail. Breaking for
-  Rust callers of the library; the SQL interface is unaffected.
-  `cargo-semver-checks` (0.50.0, which has no lint for changed return types)
-  reports no required update, so it does not catch this.
 
 ### Documentation
+
+- The README and docs-index "User Flow Analysis" example used `GROUP BY ALL`
+  over aggregates only. That merged all users into one sequence and counted
+  events (it returned `Cart | 9` instead of `Cart 2, Search 1`). It now
+  groups by user first.
+- The crash list is precise. It covers `agg(... ORDER BY ...)`, `OVER ()` and
+  `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frames, with verified safe
+  alternatives: `OVER (PARTITION BY 1)`, and `OVER (PARTITION BY u)` without
+  `ORDER BY`.
+- New FAQ and README sections:
+  - Running window frames are quadratic for the event-collecting functions
+    (40,000 rows: 11.1 s, 1.25 GB).
+  - A query cannot be cancelled while one group is finalized; the C API
+    exposes no interrupt check.
+  - Memory outside `memory_limit`.
+- `TIMESTAMP_NS` input is truncated to microseconds.
 
 - Documented DuckDB's C API defect duckdb/duckdb#26109, verified under
   valgrind on 1.5.6: `agg(... ORDER BY ...)`, `OVER ()` and whole-partition

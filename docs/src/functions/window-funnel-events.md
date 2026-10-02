@@ -22,10 +22,10 @@ window_funnel_events(window INTERVAL, mode VARCHAR, timestamp TIMESTAMP,
 |---|---|---|
 | `window` | `INTERVAL` | Maximum time window from the first step |
 | `mode` | `VARCHAR` | Optional comma-separated mode string |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `cond1..condN` | `BOOLEAN` | Funnel step conditions (1 to 32) |
 
-**Returns:** `TIMESTAMP[]` -- one timestamp per matched funnel step, in match
+**Returns:** `TIMESTAMP[]` (`TIMESTAMPTZ[]` for `TIMESTAMPTZ` input) -- one timestamp per matched funnel step, in match
 order. The list length always equals `window_funnel`'s return value for the
 same arguments. Empty list when the entry condition never matched.
 
@@ -78,6 +78,21 @@ Shares `window_funnel`'s validation: unknown mode strings, month-based or
 negative windows, and `allow_reentry` without `strict_order` abort the query
 with a descriptive SQL error. A row whose window is `NULL` is skipped; a
 `NULL` mode means no mode.
+
+The `window` and `mode` arguments must be the same for every row of a group
+(normally a literal). A group with two different non-`NULL` values is an
+error, whatever the row order (`... the window argument must be the same for
+every row of a group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 

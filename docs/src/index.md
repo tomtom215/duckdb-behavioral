@@ -99,18 +99,20 @@ GROUP BY user_id;
 ### User Journey / Flow Analysis
 
 Discover what users do *after* a specific behavioral sequence. What page do
-users visit after navigating from Home to Product?
+users visit after navigating from Home to Product? The inner query computes one
+next page per user; the outer query counts users per page (without the inner
+`GROUP BY user_id`, all users' events would form one sequence).
 
 ```sql
-SELECT
-  sequence_next_node('forward', 'first_match', event_time, page,
-    page = 'Home',
-    page = 'Home',
-    page = 'Product'
-  ) as next_page,
-  COUNT(*) as user_count
-FROM events
-GROUP BY ALL
+SELECT next_page, COUNT(*) AS user_count
+FROM (
+  SELECT user_id,
+    sequence_next_node('forward', 'first_match', event_time, page,
+      page = 'Home', page = 'Home', page = 'Product') AS next_page
+  FROM events
+  GROUP BY user_id
+)
+GROUP BY next_page
 ORDER BY user_count DESC;
 ```
 

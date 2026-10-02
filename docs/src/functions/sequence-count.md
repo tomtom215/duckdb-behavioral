@@ -15,7 +15,7 @@ sequence_count(pattern VARCHAR, timestamp TIMESTAMP,
 | Parameter | Type | Description |
 |---|---|---|
 | `pattern` | `VARCHAR` | Pattern string (same syntax as `sequence_match`) |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `cond1..condN` | `BOOLEAN` | Event conditions (2 to 32) |
 
 **Returns:** `BIGINT` -- the number of non-overlapping matches of the pattern
@@ -84,6 +84,21 @@ before it are errors too (see [`sequence_match`](./sequence-match.md#errors)).
 
 A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
 conventions.
+
+The `pattern` argument must be the same for every row of a group (normally a
+literal). A group with two different non-`NULL` values is an error, whatever
+the row order (`... the pattern argument must be the same for every row of a
+group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 

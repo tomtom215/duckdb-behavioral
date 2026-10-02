@@ -66,7 +66,7 @@ The Makefile set `USE_UNSTABLE_C_API=1` under a comment saying the Rust bindings
 `catch_unwind` catches nothing under `abort`; the runtime aborts before unwinding begins. Combined with raw `extern "C"` callbacks, any panic in an aggregate killed the user's DuckDB process. Use the SDK's guarded callback macros and `panic = "unwind"`, and test the profile, because nothing else will notice the setting coming back.
 
 **18. A DuckDB C API defect cannot always be fixed from the extension.**
-`agg(x ORDER BY y)`, `OVER ()` and whole-partition frames hand every C API aggregate a one-element state array with `count > 1` (duckdb/duckdb#26109). The callback cannot detect it without performing the out-of-bounds read, and the C API has no aggregate bind hook to refuse the query. Map the exact shapes with valgrind, document them where users look, and give the workaround.
+`agg(x ORDER BY y)`, `OVER ()` and `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frames hand every C API aggregate a one-element state array with `count > 1` (duckdb/duckdb#26109). The callback cannot detect it without performing the out-of-bounds read, and the C API has no aggregate bind hook to refuse the query. Map the exact shapes with valgrind, document them where users look, and give the workaround.
 
 **19. A toolchain file overrides the toolchain your CI step installs.**
 `rust-toolchain.toml` pins `channel = "stable"`, so the MSRV job's `dtolnay/rust-toolchain@1.87` followed by a bare `cargo check` ran stable and never tested 1.87. Invoke the toolchain explicitly (`cargo +1.87`).

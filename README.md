@@ -224,15 +224,22 @@ FROM funnels GROUP BY step ORDER BY step;
 
 ### User Flow Analysis
 
-Discover what page users visit after Home → Product:
+Discover what page users visit after Home → Product. The inner query
+computes one next page per user; the outer query counts users per page
+(without the inner `GROUP BY user_id`, all users' events would form one
+sequence):
 
 ```sql
-SELECT
-  sequence_next_node('forward', 'first_match', event_time, page,
-    page = 'Home', page = 'Home', page = 'Product'
-  ) as next_page,
-  COUNT(*) as user_count
-FROM events GROUP BY ALL ORDER BY user_count DESC;
+SELECT next_page, COUNT(*) AS user_count
+FROM (
+  SELECT user_id,
+    sequence_next_node('forward', 'first_match', event_time, page,
+      page = 'Home', page = 'Home', page = 'Product') AS next_page
+  FROM events
+  GROUP BY user_id
+)
+GROUP BY next_page
+ORDER BY user_count DESC;
 ```
 
 ### Pattern Frequency
@@ -514,15 +521,33 @@ for the full SemVer rules applied to SQL function signatures.
 
 ## Known Limitations
 
-- **Crash in DuckDB's C API aggregate path.** `ORDER BY` inside the call
-  (`retention(c1, c2 ORDER BY ts)`), `OVER ()`, and window frames that span
-  the whole partition make DuckDB read out of bounds and usually segfault.
-  This affects every C API aggregate, not just this extension
+- **Crash in DuckDB's C API aggregate path.** Three query shapes make DuckDB
+  read out of bounds and usually segfault, for every C API aggregate, not
+  just this extension
   ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109);
-  present in DuckDB 1.5.6). None of these shapes is needed: the functions sort
-  by timestamp themselves, and a whole-partition value is a `GROUP BY` joined
-  back. Details and the verified-safe shapes are in the
+  present in DuckDB 1.5.6): `ORDER BY` inside the call
+  (`retention(c1, c2 ORDER BY ts)`), `OVER ()`, and a frame written as
+  `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`. None is needed: the
+  functions sort by timestamp themselves, `OVER (PARTITION BY 1)` replaces
+  `OVER ()`, and `OVER (PARTITION BY user_id)` (no `ORDER BY`) gives the
+  whole-partition value. Details and the verified-safe shapes are in the
   [FAQ](https://tomtom215.github.io/duckdb-behavioral/faq.html#which-query-shapes-crash-duckdb).
+- **Running window frames are quadratic.** In a running frame
+  (`OVER (ORDER BY ts)`) each row is a separate aggregate over all earlier
+  rows, and DuckDB holds about 2,048 such frames at once: one 40,000-row partition took 11.1 s and 1.25 GB for
+  `window_funnel` (DuckDB 1.5.6, one thread). Keep running frames to small
+  partitions (`PARTITION BY user_id`), bound them (`ROWS 1000 PRECEDING`), or
+  use `GROUP BY`. `sessionize` is the exception: its state is constant-size.
+- **No cancellation within one group.** DuckDB's C API gives an aggregate no
+  way to observe an interrupt, so Ctrl-C takes effect only once the group
+  being finalized is done. For the `sequence_*` functions that time grows
+  with the number of events times the number of pattern steps: 0.8–1.3 s for
+  10 million events and a 3- to 5-step pattern, 3.3 s for 1 million events
+  and a 201-step pattern (DuckDB 1.5.6). Patterns are capped at 1024 steps.
+- **Memory outside `memory_limit`.** Collected events (16 bytes each; more for
+  `sequence_next_node` values) and the sequence matcher's working memory live
+  on the Rust heap, which DuckDB does not account for or spill. An allocation
+  that fails raises an `out of memory` error instead of crashing.
 
 ## Requirements
 

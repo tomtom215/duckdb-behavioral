@@ -13,7 +13,7 @@ sessionize(timestamp TIMESTAMP, gap INTERVAL) -> BIGINT
 
 | Parameter | Type | Description |
 |---|---|---|
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `gap` | `INTERVAL` | Maximum allowed inactivity gap between events in the same session |
 
 **Returns:** `BIGINT` -- the session ID (1-indexed, monotonically increasing within each partition).
@@ -23,8 +23,8 @@ sessionize(timestamp TIMESTAMP, gap INTERVAL) -> BIGINT
 `sessionize` is an aggregate designed to be used as a window function with
 `OVER (PARTITION BY ... ORDER BY timestamp)`. Order the window by the
 timestamp, ascending, and keep the default frame (or any frame ending at
-`CURRENT ROW`). Do not use `OVER ()` or a frame covering the whole partition:
-DuckDB crashes on those for every C API aggregate
+`CURRENT ROW`). Do not use `OVER ()` or a `BETWEEN UNBOUNDED PRECEDING AND
+UNBOUNDED FOLLOWING` frame: DuckDB crashes on those for every C API aggregate
 ([FAQ](../faq.md#which-query-shapes-crash-duckdb)). Without `OVER`, it returns
 the number of sessions in the group.
 
@@ -75,6 +75,17 @@ produces a `NULL` session ID for that row. The rule follows the frame's last
 row, so with a frame that ends elsewhere (`... AND 1 FOLLOWING`) it applies to
 that row instead. A row whose gap is `NULL` is left out of the session chain
 and receives the current session ID (`NULL` if no earlier row counted).
+
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 

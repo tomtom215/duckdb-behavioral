@@ -20,7 +20,7 @@ window_funnel(window INTERVAL, mode VARCHAR, timestamp TIMESTAMP,
 |---|---|---|
 | `window` | `INTERVAL` | Maximum time window from the first step |
 | `mode` | `VARCHAR` | Optional comma-separated mode string |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `cond1..condN` | `BOOLEAN` | Funnel step conditions (1 to 32) |
 
 **Returns:** `INTEGER` -- the number of matched funnel steps (0 to N). A return
@@ -99,7 +99,8 @@ under `strict_once`; see
 
 ## Modes
 
-Modes combine via a comma-separated string parameter, as in ClickHouse.
+Modes combine via a comma-separated string parameter, as in ClickHouse. Mode names are
+case-insensitive, and whitespace around them is ignored.
 
 | Mode | Description |
 |---|---|
@@ -145,6 +146,21 @@ silently producing wrong results:
 
 A row whose window is `NULL` is skipped, like a row with a `NULL` timestamp.
 A `NULL` mode means no mode.
+
+The `window` and `mode` arguments must be the same for every row of a group
+(normally a literal). A group with two different non-`NULL` values is an
+error, whatever the row order (`... the window argument must be the same for
+every row of a group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 
