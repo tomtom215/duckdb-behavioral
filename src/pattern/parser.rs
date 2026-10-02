@@ -77,6 +77,14 @@ impl CompiledPattern {
     }
 }
 
+/// Maximum number of steps in a pattern (after collapsing `.*.*`).
+///
+/// The general matcher's working memory is one bit per event per `(?N)` or
+/// `.` step, outside `DuckDB`'s `memory_limit`, so the step count bounds it:
+/// 1024 steps over 10 million events is 1.28 GB. Real patterns are far
+/// shorter.
+pub const MAX_PATTERN_STEPS: usize = 1024;
+
 /// Error returned when pattern parsing fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -137,6 +145,7 @@ pub fn parse_pattern(input: &str) -> Result<CompiledPattern, PatternError> {
 }
 
 struct Parser<'a> {
+    text: &'a str,
     input: &'a [u8],
     pos: usize,
 }
@@ -144,9 +153,20 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     const fn new(input: &'a str) -> Self {
         Self {
+            text: input,
             input: input.as_bytes(),
             pos: 0,
         }
+    }
+
+    /// The character at the current position, for error messages. The
+    /// parser only steps over ASCII bytes, so `pos` is a character boundary
+    /// and a multi-byte character is reported whole (not as its first byte).
+    fn current_char(&self) -> char {
+        self.text
+            .get(self.pos..)
+            .and_then(|rest| rest.chars().next())
+            .unwrap_or(char::REPLACEMENT_CHARACTER)
     }
 
     fn parse(&mut self) -> Result<Vec<PatternStep>, PatternError> {
@@ -179,6 +199,12 @@ impl<'a> Parser<'a> {
                     position: start,
                 });
             }
+            if steps.len() == MAX_PATTERN_STEPS {
+                return Err(PatternError {
+                    message: format!("pattern has more than {MAX_PATTERN_STEPS} steps"),
+                    position: start,
+                });
+            }
             steps.push(step);
         }
         Ok(steps)
@@ -188,8 +214,8 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(b'(') => self.parse_group(),
             Some(b'.') => self.parse_dot(),
-            Some(c) => Err(PatternError {
-                message: format!("unexpected character '{}'", char::from(c)),
+            Some(_) => Err(PatternError {
+                message: format!("unexpected character '{}'", self.current_char()),
                 position: self.pos,
             }),
             None => Err(PatternError {
@@ -206,8 +232,11 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(b't') => self.parse_time_constraint(),
             Some(c) if c.is_ascii_digit() => self.parse_condition(),
-            Some(c) => Err(PatternError {
-                message: format!("expected digit or 't' after '(?', got '{}'", char::from(c)),
+            Some(_) => Err(PatternError {
+                message: format!(
+                    "expected digit or 't' after '(?', got '{}'",
+                    self.current_char()
+                ),
                 position: self.pos,
             }),
             None => Err(PatternError {
@@ -350,11 +379,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(())
             }
-            Some(c) => Err(PatternError {
+            Some(_) => Err(PatternError {
                 message: format!(
                     "expected '{}', got '{}'",
                     char::from(expected),
-                    char::from(c)
+                    self.current_char()
                 ),
                 position: self.pos,
             }),
@@ -640,5 +669,49 @@ mod overflow_tests {
             err.message
         );
         assert_eq!(err.position, 9, "position points at the number");
+    }
+}
+
+#[cfg(test)]
+mod step_limit_tests {
+    use super::*;
+
+    #[test]
+    fn pattern_at_the_step_limit_parses() {
+        let pattern = "(?1)".repeat(MAX_PATTERN_STEPS);
+        assert_eq!(
+            parse_pattern(&pattern).unwrap().steps.len(),
+            MAX_PATTERN_STEPS
+        );
+    }
+
+    #[test]
+    fn pattern_over_the_step_limit_is_rejected() {
+        let pattern = "(?1)".repeat(MAX_PATTERN_STEPS + 1);
+        let err = parse_pattern(&pattern).unwrap_err();
+        assert!(err.message.contains("more than 1024 steps"), "{err}");
+        assert_eq!(err.position, 4 * MAX_PATTERN_STEPS);
+    }
+
+    #[test]
+    fn collapsed_wildcards_do_not_count_toward_the_limit() {
+        let pattern = format!("{}(?1)", ".*".repeat(5 * MAX_PATTERN_STEPS));
+        assert_eq!(parse_pattern(&pattern).unwrap().steps.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod error_text_tests {
+    use super::*;
+
+    /// A multi-byte character is named whole in the error, not as the Latin-1
+    /// reading of its first byte (`'é'` used to print as `'Ã'`).
+    #[test]
+    fn non_ascii_character_is_reported_whole() {
+        let err = parse_pattern("(?1)é(?2)").unwrap_err();
+        assert!(err.message.contains("'é'"), "{err}");
+        assert_eq!(err.position, 4);
+        let err = parse_pattern("(?\u{ff11})").unwrap_err();
+        assert!(err.message.contains("'\u{ff11}'"), "{err}");
     }
 }

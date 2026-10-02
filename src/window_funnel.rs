@@ -152,15 +152,20 @@ impl FunnelMode {
     /// Returns `None` for unrecognized mode strings.
     #[must_use]
     pub fn parse_mode_str(s: &str) -> Option<Self> {
-        match s {
-            "strict" | "strict_deduplication" => Some(Self::STRICT),
-            "strict_order" => Some(Self::STRICT_ORDER),
-            "timestamp_dedup" => Some(Self::STRICT_DEDUPLICATION),
-            "strict_increase" => Some(Self::STRICT_INCREASE),
-            "strict_once" => Some(Self::STRICT_ONCE),
-            "allow_reentry" => Some(Self::ALLOW_REENTRY),
-            _ => None,
-        }
+        // Case-insensitive, like `sequence_next_node`'s direction and base.
+        const NAMES: [(&str, FunnelMode); 7] = [
+            ("strict", FunnelMode::STRICT),
+            ("strict_deduplication", FunnelMode::STRICT),
+            ("strict_order", FunnelMode::STRICT_ORDER),
+            ("timestamp_dedup", FunnelMode::STRICT_DEDUPLICATION),
+            ("strict_increase", FunnelMode::STRICT_INCREASE),
+            ("strict_once", FunnelMode::STRICT_ONCE),
+            ("allow_reentry", FunnelMode::ALLOW_REENTRY),
+        ];
+        NAMES
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(s))
+            .map(|&(_, flag)| flag)
     }
 
     /// Parses a comma-separated mode string into a combined `FunnelMode`.
@@ -642,6 +647,11 @@ pub struct WindowFunnelState {
     pub num_conditions: usize,
     /// Funnel mode (combinable bitmask).
     pub mode: FunnelMode,
+    /// Whether `window_size_us` came from a row (a zero window is valid, so
+    /// zero cannot mean "unset").
+    pub window_set: bool,
+    /// Whether `mode` came from a row's non-`NULL` mode argument.
+    pub mode_set: bool,
 }
 
 impl WindowFunnelState {
@@ -653,6 +663,8 @@ impl WindowFunnelState {
             window_size_us: 0,
             num_conditions: 0,
             mode: FunnelMode::DEFAULT,
+            window_set: false,
+            mode_set: false,
         }
     }
 
@@ -694,12 +706,15 @@ impl WindowFunnelState {
         self.num_conditions = self.num_conditions.max(other.num_conditions);
         // Propagate window_size and mode from whichever state has them set.
         // DuckDB's segment tree creates fresh (zero-initialized) target states
-        // and combines source states into them, so these fields must be propagated.
-        if self.window_size_us == 0 && other.window_size_us != 0 {
+        // and combines source states into them, so these fields must be
+        // propagated. (The FFI layer rejects groups whose rows disagree.)
+        if !self.window_set && (other.window_set || self.window_size_us == 0) {
             self.window_size_us = other.window_size_us;
+            self.window_set = other.window_set;
         }
-        if self.mode.is_default() && !other.mode.is_default() {
+        if !self.mode_set && (other.mode_set || self.mode.is_default()) {
             self.mode = other.mode;
+            self.mode_set = other.mode_set;
         }
     }
 

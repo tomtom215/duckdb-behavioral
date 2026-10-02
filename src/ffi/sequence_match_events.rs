@@ -11,14 +11,11 @@
 //! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
 //! for LIST output.
 
-use crate::common::event::Event;
-use crate::pattern::parser::parse_pattern;
+use super::sequence::{combine_impl, update_impl};
 use crate::sequence::SequenceState;
-use libduckdb_sys::*;
 use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
-use quack_rs::vector::VectorReader;
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
@@ -68,85 +65,18 @@ pub unsafe fn register_sequence_match_events(
 // SAFETY: `input` is a valid DuckDB data chunk with columns (VARCHAR, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let row_count = duckdb_data_chunk_get_size(input) as usize;
-        let col_count = duckdb_data_chunk_get_column_count(input) as usize;
-
-        let pattern_reader = VectorReader::new(input, 0);
-        let ts_reader = VectorReader::new(input, 1);
-        let cond_readers: Vec<VectorReader> = (2..col_count)
-            .map(|c| VectorReader::new(input, c))
-            .collect();
-
-        for i in 0..row_count {
-            let Some(state) = FfiState::<SequenceState>::with_state_mut(*states.add(i)) else {
-                continue;
-            };
-
-            // Validated eagerly: a malformed pattern aborts the query with the
-            // parser's position-annotated message instead of silently
-            // returning an empty list at finalize.
-            if state.pattern_str.is_none() && pattern_reader.is_valid(i) {
-                let s = pattern_reader.read_str(i);
-                state.set_pattern(s);
-                match parse_pattern(s) {
-                    Err(e) => {
-                        info.set_error(&format!("invalid sequence pattern '{s}': {e}"));
-                        return;
-                    }
-                    // As in ClickHouse, a condition number beyond those
-                    // passed is an error, not a step that never matches.
-                    Ok(p) if p.max_condition().is_some_and(|n| n > cond_readers.len()) => {
-                        info.set_error(&format!(
-                            "invalid sequence pattern '{s}': condition (?{}) is out of range; \
-                             {} conditions were passed",
-                            p.max_condition().unwrap_or(0),
-                            cond_readers.len()
-                        ));
-                        return;
-                    }
-                    Ok(_) => {}
-                }
-            }
-
-            if !ts_reader.is_valid(i) {
-                continue;
-            }
-
-            let timestamp = ts_reader.read_i64(i);
-
-            let mut bitmask: u32 = 0;
-            for (c, reader) in cond_readers.iter().enumerate() {
-                if reader.is_valid(i) && reader.read_bool(i) {
-                    bitmask |= 1 << c;
-                }
-            }
-
-            state.update(Event::new(timestamp, bitmask));
-        }
-    }
+    unsafe { update_impl(info, input, states, "sequence_match_events") }
 });
 
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
-quack_rs::aggregate_combine_callback!(state_combine, |_info, source, target, count| {
-    unsafe {
-        for i in 0..count as usize {
-            let Some(src) = FfiState::<SequenceState>::with_state(*source.add(i)) else {
-                continue;
-            };
-            let Some(tgt) = FfiState::<SequenceState>::with_state_mut(*target.add(i)) else {
-                continue;
-            };
-
-            tgt.combine_in_place(src);
-        }
-    }
+quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
+    unsafe { combine_impl(info, source, target, count, "sequence_match_events") }
 });
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB LIST(TIMESTAMP) vector. Each list entry is populated with the
-// matched condition timestamps. Empty list on no match or pattern error.
+// matched condition timestamps. Empty list on no match or a NULL pattern; any
+// other error aborts the query.
 quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
     unsafe {
         let info = AggregateFunctionInfo::new(info);
@@ -194,6 +124,7 @@ quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::event::Event;
     use quack_rs::testing::AggregateTestHarness;
 
     #[test]

@@ -43,7 +43,9 @@ pub struct SequenceState {
     pub events: Vec<Event>,
     /// Pattern string (parsed on first use in finalize).
     pub pattern_str: Option<String>,
-    /// Cached compiled pattern (populated during finalize).
+    /// Cached compiled pattern (set with the pattern by
+    /// [`set_compiled_pattern`](Self::set_compiled_pattern), or compiled on
+    /// first use in finalize).
     compiled_pattern: Option<CompiledPattern>,
 }
 
@@ -62,6 +64,15 @@ impl SequenceState {
     pub fn set_pattern(&mut self, pattern: &str) {
         if self.pattern_str.is_none() {
             self.pattern_str = Some(pattern.to_string());
+        }
+    }
+
+    /// Sets the pattern string together with its already-compiled form, so
+    /// finalize does not parse it again. Ignored if a pattern is already set.
+    pub fn set_compiled_pattern(&mut self, pattern: &str, compiled: CompiledPattern) {
+        if self.pattern_str.is_none() {
+            self.pattern_str = Some(pattern.to_string());
+            self.compiled_pattern = Some(compiled);
         }
     }
 
@@ -101,15 +112,14 @@ impl SequenceState {
     /// provides O(N) amortized total copies for a chain of N single-event
     /// combines, compared to O(N²) when allocating a new Vec per combine.
     ///
-    /// The compiled pattern is preserved when `self` already has one, avoiding
-    /// redundant recompilation in finalize. The pattern string is invariant
-    /// within a single query, so `self.compiled_pattern` remains valid.
+    /// When `self` has no pattern yet it takes `other`'s, together with
+    /// `other`'s compiled form, so finalize does not recompile it. (The FFI
+    /// layer rejects groups whose rows carry different patterns.)
     pub fn combine_in_place(&mut self, other: &Self) {
         self.events.extend_from_slice(&other.events);
         if self.pattern_str.is_none() {
             self.pattern_str.clone_from(&other.pattern_str);
-            // Pattern string changed, invalidate cached compilation
-            self.compiled_pattern = None;
+            self.compiled_pattern.clone_from(&other.compiled_pattern);
         }
     }
 
@@ -126,7 +136,7 @@ impl SequenceState {
             .compiled_pattern
             .as_ref()
             .expect("compiled_pattern was set on the line above");
-        Ok(execute_pattern(pattern, &self.events, count_all))
+        execute_pattern(pattern, &self.events, count_all)
     }
 
     /// Executes `sequence_match` — returns true if the pattern matches.
@@ -167,7 +177,7 @@ impl SequenceState {
             .compiled_pattern
             .as_ref()
             .expect("compiled_pattern was set on the line above");
-        Ok(execute_pattern_events(pattern, &self.events))
+        execute_pattern_events(pattern, &self.events)
     }
 }
 

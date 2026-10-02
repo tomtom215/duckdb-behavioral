@@ -88,3 +88,43 @@ pub unsafe fn register_all(con: &Connection) -> Result<(), ExtensionError> {
 
     Ok(())
 }
+
+/// The raw 16-byte `duckdb_string_t` slots of a `VARCHAR` column, for a
+/// cheap "same string as the previous row" check on configuration arguments
+/// that are normally constant.
+///
+/// Equal slots imply equal strings: a slot holds the length and either the
+/// whole string inline (at most 12 bytes) or a 4-byte prefix plus a pointer
+/// to the bytes, so equal slots have equal lengths and equal bytes (or point
+/// at the same bytes). Unequal slots prove nothing, so callers fall back to
+/// comparing the strings.
+pub struct RawStringSlots(*const [u8; 16]);
+
+impl RawStringSlots {
+    /// # Safety
+    ///
+    /// `chunk` must be a valid data chunk whose column `col` is a `VARCHAR`
+    /// vector, alive for as long as the returned value is used.
+    pub unsafe fn new(chunk: libduckdb_sys::duckdb_data_chunk, col: usize) -> Self {
+        // SAFETY: the caller guarantees `chunk` is valid and `col` is a
+        // VARCHAR column; `duckdb_vector_get_data` returns that vector's
+        // array of 16-byte `duckdb_string_t` slots, one per row.
+        unsafe {
+            let vector = libduckdb_sys::duckdb_data_chunk_get_vector(chunk, col as u64);
+            Self(libduckdb_sys::duckdb_vector_get_data(vector).cast::<[u8; 16]>())
+        }
+    }
+
+    /// The slot of row `i`.
+    ///
+    /// # Safety
+    ///
+    /// `i` must be below the chunk's row count. (A NULL row's slot may hold
+    /// stale bytes, which is harmless for an equality pre-check: it is only
+    /// read, never dereferenced.)
+    pub unsafe fn get(&self, i: usize) -> [u8; 16] {
+        // SAFETY: the vector holds one slot per row and `i` is in bounds
+        // (caller contract); `[u8; 16]` has alignment 1.
+        unsafe { *self.0.add(i) }
+    }
+}

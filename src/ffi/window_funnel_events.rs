@@ -14,7 +14,7 @@ use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
 
-use super::window_funnel::{state_combine, update_impl};
+use super::window_funnel::{combine_impl, update_impl};
 
 /// Minimum number of boolean condition parameters for `window_funnel_events`.
 const MIN_CONDITIONS: usize = 1;
@@ -53,7 +53,7 @@ pub unsafe fn register_window_funnel_events(
             }
             b.ffi_state::<WindowFunnelState>()
                 .update(state_update)
-                .combine(state_combine)
+                .combine(events_combine)
                 .finalize(state_finalize)
         })
         // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
@@ -67,7 +67,7 @@ pub unsafe fn register_window_funnel_events(
             }
             b.ffi_state::<WindowFunnelState>()
                 .update(state_update_with_mode)
-                .combine(state_combine)
+                .combine(events_combine)
                 .finalize(state_finalize)
         });
     // SAFETY: `con` is the connection the entry point registers on (this
@@ -94,6 +94,11 @@ quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, state
     unsafe {
         update_impl(info, input, states, true, "window_funnel_events");
     }
+});
+
+// SAFETY: `source` and `target` point to `count` aggregate state pointers.
+quack_rs::aggregate_combine_callback!(events_combine, |info, source, target, count| {
+    unsafe { combine_impl(info, source, target, count, "window_funnel_events") }
 });
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a

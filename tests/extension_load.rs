@@ -992,3 +992,178 @@ fn sequence_next_node_rejects_end_anchored_chains() {
         assert!(err.contains("cannot be combined"), "{sql}: {err}");
     }
 }
+
+/// Configuration arguments must be constant within a group. Before 0.10.0
+/// the first value a partial state saw won, so the result (and whether an
+/// invalid later value raised an error) depended on row order. Each case is
+/// run in both row orders and must fail both times.
+#[test]
+fn differing_configuration_in_one_group_is_an_error() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE cfg AS SELECT * FROM (VALUES
+            (1, TIMESTAMP '2024-01-01 00:00:00', 'a', INTERVAL 1 MINUTE, 'strict_order',
+             '(?1)(?2)', 'forward', 'first_match'),
+            (2, TIMESTAMP '2024-01-01 00:30:00', 'b', INTERVAL 1 HOUR, 'strict_once',
+             '(?2)', 'backward', 'last_match'))
+          t(i, ts, ev, win, mode, pat, dir, base);",
+    )
+    .unwrap();
+    let cases = [
+        ("window", "window_funnel(win, ts, ev = 'a', ev = 'b')"),
+        (
+            "window",
+            "len(window_funnel_events(win, ts, ev = 'a', ev = 'b'))",
+        ),
+        (
+            "mode",
+            "window_funnel(INTERVAL 1 HOUR, mode, ts, ev = 'a', ev = 'b')",
+        ),
+        (
+            "pattern",
+            "sequence_match(pat, ts, ev = 'a', ev = 'b')::INT",
+        ),
+        (
+            "pattern",
+            "sequence_count(pat, ts, ev = 'a', ev = 'b')::INT",
+        ),
+        (
+            "pattern",
+            "len(sequence_match_events(pat, ts, ev = 'a', ev = 'b'))",
+        ),
+        (
+            "direction",
+            "len(sequence_next_node(dir, 'first_match', ts, ev, true, true))",
+        ),
+        (
+            "base",
+            "len(sequence_next_node('forward', base, ts, ev, true, true))",
+        ),
+    ];
+    for (argument, call) in cases {
+        for order in ["i", "i DESC"] {
+            let sql = format!("SELECT {call} FROM (SELECT * FROM cfg ORDER BY {order})");
+            let err = db
+                .query_one::<i64>(&sql)
+                .map(|v| format!("returned {v}"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(&format!("the {argument} argument must be the same")),
+                "{sql}: {err}"
+            );
+        }
+    }
+
+    // An invalid value on a later row is an error in either order (it used
+    // to be ignored when a valid value came first).
+    for order in ["i", "i DESC"] {
+        let sql = format!(
+            "SELECT window_funnel(INTERVAL 1 HOUR, m, ts, ev = 'a', ev = 'b') FROM
+             (SELECT *, CASE i WHEN 1 THEN 'strict_order' ELSE 'bogus_mode' END AS m
+              FROM cfg ORDER BY {order})"
+        );
+        assert!(db.query_one::<i64>(&sql).is_err(), "{sql}");
+    }
+
+    // Repeated equal values, equivalent spellings and NULLs are not conflicts.
+    let same: i64 = db
+        .query_one(
+            "SELECT window_funnel(w, m, ts, ev = 'a', ev = 'b') FROM
+             (SELECT *, CASE i WHEN 1 THEN INTERVAL 1 HOUR ELSE INTERVAL 60 MINUTE END AS w,
+                        CASE i WHEN 1 THEN 'strict_order' ELSE ' STRICT_ORDER ' END AS m
+              FROM cfg)",
+        )
+        .unwrap();
+    assert_eq!(same, 2);
+    let with_null: bool = db
+        .query_one(
+            "SELECT sequence_match(CASE i WHEN 1 THEN '(?1)(?2)' END, ts, ev = 'a', ev = 'b')
+             FROM cfg",
+        )
+        .unwrap();
+    assert!(with_null);
+}
+
+/// The same conflict split across `DuckDB`'s parallel partial aggregates is
+/// caught in combine. The pattern alternates per row group (122,880 rows,
+/// `DuckDB`'s scan unit), so threads start from different patterns and their
+/// partial states disagree when combined. (With the update-time check
+/// disabled, the combine check alone raised the error in 3 of 3 runs.)
+#[test]
+fn differing_pattern_across_threads_is_an_error() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET threads = 4;
+         CREATE TABLE big AS SELECT TIMESTAMP '2024-01-01' + to_seconds(i) AS ts,
+                CASE WHEN (i // 122880) % 2 = 0 THEN '(?1)(?2)' ELSE '(?2)(?1)' END AS pat,
+                i % 2 = 0 AS a, i % 2 = 1 AS b
+         FROM range(1000000) r(i);",
+    )
+    .unwrap();
+    let err = db
+        .query_one::<bool>("SELECT sequence_match(pat, ts, a, b) FROM big")
+        .map(|v| format!("returned {v}"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("the pattern argument must be the same"),
+        "{err}"
+    );
+}
+
+/// A NULL direction means 'forward' (documented), so with base 'tail' it is
+/// the forbidden forward+tail combination. It used to return NULL.
+#[test]
+fn null_direction_with_tail_base_is_an_error() {
+    let db = load_extension();
+    let err = db
+        .query_one::<String>(
+            "SELECT sequence_next_node(NULL, 'tail', ts, v, true, true)
+             FROM (VALUES (TIMESTAMP '2024-01-01', 'a')) t(ts, v)",
+        )
+        .map(|v| format!("returned {v}"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cannot be combined"), "{err}");
+}
+
+/// Mode names are case-insensitive, like `sequence_next_node`'s direction
+/// and base.
+#[test]
+fn funnel_mode_names_are_case_insensitive() {
+    let db = load_extension();
+    let lower: i64 = db
+        .query_one(
+            "SELECT window_funnel(INTERVAL 1 HOUR, 'strict_order', ts, c1, c2)
+             FROM (VALUES (TIMESTAMP '2024-01-01 00:00', true, false),
+                          (TIMESTAMP '2024-01-01 00:01', false, false),
+                          (TIMESTAMP '2024-01-01 00:02', false, true)) t(ts, c1, c2)",
+        )
+        .unwrap();
+    let upper: i64 = db
+        .query_one(
+            "SELECT window_funnel(INTERVAL 1 HOUR, 'Strict_Order', ts, c1, c2)
+             FROM (VALUES (TIMESTAMP '2024-01-01 00:00', true, false),
+                          (TIMESTAMP '2024-01-01 00:01', false, false),
+                          (TIMESTAMP '2024-01-01 00:02', false, true)) t(ts, c1, c2)",
+        )
+        .unwrap();
+    assert_eq!((lower, upper), (1, 1));
+}
+
+/// A group whose timestamps are all NULL has no usable rows, so the
+/// sequence functions return what they return for an empty group (NULL),
+/// not `false` / `0`.
+#[test]
+fn all_null_timestamp_group_matches_empty_group() {
+    let db = load_extension();
+    let both_null: bool = db
+        .query_one(
+            "SELECT sequence_match('(?1)', ts, c, c) IS NULL
+                    AND sequence_count('(?1)', ts, c, c) IS NULL
+             FROM (VALUES (NULL::TIMESTAMP, true), (NULL::TIMESTAMP, false)) t(ts, c)",
+        )
+        .unwrap();
+    assert!(both_null);
+}
