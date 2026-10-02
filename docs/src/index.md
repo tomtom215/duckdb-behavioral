@@ -232,8 +232,9 @@ Key design choices that enable this performance:
   bitmask OR
 - **In-place combine** for event-collecting functions -- O(N) amortized instead
   of O(N^2) from repeated allocation
-- **NFA fast paths** -- common pattern shapes dispatch to specialized O(n) linear
-  scans instead of full NFA backtracking
+- **Sequence fast paths** -- common pattern shapes dispatch to specialized O(n)
+  linear scans; every other pattern uses a feasibility pass plus a greedy walk,
+  O(s · n log n), replacing a backtracking search that was quadratic per group
 - **Presorted detection** -- O(n) check skips O(n log n) sort when events
   already arrive in timestamp order
 
@@ -252,9 +253,9 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to the FFI bridge (`src/ffi/`, 9 files). Aggregate callbacks wrapped by quack-rs `aggregate_*_callback!` macros, which turn a panic into a SQL error. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 515 unit tests, 21 in-process integration tests that `LOAD` the built extension, 78 sqllogictest directives (44 `query` + 34 `statement`) across 8 SQL test files run against the DuckDB CLI, 29 property-based tests (proptest), 88.4% mutation kill rate (cargo-mutants, measured on v0.4.x and not re-measured since). |
+| **Testing Rigor** | 518 unit tests, 21 in-process integration tests that `LOAD` the built extension, 78 sqllogictest directives (44 `query` + 34 `statement`) across 8 SQL test files run against the DuckDB CLI, 31 property-based tests (proptest), 88.4% mutation kill rate (cargo-mutants, measured on v0.4.x and not re-measured since). |
 | **Performance** | Optimization sessions recorded in [PERF.md](https://github.com/tomtom215/duckdb-behavioral/blob/main/PERF.md) with before/after Criterion.rs measurements and 95% confidence intervals, including a 1-billion-event `sessionize_update` benchmark and five documented negative results. |
-| **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
+| **Algorithm Design** | Custom pattern engine with recursive descent parser, fast-path classification, and a feasibility-then-greedy matcher differentially tested against a backtracking reference. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. Variadic signatures registered as function sets (31 overloads for `retention` and the `sequence_match`/`sequence_count`/`sequence_match_events` family, 64 for `window_funnel`/`window_funnel_events`, 32 for `sequence_next_node`). Stable C API (v1.2.0): one binary loads into DuckDB 1.3.2 through 1.5.6. Correct combine semantics for segment tree windowing. |
 | **CI/CD** | 14 CI jobs (incl. a DuckDB-WASM compile check), 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
 | **Feature Completeness** | All six ClickHouse behavioral functions (source-verified semantics) plus `sessionize` and `window_funnel_events`: 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |

@@ -36,10 +36,11 @@ src/
 ├── pattern/
 │   ├── mod.rs
 │   ├── parser.rs           # Recursive descent parser for sequence patterns
-│   └── executor.rs         # NFA-based pattern matcher
+│   ├── executor.rs         # Pattern matcher: fast paths + feasibility-then-greedy matcher
+│   └── reference_nfa.rs    # Test-only: the original backtracking search, kept as a differential oracle
 ├── sessionize.rs           # Sessionize state (boundary-tracking for segment trees)
 ├── retention.rs            # Retention state (bitmask-based)
-├── window_funnel.rs        # Window funnel state (greedy forward scan, bitflag modes)
+├── window_funnel.rs        # Window funnel state (port of ClickHouse windowFunnel, bitflag modes)
 ├── sequence.rs             # Sequence match/count/events state (wraps pattern engine)
 ├── sequence_next_node.rs   # Sequence next node state (sequential matching, Arc<str> values)
 └── ffi/
@@ -138,7 +139,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (515 unit + 21 integration + 1 doc-test).
+# Run all tests (518 unit + 21 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -254,7 +255,7 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **515 unit tests** covering all functions, edge cases, combine associativity,
+- **518 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
@@ -309,9 +310,10 @@ replaced):**
 | `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
 
 Key optimizations: u32 bitmask conditions (eliminates per-event heap alloc),
-in-place O(N) combine (replaces O(N^2) merge-allocate), NFA lazy matching
-(eliminates catastrophic backtracking), fast-path linear scans for common
-pattern shapes, presorted detection, and `Arc<str>` for reference-counted
+in-place O(N) combine (replaces O(N^2) merge-allocate), a
+feasibility-then-greedy sequence matcher (replaced a backtracking search that
+was quadratic per group for patterns with skipping time constraints),
+fast-path linear scans for common pattern shapes, presorted detection, and `Arc<str>` for reference-counted
 string sharing in `sequence_next_node`.
 
 ## ClickHouse Parity Status
@@ -407,13 +409,16 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **Edge cases**: Threshold boundaries, NULL handling, empty inputs
 - **Combine correctness**: Empty combine, boundary detection, associativity,
   config propagation via `AggregateTestHarness`
-- **Property-based tests**: 29 proptest tests verifying algebraic properties
-  (associativity, commutativity, identity, idempotency, monotonicity)
-  including 10 tests exercising 32-condition paths
+- **Property-based tests**: 31 proptest tests verifying algebraic properties
+  (associativity, commutativity, identity, idempotency, monotonicity),
+  including 10 tests exercising 32-condition paths, plus 2 differential
+  tests checking the pattern matcher against the original backtracking
+  search (`src/pattern/reference_nfa.rs`, test-only) result for result
 - **Mutation-testing-guided tests**: 51 tests from cargo-mutants analysis
 - **Pattern parser**: All operators, error positions, whitespace tolerance
-- **NFA executor**: Match/no-match, wildcards, time constraints, counting,
-  event collection, fast-path classification
+- **Pattern executor**: Match/no-match, wildcards, time constraints, counting,
+  event collection, fast-path classification, linear scaling on the shapes
+  that were quadratic under the old backtracking search
 - **`FunnelMode` tests**: Bitflag operations, parsing, all six modes,
   mode combinations
 - **`sequence_match_events` tests**: Multi-step, gap events, no-match,
@@ -424,7 +429,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
-Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 515 unit tests run in <1 second (the doc-test in
+Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 518 unit tests run in <1 second (the doc-test in
 ~2s). The 21 in-process integration tests add ~15s on a cold run — they build and
 `LOAD` the real release `cdylib` — and are near-instant once that artifact is
 cached.
@@ -586,9 +591,17 @@ Hard-won knowledge from developing this extension. Consult before making changes
   times. Use `combine_in_place` with `Vec::extend_from_slice` (O(N) amortized) rather
   than `combine` returning a new Vec (O(N^2) total copies for left-fold chains).
 
-- **NFA exploration order is catastrophic if wrong**: The `.*` wildcard must try
-  advancing the pattern first (lazy), not consuming events first (greedy). Wrong
-  order causes O(n * states * starts) behavior — 1,961x slower at 1M events.
+- **Backtracking sequence search is quadratic; don't reintroduce it**: the old
+  lazy depth-first search re-scanned the rest of the group from every start
+  whenever a `.*` or a skipping time gate (`>=`, `>`, `!=`, `==`) could not
+  complete (8.3-9.1 s at 32,000 events in one group; 32-35 s for
+  `sequence_match_events`). `executor.rs` now computes, per consuming step, the
+  positions from which the rest of the pattern can complete (one backward
+  pass, O(s · n log n)) and walks forward greedily. The greedy walk equals the
+  lazy search's first match because each gap step reaches a superset of
+  positions from an earlier position — except the end-of-events position `n`
+  for vacuous `<`/`<=` gates, which `tail_end` tracks separately. Any change
+  must keep the differential proptests against `reference_nfa.rs` green.
 
 - **Presorted detection before sort**: DuckDB often provides timestamp-ordered data.
   An O(n) `windows(2).all()` check before `sort_unstable_by_key` avoids O(n log n)
@@ -628,7 +641,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
 
 - **Sequence fast paths must preserve adjacency**: `fast_wildcard` is only
   valid when no two `(?N)` steps are adjacent; `(?1)(?2).*(?3)` must go to the
-  NFA. An empty match in `sequence_count` must still advance one event.
+  general matcher. An empty match in `sequence_count` must still advance one event.
 
 - **Multi-step funnel advancement**: an event satisfying several conditions
   fills several steps, including the entry step; `strict_once` and

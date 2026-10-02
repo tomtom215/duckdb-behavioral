@@ -15,7 +15,7 @@ cargo build
 DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh
 
 # Or run checks individually
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 515 unit + 21 integration + 1 doc-test
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 518 unit + 21 integration + 1 doc-test
 cargo clippy --all-targets         # Zero warnings required
 cargo fmt -- --check               # Format check
 ```
@@ -57,10 +57,11 @@ src/
 ├── pattern/
 │   ├── mod.rs
 │   ├── parser.rs           # Recursive descent pattern parser
-│   └── executor.rs         # NFA-based pattern matcher
+│   ├── executor.rs         # Pattern matcher: fast paths + feasibility/greedy matcher
+│   └── reference_nfa.rs    # Test-only: original backtracking search (oracle)
 ├── sessionize.rs           # Session boundary tracking
 ├── retention.rs            # Bitmask-based cohort retention
-├── window_funnel.rs        # Greedy forward scan with mode flags
+├── window_funnel.rs        # Port of ClickHouse windowFunnel, mode flags
 ├── sequence.rs             # Pattern matching state management
 ├── sequence_next_node.rs   # Next event value after pattern match
 └── ffi/
@@ -92,7 +93,7 @@ All checks must pass before submitting a PR:
 
 | Check | Command | What it validates |
 |---|---|---|
-| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test` | 515 unit tests + 21 in-process integration tests + 1 doc-test |
+| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test` | 518 unit tests + 21 in-process integration tests + 1 doc-test |
 | Lints | `cargo clippy --all-targets` | Zero warnings (pedantic + nursery + cargo) |
 | Format | `cargo fmt -- --check` | Code formatting |
 | Docs | `cargo doc --no-deps` | Documentation builds without warnings |

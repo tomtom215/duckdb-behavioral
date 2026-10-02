@@ -4,7 +4,7 @@
 //! Recursive descent parser for sequence match pattern strings.
 //!
 //! Parses patterns like `(?1).*(?2)(?t>=3600)(?3)` into a structured AST
-//! that can be executed by the NFA engine.
+//! that the executor matches against event streams.
 
 use std::fmt;
 
@@ -89,7 +89,8 @@ pub struct PatternError {
 
 impl PatternError {
     /// Sentinel position for errors that are not tied to a position in the
-    /// pattern string (e.g. execution-budget exhaustion).
+    /// pattern string (no current error uses it; the test-only reference
+    /// matcher's exploration-budget error did).
     pub const NO_POSITION: usize = usize::MAX;
 }
 
@@ -158,10 +159,8 @@ impl<'a> Parser<'a> {
             let start = self.pos;
             let step = self.parse_step()?;
             // Collapse consecutive `.*` steps: `.*.*` matches exactly the
-            // same event sequences as `.*`, but each extra copy multiplies
-            // the NFA branching factor (the pathological shape behind the
-            // exploration budget). Normalizing here keeps such patterns on
-            // the fast paths.
+            // same event sequences as `.*`. Normalizing here keeps such
+            // patterns on the fast paths.
             if step == PatternStep::AnyEvents && steps.last() == Some(&PatternStep::AnyEvents) {
                 continue;
             }

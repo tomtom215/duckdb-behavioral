@@ -38,7 +38,7 @@ docs:
     - **retention**: Cohort retention analysis returning boolean arrays
     - **window_funnel**: Conversion funnel step tracking with 6 composable modes
     - **window_funnel_events**: Timestamps of the best funnel chain as LIST(TIMESTAMP)
-    - **sequence_match**: Pattern matching over event sequences (NFA-based)
+    - **sequence_match**: Pattern matching over event sequences
     - **sequence_count**: Count non-overlapping pattern matches
     - **sequence_match_events**: Return matched condition timestamps
     - **sequence_next_node**: Find the next event value after a pattern match

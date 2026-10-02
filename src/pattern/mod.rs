@@ -47,3 +47,5 @@
 
 pub mod executor;
 pub mod parser;
+#[cfg(test)]
+mod reference_nfa;

@@ -178,7 +178,7 @@ Also added a realistic cardinality benchmark using a pool of 100 distinct
 
 ### E2E Validation + Custom C Entry Point
 
-Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time (now 515) missed:
+Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time (now 518) missed:
 
 1. **SEGFAULT on extension load**: `extract_raw_connection` used incorrect
    pointer arithmetic. Replaced with a custom C entry point

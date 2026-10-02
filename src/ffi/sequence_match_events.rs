@@ -163,8 +163,8 @@ quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, co
 
             let timestamps = match state.finalize_events() {
                 Ok(ts) => ts,
-                // A NULL pattern finalizes as an empty list; real execution
-                // errors (e.g. exploration budget exhaustion) abort the query.
+                // A NULL pattern finalizes as an empty list; any other error
+                // (an invalid pattern) aborts the query.
                 Err(_) if state.pattern_str.is_none() => Vec::new(),
                 Err(e) => {
                     info.set_error(&format!("sequence_match_events: {e}"));

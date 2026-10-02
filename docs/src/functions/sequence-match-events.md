@@ -40,15 +40,17 @@ GROUP BY user_id;
 ## Behavior
 
 1. Events are sorted by `(timestamp, conditions)`.
-2. The pattern is compiled and executed using a timestamp-collecting variant of
-   the NFA engine.
-3. When a `(?N)` condition step matches, the event's timestamp is recorded.
-4. If the full pattern matches, the collected timestamps of the first complete
-   match are returned as a list.
-5. If the full pattern never matches, the timestamps of the **longest partial
-   chain** matched anywhere are returned — exactly ClickHouse's
-   `sequenceMatchEvents` behavior ("timestamps for the longest chain of events
-   matched the pattern"). The list is empty only when no condition ever fired.
+2. The pattern is compiled and matched with the same engine as
+   [`sequence_match`](./sequence-match.md).
+3. If the full pattern matches, the timestamps of the `(?N)` steps of the
+   first match are returned: the match starting at the earliest event, with
+   `.*` matching as few events as possible.
+4. If the full pattern never matches, the timestamps of the **longest partial
+   chain** are returned — the chain reaching the furthest `(?N)` step, the
+   earliest-starting one if several do. This is ClickHouse's
+   `sequenceMatchEvents` behavior ("timestamps for the longest chain of
+   events matched the pattern"). The list is empty only when no `(?N)` step
+   is ever reached.
 
 The returned list contains one timestamp per matched `(?N)` step. Wildcard
 steps (`.` and `.*`) and time constraint steps do not contribute timestamps
@@ -89,17 +91,17 @@ A `NULL` pattern yields an empty list.
 
 ## Implementation
 
-The NFA executor uses a separate `NfaStateWithTimestamps` type that tracks
-`collected: Vec<i64>` alongside the standard state index. This keeps the
-timestamp collection path separate from the performance-critical
-`execute_pattern` code path (which serves both `sequence_match` and
-`sequence_count`).
+For wildcard-separated patterns such as `(?1).*(?2).*(?3)`, a single scan
+takes the earliest event for each condition in turn and stops at the first
+full match. Other patterns use the two-pass matcher described under
+[`sequence_match`](./sequence-match.md#implementation); when no full match
+exists, a forward pass first finds the furthest `(?N)` step any chain reaches.
 
 | Operation | Complexity |
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | Backtracking search; up to quadratic in n when the pattern does not match |
+| Finalize | O(n log n) sort; then O(n) for wildcard-separated patterns, otherwise O(s · n log n) for s pattern steps |
 | Space | O(n) -- all collected events |
 
 The last recorded benchmark (PERF.md Session 15) is 100 million events in

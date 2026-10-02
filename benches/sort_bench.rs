@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
-//! Isolated benchmark for `sort_events()` — decomposes sort cost from scan/NFA cost.
+//! Isolated benchmark for `sort_events()` — decomposes sort cost from pattern-matching cost.
 //!
 //! This benchmark measures only the sort phase of finalize, enabling attribution
 //! of improvements to sort vs algorithm components. Combined with the sequence

@@ -5,7 +5,7 @@
 //!
 //! Measures update + finalize throughput at multiple input sizes.
 //! Tests both simple patterns (`sequence_match`) and counting patterns
-//! (`sequence_count`) to validate NFA scaling behavior.
+//! (`sequence_count`) to validate matcher scaling behavior.
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
 use behavioral::common::event::Event;

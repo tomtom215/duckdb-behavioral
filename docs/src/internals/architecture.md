@@ -16,10 +16,11 @@ src/
   pattern/
     mod.rs
     parser.rs                  Recursive descent parser for pattern strings
-    executor.rs                NFA-based pattern matcher with fast paths
+    executor.rs                Pattern matcher: fast paths + feasibility/greedy matcher
+    reference_nfa.rs           Test-only: original backtracking search (differential oracle)
   sessionize.rs                Session boundary tracking (O(1) combine)
   retention.rs                 Bitmask-based cohort retention (O(1) combine)
-  window_funnel.rs             Greedy forward scan with combinable mode bitflags
+  window_funnel.rs             Port of ClickHouse windowFunnel, combinable mode bitflags
   sequence.rs                  Sequence match/count/events state management
   sequence_next_node.rs        Next event value after pattern match (Arc<str>)
   ffi/
@@ -168,7 +169,7 @@ pub struct Event {
 ## Pattern Engine
 
 The pattern engine (`src/pattern/`) compiles pattern strings into a structured
-AST and executes them via an NFA.
+list of steps and matches them against the sorted events.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a'}}}%%
@@ -182,7 +183,7 @@ flowchart LR
 
     CLASS -->|Adjacent| ADJ["O(n) Sliding Window"]
     CLASS -->|Wildcard-separated| WC["O(n) Linear Scan"]
-    CLASS -->|Complex| NFA["NFA Backtracking"]
+    CLASS -->|Complex| NFA["Feasibility pass +<br/>greedy walk"]
 
     ADJ --> RES["MatchResult"]
     WC --> RES
@@ -209,14 +210,17 @@ The recursive descent parser (`parser.rs`) converts pattern strings like
 - `OneEvent` -- match exactly one event (`.`)
 - `TimeConstraint(TimeOp, i64)` -- time constraint between steps
 
-### NFA Executor
+### Executor
 
 The executor (`executor.rs`) classifies patterns at execution time and dispatches
 to specialized code paths:
 
 - **Adjacent conditions** (`(?1)(?2)(?3)`): O(n) sliding window scan
 - **Wildcard-separated** (`(?1).*(?2).*(?3)`): O(n) single-pass linear scan
-- **Complex patterns**: Full NFA with backtracking
+- **Everything else**: a backward pass per `(?N)`/`.` step marks the events
+  from which the rest of the pattern can still complete, then a forward walk
+  takes the earliest such event at each step. O(s · n log n) for `s` pattern
+  steps.
 
 Two entry points are provided:
 
@@ -225,10 +229,14 @@ Two entry points are provided:
 | `execute_pattern` | `sequence_match` / `sequence_count` | `MatchResult` (match + count) |
 | `execute_pattern_events` | `sequence_match_events` | `Vec<i64>` (matched timestamps) |
 
-The NFA uses **lazy matching** for `.*`: it prefers advancing the pattern over
-consuming additional events. This is critical for performance -- greedy matching
-causes O(n^2) behavior at scale because the NFA consumes all events before
-backtracking to try advancing the pattern.
+Results are defined by a lazy backtracking search (`.*` matches as few events
+as possible; the first match from the earliest start wins), which the
+extension used through v0.9.1. That search is quadratic per group when the
+pattern does not complete, so it survives only as a test oracle
+(`reference_nfa.rs`); differential property tests check the executor against
+it. The greedy walk reproduces its first match because each gap step (`.*` or
+a time constraint, measured from the same event) reaches a superset of
+positions when it starts earlier.
 
 ## Combine Strategy
 

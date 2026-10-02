@@ -109,8 +109,8 @@ quack_rs::aggregate_finalize_callback!(
 
                 match state.finalize_match() {
                     Ok(matched) => writer.write_bool(idx, matched),
-                    // A NULL pattern finalizes as NULL; real execution errors
-                    // (e.g. exploration budget exhaustion) abort the query.
+                    // A NULL pattern finalizes as NULL; any other error (an
+                    // invalid pattern) aborts the query.
                     Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
                     Err(e) => {
                         info.set_error(&format!("sequence_match: {e}"));
@@ -143,8 +143,8 @@ quack_rs::aggregate_finalize_callback!(
 
                 match state.finalize_count() {
                     Ok(n) => writer.write_i64(idx, n),
-                    // A NULL pattern finalizes as NULL; real execution errors
-                    // (e.g. exploration budget exhaustion) abort the query.
+                    // A NULL pattern finalizes as NULL; any other error (an
+                    // invalid pattern) aborts the query.
                     Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
                     Err(e) => {
                         info.set_error(&format!("sequence_count: {e}"));

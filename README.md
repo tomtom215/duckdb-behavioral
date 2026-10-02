@@ -97,7 +97,7 @@ SELECT window_funnel(INTERVAL '1 hour', TIMESTAMP '2024-01-01', true, true, fals
 | `retention` | `(BOOLEAN, BOOLEAN, ...)` | `BOOLEAN[]` | Cohort retention analysis |
 | `window_funnel` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `INTEGER` | Conversion funnel step tracking with [6 combinable modes](https://tomtom215.github.io/duckdb-behavioral/functions/window-funnel.html) |
 | `window_funnel_events` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `TIMESTAMP[]` | Timestamps of the best funnel chain |
-| `sequence_match` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BOOLEAN` | NFA-based [pattern matching](https://tomtom215.github.io/duckdb-behavioral/functions/sequence-match.html) over event sequences |
+| `sequence_match` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BOOLEAN` | [Pattern matching](https://tomtom215.github.io/duckdb-behavioral/functions/sequence-match.html) over event sequences |
 | `sequence_count` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BIGINT` | Count non-overlapping pattern matches |
 | `sequence_match_events` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `LIST(TIMESTAMP)` | Return matched condition timestamps |
 | `sequence_next_node` | `(VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, ...)` | `VARCHAR` | Next event value after pattern match |
@@ -349,8 +349,9 @@ see `CHANGELOG.md`).
   bitmask OR
 - **In-place combine** for event-collecting functions — O(N) amortized instead
   of O(N^2) from repeated allocation
-- **NFA fast paths** — common pattern shapes dispatch to specialized O(n) linear
-  scans instead of full NFA backtracking
+- **Sequence fast paths** — common pattern shapes dispatch to specialized O(n)
+  linear scans; every other pattern uses a feasibility pass plus a greedy walk,
+  O(s · n log n), replacing a backtracking search that was quadratic per group
 - **Presorted detection** — O(n) check skips O(n log n) sort when events arrive
   in timestamp order
 
@@ -413,7 +414,7 @@ and `compat` matrix; leave `TARGET_DUCKDB_VERSION` at the C API version
 
 | Metric | Value |
 |---|---|
-| Unit tests | 515 + 1 doc-test |
+| Unit tests | 518 + 1 doc-test |
 | Integration tests | 21 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
 | E2E tests | 12 workflow steps (2 platforms) + 8 SQL logic test files (against real DuckDB CLI), plus a compat job loading one binary into DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
 | Differential tests | `window_funnel`, `retention`, `sequence_*` and `sequence_next_node` fuzzed against ClickHouse 26.9.8.3 (see below) |
@@ -481,7 +482,7 @@ appended; see [Getting Started](https://tomtom215.github.io/duckdb-behavioral/ge
 ## Development
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 515 unit + 21 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 518 unit + 21 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks

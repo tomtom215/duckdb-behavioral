@@ -12,6 +12,35 @@ bump is appropriate.
 
 ### Fixed
 
+- **Sequence patterns no longer take quadratic time per group.**
+  `sequence_match`, `sequence_count` and `sequence_match_events` matched any
+  pattern beyond the two fast-path shapes with a backtracking search that
+  re-scanned the rest of the group from every start. That made a group
+  quadratic whenever the pattern did not complete, for example after `.*`
+  followed by a time constraint, or after a skipping constraint such as
+  `(?t>=5)`. It also could not be cancelled. At 32,000 events in one group,
+  the old build took 8.3–9.1 s for `(?1).*(?t<5)(?2).*(?3)`, 1.8–2.4 s for
+  `(?1)(?t>=5)(?3)`, and 32–35 s for `sequence_match_events` on the first
+  pattern. The new matcher takes 0.003–0.007 s on all three, and 0.78–1.29 s
+  at 10 million events. These are SQL timings on DuckDB 1.5.6, 3 runs each.
+  It computes, per event-consuming step, the positions from which the rest
+  of the pattern can still complete, then walks forward greedily. This is
+  O(s · n log n) for `n` events and `s` pattern steps, and the results are
+  identical:
+  - Differential property tests compare it with the original search (kept
+    test-only) on 20,000 random pattern/event cases per run. An extended
+    400,000-case run with groups of up to 40 events also passed.
+  - The ClickHouse differential fuzzer produced byte-identical output with
+    the old and new builds over 14,883 groups.
+
+  The exploration-budget error ("pattern exploration budget exceeded") no
+  longer exists: patterns that used to hit it now return their result.
+  One trade-off: a pattern with a time constraint where every pair matches
+  and nothing is skipped (Criterion `sequence_match_time_constraint`,
+  `(?1)(?t<=600)(?2)`) went from 14.3 ms to 21.6–23.9 ms at 1 million events
+  (two runs), because the matcher always makes its backward pass. See
+  PERF.md Session 19.
+
 - **`window_funnel` / `window_funnel_events` now follow ClickHouse's
   `windowFunnel`.** Differential testing against ClickHouse 26.9.8.3 found
   the previous greedy scan disagreeing in 5–30% of random groups for every
@@ -86,6 +115,12 @@ bump is appropriate.
 - rustls 0.23.42 → 0.23.45 (RUSTSEC-2026-0285; build-time downloader only).
 - CI: the MSRV job now actually runs 1.87 (`cargo +1.87`; the toolchain file
   had redirected it to stable). `e2e.yml` gains a `compat` job.
+- Rust API: `pattern::executor::execute_pattern` and
+  `execute_pattern_events` now return `MatchResult` / `Vec<i64>` directly
+  instead of a `Result`, since matching can no longer fail. Breaking for
+  Rust callers of the library; the SQL interface is unaffected.
+  `cargo-semver-checks` (0.50.0, which has no lint for changed return types)
+  reports no required update, so it does not catch this.
 
 ### Documentation
 
@@ -93,9 +128,6 @@ bump is appropriate.
   valgrind on 1.5.6: `agg(... ORDER BY ...)`, `OVER ()` and whole-partition
   frames read out of bounds and usually segfault for every C API aggregate.
   The FAQ had suggested `ORDER BY` inside the call for speed.
-- Documented that patterns combining `.*` with a time constraint are matched
-  by a backtracking search whose cost grew roughly quadratically in
-  measurement (10.8 s at 32,000 events in one group).
 - Corrected the parity claims to the differential-testing results. Also
   corrected install/load instructions (a bare `.so` cannot be loaded), NULL
   handling, example outputs, counts, and performance-number provenance.

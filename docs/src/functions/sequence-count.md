@@ -37,9 +37,11 @@ GROUP BY user_id;
 ## Behavior
 
 1. Events are sorted by timestamp.
-2. The pattern is compiled and executed using the NFA engine.
-3. Each time the pattern matches, the count increments and the NFA restarts
-   from the event following the last matched event.
+2. The pattern is compiled and matched with the same engine as
+   [`sequence_match`](./sequence-match.md).
+3. Each time the pattern matches, the count increments and the search resumes
+   where the match ended: after the last matched event or, when the pattern
+   ends with a time constraint, at the event that satisfied it.
 4. Matches are non-overlapping: once a set of events is consumed by a match,
    those events cannot participate in another match. A match that consumes no
    events (for example `.*`, or `(?t<=6).*`) still advances one event, as in

@@ -1,7 +1,7 @@
 # sequence_match
 
 Aggregate function that checks whether a sequence of events matches a pattern.
-Uses a mini-regex syntax over condition references, executed by an NFA engine.
+Uses a mini-regex syntax over condition references.
 
 ## Signature
 
@@ -72,10 +72,10 @@ Patterns are composed of the following elements:
 ## Behavior
 
 1. Events are sorted by timestamp.
-2. The pattern is compiled into an NFA (nondeterministic finite automaton).
-3. The NFA is executed against the event stream using lazy matching semantics
-   for `.*` (prefer advancing the pattern over consuming additional events).
-4. Returns `true` if any accepting state is reached.
+2. The pattern is compiled into a list of steps.
+3. Returns `true` if the pattern matches starting at any event. `.*` matches
+   as few events as possible (lazy), which decides *which* match
+   `sequence_count` and `sequence_match_events` report.
 
 Time constraints are evaluated relative to the timestamp of the event consumed
 by the last `(?N)` or `.` step, in seconds. A constraint before any such step
@@ -120,22 +120,28 @@ event condition`).
 A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
 conventions.
 
-Adversarial patterns that exhaust the NFA exploration budget (scaled as
-`8 × events × steps`) abort the query with a descriptive error rather than
-silently reporting no match. Consecutive `.*` wildcards are collapsed at
-parse time, so ordinary patterns never approach the budget.
-
 ## Implementation
 
 | Operation | Complexity |
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | O(n) for patterns of conditions and `.*` / adjacent conditions only (fast paths); otherwise a backtracking search, up to quadratic in n when it does not match (see the [FAQ](../faq.md)) |
+| Finalize | O(n log n) sort; then O(n) for patterns of conditions and `.*` / adjacent conditions only (fast paths), otherwise O(s · n log n) for s pattern steps |
 | Space | O(n) -- all collected events |
 
 The last recorded benchmark (PERF.md Session 15) is 100 million events in
 1.05 s for the fast-path pattern `(?1).*(?2).*(?3)`.
+
+Patterns outside the fast paths are matched in two passes: a backward pass
+marks, for each `(?N)` or `.` step, the events from which the rest of the
+pattern can still complete; a forward walk then takes the earliest such event
+at each step. This returns the same match as a lazy backtracking search
+would find first, without the search's quadratic worst case. Through v0.9.1
+the extension used that search, and a group that did not match could take
+seconds (8.3–9.1 s for `(?1).*(?t<5)(?2).*(?3)` at 32,000 events). It now
+takes 0.004 s, and 0.78–0.89 s at 10 million events in one group (DuckDB
+1.5.6, 3 runs each). Finalize uses about 8 bytes per event of working
+memory, plus one byte per event for each `(?N)` or `.` step.
 
 ## See Also
 

@@ -70,7 +70,7 @@ and writes `build/release/behavioral.duckdb_extension`. See
 
 ### What is the difference between sequence_match, sequence_count, and sequence_match_events?
 
-All three use the same pattern syntax and NFA engine, but return different results:
+All three use the same pattern syntax and matching engine, but return different results:
 
 | Function | Returns | Use Case |
 |---|---|---|
@@ -401,17 +401,20 @@ defined by `GROUP BY` for aggregate functions or `PARTITION BY` for `sessionize`
 
 Memory scales linearly with the number of events in that group: a single user
 with 10 million events needs about 160 MB for the event-collecting functions
-(16 bytes per event).
+(16 bytes per event). While finalizing, `sequence_*` patterns outside the
+fast paths below also need about 8 bytes per event, plus one byte per event
+for each `(?N)` or `.` step.
 
 Time is linear for `window_funnel`, `retention`, `sessionize`,
-`sequence_next_node`, and for `sequence_*` patterns built only from conditions
-and `.*` / `.`. A pattern that combines `.*` with a time constraint, such as
-`(?1).*(?t<5)(?2).*(?3)`, falls back to a backtracking matcher whose cost grows
-roughly quadratically with the group's event count when it does not match. One
-such group took 0.18 s at 2,000 events, 3.1 s at 16,000 and 10.8 s at 32,000
-(DuckDB 1.5.6, single runs on a shared 4-core machine). The matcher does not
-check for query interruption, so on very large groups such a query can run for
-a long time and cannot be cancelled.
+`sequence_next_node`, and for `sequence_*` patterns built only from
+conditions and `.*`. Other `sequence_*` patterns (time constraints, `.`,
+adjacent conditions mixed with `.*`) take O(s · n log n) for `s` pattern
+steps. With one group of 10 million events, `sequence_count` took 0.78–0.90 s
+for `(?1).*(?t<5)(?2).*(?3)` and for `(?1)(?t>=5)(?3)` (DuckDB 1.5.6, 3 runs
+each). Through v0.9.1 these patterns used a backtracking search that was
+quadratic when the pattern did not complete: 8.3–9.1 s at 32,000 events, and
+32–35 s for `sequence_match_events`. The matchers do not check for query
+interruption, so a single very large group cannot be cancelled mid-finalize.
 
 If you have users with extremely large event counts, consider pre-filtering to a
 relevant time window before applying behavioral functions:

@@ -27,6 +27,7 @@ reproducible via `cargo bench`.
 - [Session 9: Rc\<str\> Optimization + String Pool Negative Result](#session-9-rcstr-optimization--string-pool-negative-result)
 - [Session 11: NFA Reusable Stack + Fast-Path Linear Scan](#session-11-nfa-reusable-stack--fast-path-linear-scan)
 - [Session 18 (v0.8.0): Correctness-Driven Arithmetic + Determinism — Measured Cost](#session-18-v080-correctness-driven-arithmetic--determinism--measured-cost)
+- [Session 19: Feasibility-Then-Greedy Sequence Matcher](#session-19-feasibility-then-greedy-sequence-matcher)
 - [Current Baseline](#current-baseline)
   - [Sessionize](#sessionize)
   - [Retention](#retention)
@@ -94,9 +95,9 @@ cargo bench -- sequence_match
 | `sessionize` | O(1) | O(1) | O(1) | O(1) — tracks only first/last timestamp + boundary count |
 | `retention` | O(k) | O(1) | O(k) | O(1) — single u32 bitmask, k = conditions |
 | `window_funnel` | O(1) amortized | O(m) append | O(n*k) greedy scan | O(n) — collected events |
-| `sequence_match` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
-| `sequence_count` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
-| `sequence_match_events` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
+| `sequence_match` | O(1) amortized | O(m) append | O(n) fast paths; otherwise O(s · n log n) feasibility pass + greedy walk | O(n) — collected events, plus O(n·s) bytes while finalizing |
+| `sequence_count` | O(1) amortized | O(m) append | O(n) fast paths; otherwise O(s · n log n) feasibility pass + greedy walk | O(n) — collected events, plus O(n·s) bytes while finalizing |
+| `sequence_match_events` | O(1) amortized | O(m) append | O(n) wildcard-separated fast path; otherwise O(s · n log n) | O(n) — collected events, plus O(n·s) bytes while finalizing |
 | `sequence_next_node` | O(1) amortized | O(m) append | O(n*s) sequential scan | O(n) — collected events + Strings |
 
 Where n = events, m = events in other state, k = conditions (up to 32), s = pattern steps.
@@ -856,6 +857,67 @@ reference-hardware baseline below).
    returned non-ClickHouse (adjacency-only) results. Fast-path pattern
    shapes are unaffected.
 
+### Session 19: Feasibility-Then-Greedy Sequence Matcher
+
+**Problem.** Patterns outside the two fast paths (any time constraint, `.`,
+adjacent conditions mixed with `.*`) ran a lazy backtracking search from every
+start position. When the pattern could not complete, each start re-scanned the
+rest of the group, through `.*` or a skipping gate (`>=`, `>`, `!=`, `==`), so a
+single group was quadratic and could not be cancelled. The O(n*s) entry in the
+complexity table was wrong for these patterns.
+
+**Change.** `src/pattern/executor.rs` now splits the pattern into consuming
+steps (`(?N)`, `.`) and gaps (`.*`, gates). One backward pass per consuming
+step marks the events from which the rest of the pattern can still complete,
+using a next-feasible index array and galloping searches for gate boundaries.
+A forward walk then takes the earliest feasible event at each step. Within a
+gap, every step reaches a superset of positions when it starts earlier; the
+end-of-events position of vacuous `<`/`<=` gates is the one exception, and
+`tail_end` tracks it separately. The greedy walk therefore reproduces the
+lazy search's first match, which defines `sequence_count`'s resume point and
+`sequence_match_events`' output. The old search is kept test-only in
+`src/pattern/reference_nfa.rs`. Two differential proptests (20,000 cases
+each per run; one extended 400,000-case run with groups up to 40 events)
+check the new matcher against it. Planted bugs in `tail_end`, in
+gate-composition order and in the events fast path were each caught.
+`sequence_match_events` also gained the linear wildcard-separated fast path
+that `sequence_match` already had.
+
+**SQL timings** (DuckDB 1.5.6 CLI, release builds of the parent commit and
+this change, one group, events 1 s apart alternating `c1`/`c2`, `c3` never
+true, 3 runs each):
+
+| Query | Events | Before | After |
+|---|---|---|---|
+| `sequence_count('(?1).*(?t<5)(?2).*(?3)', …)` | 32,000 | 8.3–9.1 s | 0.004 s |
+| `sequence_count('(?1)(?t>=5)(?3)', …)` | 32,000 | 1.8–2.4 s | 0.003–0.004 s |
+| `sequence_match_events('(?1).*(?t<5)(?2).*(?3)', …)` | 32,000 | 32–35 s | 0.005–0.007 s |
+| same three queries | 10,000,000 | not run | 0.78–1.29 s |
+
+**Criterion** (Criterion 0.8, 95% CI, `--baseline` against the parent commit,
+same machine: shared 4-core Intel Xeon @ 2.80 GHz, release profile):
+
+| Benchmark | Before | After |
+|---|---|---|
+| `sequence_match_events/1000000` | 3.83 ms [3.71, 3.95] | 3.66 ms [3.57, 3.74] |
+| `sequence_match_events/10000000` | 79.3 ms [78.1, 80.6] | 79.1 ms [77.8, 80.4] (no change) |
+| `sequence_match_events/100000000` | 707 ms [700, 718] | 687 ms [680, 692] |
+| `sequence_match_time_constraint/100000` | 0.891 ms [0.873, 0.914] | 1.108 ms [1.078, 1.142] |
+| `sequence_match_time_constraint/1000000` | 14.3 ms [14.0, 14.7] | 23.9 ms [23.5, 24.4]; 21.6 ms [21.2, 22.0] in an earlier run of the same code |
+
+**Accepted regression.** `sequence_match_time_constraint`
+(`(?1)(?t<=600)(?2)`, every pair matching) was the old search's best case,
+because nothing is skipped. The new matcher always makes its backward pass,
+at +51% to +67% at 1M events across the two runs. Things tried:
+- The first version binary-searched each gate's range end over the whole
+  remaining slice and was 7.8× slower. Querying only the first feasible
+  candidate (constant time for `<`, `<=`, `!=`) and galloping searches
+  brought it to +59%.
+- Skipping the tail check when the pattern has no tail gave a further ~5%
+  (non-overlapping CIs).
+- `u32` instead of `usize` for the next-feasible array gained ~8% and was
+  not adopted, because it needs a separate path for groups over 2^32 events.
+
 ## Current Baseline
 
 Recorded after Session 15 dependency refresh (Criterion 0.8.2, rand 0.9.2).
@@ -1029,7 +1091,7 @@ Cost per element at scale. Session 15 refresh numbers:
 | `window_funnel_finalize` | 100M | 791 ms | 7.91 | 126 Melem/s | Sort + O(n*k) greedy scan |
 | `sequence_match` | 100M | 1.05 s | 10.5 | 95 Melem/s | Sort + O(n) fast-path scan |
 | `sequence_count` | 100M | 1.18 s | 11.8 | 85 Melem/s | Sort + O(n) fast-path counting |
-| `sequence_match_events` | 100M | 1.07 s | 10.7 | 93 Melem/s | Sort + NFA + timestamp collection |
+| `sequence_match_events` | 100M | 1.07 s | 10.7 | 93 Melem/s | Sort + linear scan + timestamp collection (Session 15; Session 19 measured 687 ms on its own machine, see there) |
 | `sequence_next_node` | 10M | 546 ms | 54.6 | 18 Melem/s | Sort + sequential scan + Arc\<str\> alloc |
 | `sort_events` (reverse-ordered, jittered) | 100M | 2.079 s | 20.79 | 48 Melem/s | O(n log n) pdqsort, DRAM-bound |
 | `sort_events` (presorted) | 100M | 1.895 s | 18.95 | 53 Melem/s | O(n) adaptive, DRAM-bound |

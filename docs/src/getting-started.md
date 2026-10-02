@@ -435,7 +435,7 @@ on Linux) at an existing one. Neither is needed for `cargo build --release`.
 
 ## Running Tests
 
-The extension includes 515 unit tests, 21 in-process integration tests
+The extension includes 518 unit tests, 21 in-process integration tests
 (`tests/extension_load.rs`), and 1 doc-test:
 
 ```bash
@@ -481,10 +481,11 @@ src/
   pattern/
     mod.rs
     parser.rs             # Recursive descent pattern parser
-    executor.rs           # NFA-based pattern matcher with fast paths
+    executor.rs           # Pattern matcher: fast paths + feasibility/greedy matcher
+    reference_nfa.rs      # Test-only: original backtracking search (oracle)
   sessionize.rs           # Session boundary tracking
   retention.rs            # Bitmask-based cohort retention
-  window_funnel.rs        # Greedy forward scan with mode flags
+  window_funnel.rs        # Port of ClickHouse windowFunnel, mode flags
   sequence.rs             # Pattern matching state management
   sequence_next_node.rs   # Next event value after pattern match
   ffi/

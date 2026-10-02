@@ -23,9 +23,9 @@ The project spans several distinct engineering disciplines:
 |---|---|
 | **Systems programming** | Rust FFI, raw C API callbacks, memory-safe aggregate state management, `unsafe` code confinement |
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
-| **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
+| **Algorithm design** | Feasibility-then-greedy pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 515 unit tests, 21 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate measured on v0.4.x, not re-measured since), zero clippy warnings under pedantic lints |
+| **Software quality** | 518 unit tests, 21 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate measured on v0.4.x, not re-measured since), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -119,7 +119,7 @@ graph TB
 
 - **Business logic** (`src/*.rs`, `src/common/`, `src/pattern/`): Pure safe
   Rust. No FFI types, no `unsafe` blocks. All algorithmic work -- pattern
-  parsing, NFA execution, funnel search, retention bitmask logic -- lives here.
+  parsing, pattern matching, funnel search, retention bitmask logic -- lives here.
   Its unit tests exercise Rust structs directly, without a DuckDB
   connection.
 
@@ -143,7 +143,7 @@ graph TB
 
 This architecture enables:
 
-- **Independent unit testing**: The 515 unit tests exercise Rust structs
+- **Independent unit testing**: The 518 unit tests exercise Rust structs
   directly and run in under a second, without loading the extension.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
@@ -164,7 +164,7 @@ graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>88.4% kill rate (130/147, v0.4.x)<br/>cargo-mutants"]
         L2["Integration + E2E<br/>21 in-process LOAD tests<br/>8 sqllogictest files on the DuckDB CLI"]
-        L1["Unit Tests (515)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
+        L1["Unit Tests (518)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (31 proptest), mutation-guided (51)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -174,7 +174,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (515 tests)**
+**Level 1: Unit Tests (518 tests)**
 
 Organized by category within each module:
 
@@ -184,9 +184,11 @@ Organized by category within each module:
   at type boundaries (`u32::MAX`, `i64::MIN`)
 - **Combine correctness** -- empty-into-empty, empty-into-populated,
   populated-into-empty, associativity verification, configuration propagation
-- **Property-based tests (29 proptest)** -- algebraic properties required by
+- **Property-based tests (31 proptest)** -- algebraic properties required by
   DuckDB's segment tree: combine associativity, commutativity, identity element,
-  idempotency, monotonicity
+  idempotency, monotonicity; plus two differential tests that check the
+  sequence matcher against the original backtracking search on random
+  patterns and event sets
 - **Mutation-testing-guided tests (51)** -- tests written specifically to kill
   mutants that survived initial test suites
 
@@ -395,10 +397,9 @@ per arity via a function set:
 
 `sessionize` and the `behavioral_version()` scalar have a single signature.
 
-### NFA Pattern Engine
+### Pattern Engine
 
-The sequence functions use a custom NFA (Nondeterministic Finite Automaton)
-pattern engine:
+The sequence functions use a custom pattern engine:
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a'}}}%%
@@ -408,7 +409,7 @@ flowchart LR
     STEPS --> CLASS{Classify}
     CLASS -->|"All adjacent"| FAST1["O(n) Sliding<br/>Window"]
     CLASS -->|"Wildcard-separated"| FAST2["O(n) Linear<br/>Scan"]
-    CLASS -->|"Time constraints<br/>or mixed"| NFA["NFA<br/>Backtracking"]
+    CLASS -->|"Time constraints<br/>or mixed"| NFA["Feasibility pass +<br/>greedy walk"]
 
     style SQL fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style PARSE fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -421,11 +422,18 @@ flowchart LR
 
 - A **recursive descent parser** that compiles pattern strings (e.g.,
   `(?1).*(?t<=3600)(?2)`) into an intermediate representation of typed steps
-- An **NFA executor** that evaluates the pattern against a sorted event stream
-  using lazy backtracking with optional time constraints
+- A **general matcher** for every other shape: one backward pass per
+  event-consuming step marks the positions from which the rest of the pattern
+  can still complete, then a forward walk takes the earliest such position at
+  each step. It returns exactly the match a lazy (`.*` matches as little as
+  possible) backtracking search finds first, in O(s · n log n) for `n` events
+  and `s` pattern steps. The extension used that backtracking search through
+  v0.9.1; it was replaced for being quadratic per group on patterns with
+  `.*` or skipping time constraints. It is kept as a test-only oracle, and
+  differential property tests check that the two agree.
 - **Fast-path classifiers** that detect common pattern shapes (adjacent
   conditions, wildcard-separated conditions) and dispatch to specialized O(n)
-  linear scans, avoiding the full NFA for the majority of real-world patterns
+  linear scans
 
 ### Combine Semantics in DuckDB's Segment Tree
 
@@ -442,7 +450,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 515 |
+| Unit tests | 518 |
 | Doc-tests | 1 |
 | In-process integration tests | 21 (`tests/extension_load.rs`) |
 | SQL logic tests | 8 files: 44 `query` + 34 `statement` directives |
