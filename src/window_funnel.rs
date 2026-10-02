@@ -494,11 +494,22 @@ impl<P: PathStore> Scan<P> {
                 }
                 continue;
             }
+            // `extend_once` depends on `u` only through the matchings, and
+            // for an event that is no step's kept candidate every matching
+            // answer is the same; compute that shared result once per step.
+            // (`pre_extend` and `offer` still run per event: their effects
+            // depend on what earlier events did.)
+            let mut shared: Option<Option<Chain<P>>> = None;
             for (u, event) in group.iter().enumerate() {
                 if !event.condition(idx) || !self.pre_extend(idx)? {
                     continue;
                 }
-                if let Some(chain) = self.extend_once(&mut matcher, idx, u, ts) {
+                let extended = if matcher.is_candidate(u) {
+                    self.extend_once(&mut matcher, idx, u, ts)
+                } else {
+                    *shared.get_or_insert_with(|| self.extend_once(&mut matcher, idx, u, ts))
+                };
+                if let Some(chain) = extended {
                     self.offer(idx, &chain);
                     if idx + 1 == self.steps {
                         return Err(Stop);
@@ -557,13 +568,27 @@ impl<P: PathStore> Scan<P> {
 /// since excluding any other event changes nothing. This bounds the work for
 /// a large group by the number of conditions rather than the group size.
 struct Matcher {
+    /// Number of events in the group.
+    group_len: usize,
     candidates: Vec<Vec<usize>>,
-    cache: std::collections::HashMap<(usize, usize, Option<usize>), bool>,
+    /// Per event, the steps whose (kept) candidates include it.
+    candidate_steps: Vec<u64>,
+    cache: std::collections::HashMap<u64, bool, BuildPackedKeyHasher>,
 }
 
 impl Matcher {
     fn new(group: &[Event], steps: usize) -> Self {
-        let candidates = (0..steps)
+        // A one-event group never needs a matching (see
+        // `distinct_events_exist`), so it skips building the candidates.
+        if group.len() < 2 {
+            return Self {
+                group_len: group.len(),
+                candidates: Vec::new(),
+                candidate_steps: Vec::new(),
+                cache: std::collections::HashMap::default(),
+            };
+        }
+        let candidates: Vec<Vec<usize>> = (0..steps)
             .map(|step| {
                 (0..group.len())
                     .filter(|&e| group[e].condition(step))
@@ -571,18 +596,50 @@ impl Matcher {
                     .collect()
             })
             .collect();
+        let mut candidate_steps = vec![0u64; group.len()];
+        for (step, events) in candidates.iter().enumerate() {
+            for &e in events {
+                candidate_steps[e] |= 1 << step;
+            }
+        }
         Self {
+            group_len: group.len(),
             candidates,
-            cache: std::collections::HashMap::new(),
+            candidate_steps,
+            cache: std::collections::HashMap::default(),
         }
     }
 
+    /// Whether event `e` is a kept candidate of some step. Events that are
+    /// not cannot change any answer when excluded. (In a one-event group the
+    /// candidates are not built; that event counts as a candidate.)
+    fn is_candidate(&self, e: usize) -> bool {
+        self.candidate_steps.get(e).is_none_or(|&steps| steps != 0)
+    }
+
+    /// `exclude` is an event of the group (the one extending the chain).
     fn distinct_events_exist(&mut self, lo: usize, hi: usize, exclude: usize) -> bool {
         if lo >= hi {
             return true;
         }
-        let relevant = self.candidates[lo..hi].iter().any(|c| c.contains(&exclude));
-        let key = (lo, hi, relevant.then_some(exclude));
+        // The other events of the group are all there is to give out.
+        if hi - lo > self.group_len - 1 {
+            return false;
+        }
+        if hi - lo == 1 {
+            return self.candidates[lo].iter().any(|&e| e != exclude);
+        }
+        let range = (u64::MAX << lo) & !(u64::MAX << hi);
+        let relevant = self.candidate_steps[exclude] & range != 0;
+        // lo, hi <= 32 fit in 6 bits each; exclude + 1 (0 = not relevant)
+        // fills the rest.
+        let key = lo as u64
+            | (hi as u64) << 6
+            | if relevant {
+                (exclude as u64 + 1) << 12
+            } else {
+                0
+            };
         if let Some(&known) = self.cache.get(&key) {
             return known;
         }
@@ -631,6 +688,31 @@ impl Matcher {
         })
     }
 }
+
+/// A hasher for [`Matcher`]'s packed `u64` keys: one multiply (Fibonacci
+/// hashing). The keys are small integers, so `SipHash`'s protection against
+/// adversarial keys buys nothing here, and it was most of `strict_once`'s
+/// time.
+#[derive(Default)]
+struct PackedKeyHasher(u64);
+
+impl std::hash::Hasher for PackedKeyHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(b)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+
+    fn write_u64(&mut self, x: u64) {
+        self.0 = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type BuildPackedKeyHasher = std::hash::BuildHasherDefault<PackedKeyHasher>;
 
 /// State for the `window_funnel` aggregate function.
 ///
@@ -2598,5 +2680,59 @@ mod clickhouse_parity_tests {
         s.window_size_us = 10 * S;
         s.update(Event::new(5 * S, 0b11), 2);
         assert_eq!(s.finalize_events(), vec![5 * S, 5 * S]);
+    }
+}
+
+#[cfg(test)]
+mod matcher_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Brute force: can steps `lo..hi` each get a distinct event of the
+    /// group other than `exclude`?
+    fn brute(group: &[Event], lo: usize, hi: usize, exclude: usize) -> bool {
+        fn assign(group: &[Event], step: usize, hi: usize, used: &mut Vec<usize>) -> bool {
+            if step == hi {
+                return true;
+            }
+            for e in 0..group.len() {
+                if !used.contains(&e) && group[e].condition(step) {
+                    used.push(e);
+                    if assign(group, step + 1, hi, used) {
+                        return true;
+                    }
+                    used.pop();
+                }
+            }
+            false
+        }
+        assign(group, lo, hi, &mut vec![exclude])
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(5_000))]
+
+        /// Every shortcut and the cached matching agree with brute force,
+        /// for every step range and excluded event, queried in an order that
+        /// exercises the cache.
+        #[test]
+        fn distinct_events_exist_matches_brute_force(
+            masks in prop::collection::vec(0u32..64, 1..7),
+            steps in 1usize..=6,
+        ) {
+            let group: Vec<Event> = masks.iter().map(|&m| Event::new(0, m)).collect();
+            let mut matcher = Matcher::new(&group, steps);
+            for exclude in 0..group.len() {
+                for lo in 0..=steps {
+                    for hi in lo..=steps {
+                        prop_assert_eq!(
+                            matcher.distinct_events_exist(lo, hi, exclude),
+                            brute(&group, lo, hi, exclude),
+                            "lo={} hi={} exclude={} masks={:?}", lo, hi, exclude, masks
+                        );
+                    }
+                }
+            }
+        }
     }
 }
