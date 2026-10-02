@@ -848,3 +848,45 @@ fn release_profile_keeps_panic_guards_effective() {
     .unwrap_or_else(|e| panic!("[profile.release] rejected: {e}"));
     assert!(check.is_fully_optimized(), "{check:?}");
 }
+
+/// A NULL window skips that row, like a NULL timestamp, for both funnel
+/// functions. It used to leave the window at its zero default, so
+/// `window_funnel(NULL, ..)` returned 1 (a 0-length funnel) instead of
+/// ignoring the row.
+#[test]
+fn null_window_skips_the_row() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE nw(ts TIMESTAMP, event VARCHAR, w INTERVAL);
+         INSERT INTO nw VALUES
+            ('2024-01-01 00:00:00', 'view',     NULL),
+            ('2024-01-01 00:05:00', 'cart',     NULL),
+            ('2024-01-01 00:10:00', 'purchase', NULL);",
+    )
+    .unwrap();
+    let funnel = |window: &str| -> i32 {
+        db.query_one(&format!(
+            "SELECT window_funnel({window}, ts, event='view', event='cart', \
+                event='purchase') FROM nw"
+        ))
+        .unwrap()
+    };
+    let events = |window: &str| -> String {
+        db.query_one(&format!(
+            "SELECT window_funnel_events({window}, ts, event='view', event='cart', \
+                event='purchase')::VARCHAR FROM nw"
+        ))
+        .unwrap()
+    };
+    // Every row has a NULL window: every row is skipped.
+    assert_eq!(funnel("w"), 0);
+    assert_eq!(funnel("NULL::INTERVAL"), 0);
+    assert_eq!(events("w"), "[]");
+
+    // Only the 'cart' row has a NULL window: it is skipped, so the funnel
+    // stops after 'view' even though 'purchase' is within the window.
+    db.execute_batch("UPDATE nw SET w = INTERVAL '1 hour' WHERE event <> 'cart';")
+        .unwrap();
+    assert_eq!(funnel("w"), 1);
+    assert_eq!(events("w"), "['2024-01-01 00:00:00']");
+}

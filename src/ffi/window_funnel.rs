@@ -162,23 +162,25 @@ pub(super) unsafe fn update_impl(
                 continue;
             }
 
-            // Read window size from interval using VectorReader
-            if interval_reader.is_valid(i) {
-                let iv = interval_reader.read_interval(i);
-                match interval_to_micros(iv.months, iv.days, iv.micros) {
-                    Some(window_us) if window_us >= 0 => state.window_size_us = window_us,
-                    Some(_) => {
-                        info.set_error(&format!("{func}: INTERVAL window must be non-negative"));
-                        return;
-                    }
-                    None => {
-                        info.set_error(&format!(
-                            "{func}: invalid INTERVAL window: month-based intervals \
-                             are ambiguous (28-31 days) and the total must fit in signed \
-                             64-bit microseconds; use day/hour/minute/second units instead"
-                        ));
-                        return;
-                    }
+            // NULL window: skip the row, like a NULL timestamp. Leaving the
+            // window at its zero default would silently run a 0-length funnel.
+            if !interval_reader.is_valid(i) {
+                continue;
+            }
+            let iv = interval_reader.read_interval(i);
+            match interval_to_micros(iv.months, iv.days, iv.micros) {
+                Some(window_us) if window_us >= 0 => state.window_size_us = window_us,
+                Some(_) => {
+                    info.set_error(&format!("{func}: INTERVAL window must be non-negative"));
+                    return;
+                }
+                None => {
+                    info.set_error(&format!(
+                        "{func}: invalid INTERVAL window: month-based intervals \
+                         are ambiguous (28-31 days) and the total must fit in signed \
+                         64-bit microseconds; use day/hour/minute/second units instead"
+                    ));
+                    return;
                 }
             }
 
