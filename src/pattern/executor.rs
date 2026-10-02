@@ -694,6 +694,83 @@ impl<'a> Matcher<'a> {
         })
     }
 
+    /// Replaces `reach` (the positions consumer `k` can consume on some
+    /// chain) with those of consumer `k + 1`.
+    ///
+    /// For an empty gap, a lone `.*` or a lone gate other than `==`, whether
+    /// `b'` is reachable depends on one representative earlier reachable
+    /// event: the gate passes at `b'` from anchor `b` exactly when its
+    /// comparison holds for the elapsed time from `b` to `b'`, and that time
+    /// shrinks as `b` moves later. So `<`/`<=` test the latest reachable `b`,
+    /// `>`/`>=` the earliest, and `!=` both (every `b` between them has an
+    /// elapsed time between theirs). That is O(n) per step; other gaps mark
+    /// every candidate range, which costs a galloping search per reachable
+    /// event.
+    fn reach_next(&self, k: usize, reach: &mut Bits, delta: &mut [i64]) {
+        let len = self.len();
+        let single_gate = match self.plan.gaps[k].as_slice() {
+            [] | [GapStep::AnyEvents] => None,
+            [GapStep::Gate(op, threshold)] if *op != TimeOp::Eq => Some((*op, *threshold)),
+            _ => return self.reach_next_by_ranges(k, reach, delta),
+        };
+        let empty_gap = self.plan.gaps[k].is_empty();
+        let mut next = Bits(std::mem::take(&mut reach.0));
+        let (mut earliest, mut latest) = (None::<usize>, None::<usize>);
+        for b in 0..len {
+            // `latest`/`earliest` cover reachable positions before `b`.
+            let reachable = match (single_gate, latest) {
+                (_, None) => false,
+                (None, Some(last)) => !empty_gap || last + 1 == b,
+                (Some((op, threshold)), Some(last)) => {
+                    let first = earliest.expect("set with latest");
+                    match op {
+                        TimeOp::Lt | TimeOp::Lte => op.evaluate(self.elapsed(last, b), threshold),
+                        TimeOp::Gt | TimeOp::Gte => op.evaluate(self.elapsed(first, b), threshold),
+                        _ => {
+                            op.evaluate(self.elapsed(last, b), threshold)
+                                || op.evaluate(self.elapsed(first, b), threshold)
+                        }
+                    }
+                }
+            };
+            // `next` reuses `reach`'s words: read bit `b` before overwriting.
+            let was_reachable = next.get(b);
+            if was_reachable {
+                earliest.get_or_insert(b);
+                latest = Some(b);
+            }
+            if reachable && self.consumes(k + 1, b) {
+                next.set(b);
+            } else {
+                next.unset(b);
+            }
+        }
+        *reach = next;
+    }
+
+    /// [`Self::reach_next`] for any gap: marks every candidate range of every
+    /// reachable position with a difference array.
+    fn reach_next_by_ranges(&self, k: usize, reach: &mut Bits, delta: &mut [i64]) {
+        let len = self.len();
+        delta.fill(0);
+        for b in (0..len).filter(|&b| reach.get(b)) {
+            for (lo, hi) in self.candidates(k, b) {
+                if lo < hi {
+                    delta[lo] += 1;
+                    delta[hi] -= 1;
+                }
+            }
+        }
+        let mut covering = 0;
+        reach.clear();
+        for (b, d) in delta.iter().take(len).enumerate() {
+            covering += d;
+            if covering > 0 && self.consumes(k + 1, b) {
+                reach.set(b);
+            }
+        }
+    }
+
     /// The timestamps of the `(?N)` steps on the greedy walk from `b0`.
     fn walk_timestamps(&self, levels: &[Bits], b0: usize) -> Vec<i64> {
         let mut timestamps = Vec::new();
@@ -735,23 +812,7 @@ impl<'a> Matcher<'a> {
             if k + 1 == num_consumers {
                 break;
             }
-            delta.fill(0);
-            for b in (0..len).filter(|&b| reach.get(b)) {
-                for (lo, hi) in self.candidates(k, b) {
-                    if lo < hi {
-                        delta[lo] += 1;
-                        delta[hi] -= 1;
-                    }
-                }
-            }
-            let mut covering = 0;
-            reach.clear();
-            for (b, d) in delta.iter().take(len).enumerate() {
-                covering += d;
-                if covering > 0 && self.consumes(k + 1, b) {
-                    reach.set(b);
-                }
-            }
+            self.reach_next(k, &mut reach, &mut delta);
         }
         drop((reach, delta));
         let Some(furthest) = furthest else {
@@ -774,6 +835,10 @@ impl Bits {
 
     fn set(&mut self, i: usize) {
         self.0[i / 64] |= 1 << (i % 64);
+    }
+
+    fn unset(&mut self, i: usize) {
+        self.0[i / 64] &= !(1 << (i % 64));
     }
 
     fn clear(&mut self) {
