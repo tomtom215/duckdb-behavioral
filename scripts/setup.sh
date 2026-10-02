@@ -29,14 +29,19 @@ set -euo pipefail
 # Configuration
 # ============================================================
 
-# DuckDB release version stamped into extension metadata. Must match the
-# version of the DuckDB CLI loading the extension (DuckDB compares this
-# field exactly and refuses to load on a mismatch). Mirrors the Makefile's
+# Minimum DuckDB C API version stamped into the extension metadata. The
+# extension uses only the stable C API, so it is stamped `C_STRUCT` and loads
+# into any DuckDB whose C API is at least this version. Mirrors the Makefile's
 # TARGET_DUCKDB_VERSION used by the official `make release` build.
-readonly DUCKDB_RELEASE_VERSION="v1.5.5"
+readonly DUCKDB_C_API_VERSION="v1.2.0"
 
-# Extension version from Cargo.toml
-readonly EXT_VERSION="v0.7.0"
+# DuckDB CLI release recommended for local E2E testing (matches the
+# libduckdb-sys pin in Cargo.toml).
+readonly DUCKDB_RELEASE_VERSION="v1.5.6"
+
+# Extension version, read from Cargo.toml's [package] version.
+EXT_VERSION="v$(sed -n 's/^version = "\(.*\)"$/\1/p' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../Cargo.toml" | head -1)"
+readonly EXT_VERSION
 
 # Extension name
 readonly EXT_NAME="behavioral"
@@ -252,7 +257,7 @@ build_extension() {
     log_ok "Built: ${RELEASE_LIB}"
 
     # Copy and append metadata
-    log_info "Appending extension metadata (DuckDB ${DUCKDB_RELEASE_VERSION})..."
+    log_info "Appending extension metadata (C_STRUCT, C API ${DUCKDB_C_API_VERSION})..."
 
     local platform
     platform="$(detect_platform)"
@@ -263,9 +268,8 @@ build_extension() {
         -l "${EXT_FILE}" \
         -n "${EXT_NAME}" \
         -p "${platform}" \
-        -dv "${DUCKDB_RELEASE_VERSION}" \
+        -dv "${DUCKDB_C_API_VERSION}" \
         -ev "${EXT_VERSION}" \
-        --abi-type C_STRUCT_UNSTABLE \
         -o "${EXT_FILE}" 2>&1; then
         log_err "Metadata append failed"
         return 1

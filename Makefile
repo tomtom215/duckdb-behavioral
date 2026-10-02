@@ -7,14 +7,21 @@ PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 EXTENSION_NAME=behavioral
 
-# Required: duckdb-rs relies on unstable C API functionality
-USE_UNSTABLE_C_API=1
+# Stable C API: the extension only calls functions in the stable prefix of
+# DuckDB's `duckdb_ext_api_v1` struct (verified by disassembling the release
+# build: highest slot used is 306 of the 357-slot stable prefix). The binary is
+# therefore stamped `C_STRUCT` and loads into every DuckDB release whose C API
+# is at least TARGET_DUCKDB_VERSION, instead of being pinned to one release as a
+# `USE_UNSTABLE_C_API=1` (`C_STRUCT_UNSTABLE`) build is.
+#
+# TARGET_DUCKDB_VERSION is the C API version quack-rs requests at load
+# (`quack_rs::DUCKDB_API_VERSION`), not a DuckDB release.
+TARGET_DUCKDB_VERSION=v1.2.0
 
-# Target DuckDB version (must match duckdb = "=1.10505.0" pin in Cargo.toml)
-TARGET_DUCKDB_VERSION=v1.5.5
-
-# Pin the test runner to the same DuckDB version (extension-ci-tools defaults to latest)
-DUCKDB_TEST_VERSION=1.5.5
+# DuckDB release the SQL logic tests run against (extension-ci-tools defaults to
+# the latest release on PyPI). Matches the libduckdb-sys pin in Cargo.toml
+# (=1.10506.0 -> DuckDB v1.5.6).
+DUCKDB_TEST_VERSION=1.5.6
 
 all: configure debug
 

@@ -27,9 +27,9 @@
 //! 1. Build the release `cdylib` (`cargo build --release --lib`), once.
 //! 2. Append the `DuckDB` extension metadata footer to the raw shared library,
 //!    producing a `.duckdb_extension` (mirrors `append_extension_metadata.py`).
-//! 3. Open `InMemoryDb::open_unsigned()`, relax the metadata-mismatch check, and
-//!    `LOAD` the artifact.
-//! 4. Run SQL covering all seven functions and assert on the results — the same
+//! 3. Open `InMemoryDb::open_unsigned()` and `LOAD` the artifact with the
+//!    metadata checks left on.
+//! 4. Run SQL covering all eight aggregate functions and assert on the results — the same
 //!    expectations encoded in `test/sql/*.test`.
 
 use std::path::{Path, PathBuf};
@@ -38,19 +38,22 @@ use std::sync::OnceLock;
 
 use quack_rs::testing::InMemoryDb;
 
-/// `DuckDB` release version this extension targets (the `-dv` metadata field for
-/// the `C_STRUCT_UNSTABLE` ABI). Kept in sync with the `Makefile` /
-/// `.github/workflows/e2e.yml`.
-const DUCKDB_VERSION: &str = "v1.5.5";
+/// Minimum `DuckDB` C API version the extension declares (the `-dv` metadata
+/// field). For the stable `C_STRUCT` ABI this is the C API version quack-rs
+/// requests at load (`quack_rs::DUCKDB_API_VERSION`), not a `DuckDB` release:
+/// any `DuckDB` whose C API is at least this version loads the binary. Kept in
+/// sync with `TARGET_DUCKDB_VERSION` in the `Makefile`.
+const DUCKDB_VERSION: &str = quack_rs::DUCKDB_API_VERSION;
 /// Extension version metadata field (`-ev`); matches `Cargo.toml`'s `version`.
 const EXTENSION_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
-/// ABI type for a quack-rs / `libduckdb-sys` C-struct extension.
-const ABI_TYPE: &str = "C_STRUCT_UNSTABLE";
+/// ABI type: the stable C API struct. The extension calls only functions in
+/// the stable prefix of `duckdb_ext_api_v1`, so it is not pinned to one
+/// `DuckDB` release (`C_STRUCT_UNSTABLE` would be).
+const ABI_TYPE: &str = "C_STRUCT";
 
-/// The `DuckDB` platform triple for the host target. With
-/// `allow_extensions_metadata_mismatch=true` the value need not match the host
-/// exactly, but we still emit the correct one so the artifact is identical to
-/// what CI ships.
+/// The `DuckDB` platform string for the host target. `DuckDB` refuses to load
+/// an extension whose platform differs from its own, and the test does not
+/// relax that check.
 const fn duckdb_platform() -> &'static str {
     match (cfg!(target_os = "macos"), cfg!(target_arch = "aarch64")) {
         (true, true) => "osx_arm64",
@@ -159,11 +162,8 @@ fn extension_path() -> &'static Path {
 /// Opens a fresh in-memory `DuckDB` with the behavioral extension loaded.
 fn load_extension() -> InMemoryDb {
     let db = InMemoryDb::open_unsigned().expect("open in-memory DuckDB (unsigned)");
-    // Locally-built artifacts carry host platform / version metadata that need
-    // not match the in-process DuckDB; relax the check (mirrors the documented
-    // `InMemoryDb::open_unsigned` workflow).
-    db.execute_batch("SET allow_extensions_metadata_mismatch=true")
-        .expect("relax metadata mismatch");
+    // No `allow_extensions_metadata_mismatch`: the footer must be one the
+    // in-process DuckDB accepts as written, exactly as a user's `LOAD` would.
     let load = format!("LOAD '{}'", extension_path().display());
     db.execute_batch(&load)
         .unwrap_or_else(|e| panic!("LOAD failed for {}: {e}", extension_path().display()));
@@ -811,4 +811,40 @@ fn window_funnel_as_windowed_aggregate() {
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(running, vec![1, 2, 3]);
+}
+
+/// The shipped release profile keeps panic containment working: every
+/// aggregate callback runs under quack-rs's `catch_unwind` guard, which
+/// `panic = "abort"` makes inert (a panic would then kill the user's `DuckDB`
+/// process instead of failing the query). Checked with quack-rs's own
+/// validator against this crate's `[profile.release]`.
+#[test]
+fn release_profile_keeps_panic_guards_effective() {
+    let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+        .expect("read Cargo.toml");
+    let section: Vec<(&str, &str)> = manifest
+        .lines()
+        .skip_while(|l| l.trim() != "[profile.release]")
+        .skip(1)
+        .take_while(|l| !l.trim_start().starts_with('['))
+        .filter_map(|l| {
+            let l = l.split('#').next()?.trim();
+            let (k, v) = l.split_once('=')?;
+            Some((k.trim(), v.trim().trim_matches('"')))
+        })
+        .collect();
+    let get = |key: &str| {
+        section
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map_or("", |(_, v)| *v)
+    };
+    let check = quack_rs::validate::validate_release_profile(
+        get("panic"),
+        get("lto"),
+        get("opt-level"),
+        get("codegen-units"),
+    )
+    .unwrap_or_else(|e| panic!("[profile.release] rejected: {e}"));
+    assert!(check.is_fully_optimized(), "{check:?}");
 }

@@ -10,7 +10,6 @@
 //! the step count.
 
 use crate::window_funnel::WindowFunnelState;
-use libduckdb_sys::*;
 use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
@@ -52,12 +51,10 @@ pub unsafe fn register_window_funnel_events(
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                .init(FfiState::<WindowFunnelState>::init_callback)
+            b.ffi_state::<WindowFunnelState>()
                 .update(state_update)
                 .combine(state_combine)
                 .finalize(state_finalize)
-                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
         })
         // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
         .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
@@ -68,53 +65,37 @@ pub unsafe fn register_window_funnel_events(
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                .init(FfiState::<WindowFunnelState>::init_callback)
+            b.ffi_state::<WindowFunnelState>()
                 .update(state_update_with_mode)
                 .combine(state_combine)
                 .finalize(state_finalize)
-                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
         });
     unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
     // No mode parameter: INTERVAL(0), TIMESTAMP(1), BOOLEAN(2..N)
     unsafe {
         update_impl(info, input, states, false, "window_funnel_events");
     }
-}
+});
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, VARCHAR,
 // TIMESTAMP, BOOLEAN...) as registered. The VARCHAR at column 1 contains the mode
 // string. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update_with_mode(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, states| {
     // With mode parameter: INTERVAL(0), VARCHAR(1), TIMESTAMP(2), BOOLEAN(3..N)
     unsafe {
         update_impl(info, input, states, true, "window_funnel_events");
     }
-}
+});
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB LIST(TIMESTAMP) vector. Each list entry is populated with the
 // winning chain's step timestamps. Empty list when no entry condition matches.
-unsafe extern "C" fn state_finalize(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
+quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
     unsafe {
         let mut list_offset = ListVector::get_size(result) as u64;
 
@@ -146,7 +127,7 @@ unsafe extern "C" fn state_finalize(
             ListVector::set_size(result, list_offset as usize);
         }
     }
-}
+});
 
 #[cfg(test)]
 mod tests {

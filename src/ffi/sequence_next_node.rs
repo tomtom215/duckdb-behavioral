@@ -63,12 +63,10 @@ pub unsafe fn register_sequence_next_node(
             for _ in 0..n {
                 b = b.param(TypeId::Boolean); // event conditions
             }
-            b.state_size(FfiState::<SequenceNextNodeState>::size_callback)
-                .init(FfiState::<SequenceNextNodeState>::init_callback)
+            b.ffi_state::<SequenceNextNodeState>()
                 .update(state_update)
                 .combine(state_combine)
                 .finalize(state_finalize)
-                .destructor(FfiState::<SequenceNextNodeState>::destroy_callback)
         });
     unsafe { con.register_aggregate_set(builder) }
 }
@@ -76,11 +74,7 @@ pub unsafe fn register_sequence_next_node(
 // SAFETY: `input` is a valid DuckDB data chunk with columns
 // (VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, BOOLEAN...) as registered.
 // `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
     unsafe {
         let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
@@ -175,15 +169,10 @@ unsafe extern "C" fn state_update(
             });
         }
     }
-}
+});
 
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
-unsafe extern "C" fn state_combine(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    target: *mut duckdb_aggregate_state,
-    count: idx_t,
-) {
+quack_rs::aggregate_combine_callback!(state_combine, |_info, source, target, count| {
     unsafe {
         for i in 0..count as usize {
             let Some(src) = FfiState::<SequenceNextNodeState>::with_state(*source.add(i)) else {
@@ -197,17 +186,11 @@ unsafe extern "C" fn state_combine(
             tgt.combine_in_place(src);
         }
     }
-}
+});
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB VARCHAR vector. NULL is set via validity bitmap when no match found.
-unsafe extern "C" fn state_finalize(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
+quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
     unsafe {
         let mut writer = VectorWriter::new(result);
 
@@ -234,7 +217,7 @@ unsafe extern "C" fn state_finalize(
             }
         }
     }
-}
+});
 
 #[cfg(test)]
 mod tests {

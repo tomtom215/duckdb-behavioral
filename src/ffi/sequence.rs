@@ -43,12 +43,10 @@ pub unsafe fn register_sequence_match(
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.state_size(FfiState::<SequenceState>::size_callback)
-                .init(FfiState::<SequenceState>::init_callback)
+            b.ffi_state::<SequenceState>()
                 .update(sequence_state_update)
                 .combine(sequence_state_combine)
                 .finalize(match_state_finalize)
-                .destructor(FfiState::<SequenceState>::destroy_callback)
         });
     unsafe { con.register_aggregate_set(builder) }
 }
@@ -74,12 +72,10 @@ pub unsafe fn register_sequence_count(
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.state_size(FfiState::<SequenceState>::size_callback)
-                .init(FfiState::<SequenceState>::init_callback)
+            b.ffi_state::<SequenceState>()
                 .update(sequence_state_update)
                 .combine(sequence_state_combine)
                 .finalize(count_state_finalize)
-                .destructor(FfiState::<SequenceState>::destroy_callback)
         });
     unsafe { con.register_aggregate_set(builder) }
 }
@@ -88,86 +84,76 @@ pub unsafe fn register_sequence_count(
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB BOOLEAN vector. Pattern errors produce NULL output via validity bitmap.
-unsafe extern "C" fn match_state_finalize(
-    info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let mut writer = VectorWriter::new(result);
+quack_rs::aggregate_finalize_callback!(
+    match_state_finalize,
+    |info, source, result, count, offset| {
+        unsafe {
+            let info = AggregateFunctionInfo::new(info);
+            let mut writer = VectorWriter::new(result);
 
-        for i in 0..count as usize {
-            let idx = offset as usize + i;
+            for i in 0..count as usize {
+                let idx = offset as usize + i;
 
-            let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
-                writer.set_null(idx);
-                continue;
-            };
-
-            match state.finalize_match() {
-                Ok(matched) => writer.write_bool(idx, matched),
-                // A NULL pattern finalizes as NULL; real execution errors
-                // (e.g. exploration budget exhaustion) abort the query.
-                Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
-                Err(e) => {
-                    info.set_error(&format!("sequence_match: {e}"));
+                let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
                     writer.set_null(idx);
+                    continue;
+                };
+
+                match state.finalize_match() {
+                    Ok(matched) => writer.write_bool(idx, matched),
+                    // A NULL pattern finalizes as NULL; real execution errors
+                    // (e.g. exploration budget exhaustion) abort the query.
+                    Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
+                    Err(e) => {
+                        info.set_error(&format!("sequence_match: {e}"));
+                        writer.set_null(idx);
+                    }
                 }
             }
         }
     }
-}
+);
 
 // -- sequence_count finalize --
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB BIGINT vector. Pattern errors produce NULL output via validity bitmap.
-unsafe extern "C" fn count_state_finalize(
-    info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let mut writer = VectorWriter::new(result);
+quack_rs::aggregate_finalize_callback!(
+    count_state_finalize,
+    |info, source, result, count, offset| {
+        unsafe {
+            let info = AggregateFunctionInfo::new(info);
+            let mut writer = VectorWriter::new(result);
 
-        for i in 0..count as usize {
-            let idx = offset as usize + i;
+            for i in 0..count as usize {
+                let idx = offset as usize + i;
 
-            let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
-                writer.set_null(idx);
-                continue;
-            };
-
-            match state.finalize_count() {
-                Ok(n) => writer.write_i64(idx, n),
-                // A NULL pattern finalizes as NULL; real execution errors
-                // (e.g. exploration budget exhaustion) abort the query.
-                Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
-                Err(e) => {
-                    info.set_error(&format!("sequence_count: {e}"));
+                let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
                     writer.set_null(idx);
+                    continue;
+                };
+
+                match state.finalize_count() {
+                    Ok(n) => writer.write_i64(idx, n),
+                    // A NULL pattern finalizes as NULL; real execution errors
+                    // (e.g. exploration budget exhaustion) abort the query.
+                    Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
+                    Err(e) => {
+                        info.set_error(&format!("sequence_count: {e}"));
+                        writer.set_null(idx);
+                    }
                 }
             }
         }
     }
-}
+);
 
 // -- Shared update/combine callbacks --
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (VARCHAR, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 // VARCHAR is read via VectorReader::read_str() which handles duckdb_string_t correctly.
-unsafe extern "C" fn sequence_state_update(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(sequence_state_update, |info, input, states| {
     unsafe {
         let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
@@ -219,15 +205,10 @@ unsafe extern "C" fn sequence_state_update(
             state.update(Event::new(timestamp, bitmask));
         }
     }
-}
+});
 
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
-unsafe extern "C" fn sequence_state_combine(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    target: *mut duckdb_aggregate_state,
-    count: idx_t,
-) {
+quack_rs::aggregate_combine_callback!(sequence_state_combine, |_info, source, target, count| {
     unsafe {
         for i in 0..count as usize {
             let Some(src) = FfiState::<SequenceState>::with_state(*source.add(i)) else {
@@ -240,7 +221,7 @@ unsafe extern "C" fn sequence_state_combine(
             tgt.combine_in_place(src);
         }
     }
-}
+});
 
 #[cfg(test)]
 mod tests {

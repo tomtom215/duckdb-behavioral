@@ -56,12 +56,10 @@ pub unsafe fn register_window_funnel(
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                .init(FfiState::<WindowFunnelState>::init_callback)
+            b.ffi_state::<WindowFunnelState>()
                 .update(state_update)
                 .combine(state_combine)
                 .finalize(state_finalize)
-                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
         })
         // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
         .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
@@ -72,12 +70,10 @@ pub unsafe fn register_window_funnel(
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                .init(FfiState::<WindowFunnelState>::init_callback)
+            b.ffi_state::<WindowFunnelState>()
                 .update(state_update_with_mode)
                 .combine(state_combine)
                 .finalize(state_finalize)
-                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
         });
     unsafe { con.register_aggregate_set(builder) }
 }
@@ -85,31 +81,23 @@ pub unsafe fn register_window_funnel(
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 // Shared with `window_funnel_events`, which differs only in finalize.
-pub(super) unsafe extern "C" fn state_update(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
     // No mode parameter: INTERVAL(0), TIMESTAMP(1), BOOLEAN(2..N)
     unsafe {
         update_impl(info, input, states, false, "window_funnel");
     }
-}
+});
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, VARCHAR,
 // TIMESTAMP, BOOLEAN...) as registered. The VARCHAR at column 1 contains the mode
 // string. `states` points to `row_count` aggregate state pointers.
 // Shared with `window_funnel_events`, which differs only in finalize.
-pub(super) unsafe extern "C" fn state_update_with_mode(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, states| {
     // With mode parameter: INTERVAL(0), VARCHAR(1), TIMESTAMP(2), BOOLEAN(3..N)
     unsafe {
         update_impl(info, input, states, true, "window_funnel");
     }
-}
+});
 
 /// Shared update implementation for both signatures.
 ///
@@ -229,12 +217,7 @@ pub(super) unsafe fn update_impl(
 // combine_in_place propagates window_size_us and mode from source to target
 // when target has defaults (Session 10 bug fix).
 // Shared with `window_funnel_events`, which differs only in finalize.
-pub(super) unsafe extern "C" fn state_combine(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    target: *mut duckdb_aggregate_state,
-    count: idx_t,
-) {
+quack_rs::aggregate_combine_callback!(state_combine, |_info, source, target, count| {
     unsafe {
         for i in 0..count as usize {
             let Some(src) = FfiState::<WindowFunnelState>::with_state(*source.add(i)) else {
@@ -247,17 +230,11 @@ pub(super) unsafe extern "C" fn state_combine(
             tgt.combine_in_place(src);
         }
     }
-}
+});
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB INTEGER vector with room for `offset + count` elements.
-unsafe extern "C" fn state_finalize(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
+quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
     unsafe {
         let mut writer = VectorWriter::new(result);
 
@@ -273,7 +250,7 @@ unsafe extern "C" fn state_finalize(
             writer.write_i32(idx, step as i32);
         }
     }
-}
+});
 
 #[cfg(test)]
 mod tests {
