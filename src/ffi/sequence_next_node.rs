@@ -52,23 +52,30 @@ impl quack_rs::aggregate::AggregateState for SequenceNextNodeState {}
 pub unsafe fn register_sequence_next_node(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionSetBuilder::new("sequence_next_node")
-        .returns(TypeId::Varchar)
-        .overloads(MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS, |n, builder| {
-            let mut b = builder
-                .param(TypeId::Varchar) // direction
-                .param(TypeId::Varchar) // base
-                .param(TypeId::Timestamp) // timestamp
-                .param(TypeId::Varchar) // event_column
-                .param(TypeId::Boolean); // base_condition
-            for _ in 0..n {
-                b = b.param(TypeId::Boolean); // event conditions
-            }
-            b.ffi_state::<SequenceNextNodeState>()
-                .update(state_update)
-                .combine(state_combine)
-                .finalize(state_finalize)
-        });
+    let mut builder =
+        AggregateFunctionSetBuilder::new("sequence_next_node").returns(TypeId::Varchar);
+    // The same overloads for TIMESTAMP and TIMESTAMPTZ (both int64
+    // microseconds since the epoch, read identically).
+    for ts in super::TIMESTAMP_TYPES {
+        builder = builder.overloads(
+            MIN_EVENT_CONDITIONS..=MAX_EVENT_CONDITIONS,
+            move |n, builder| {
+                let mut b = builder
+                    .param(TypeId::Varchar) // direction
+                    .param(TypeId::Varchar) // base
+                    .param(ts) // timestamp
+                    .param(TypeId::Varchar) // event_column
+                    .param(TypeId::Boolean); // base_condition
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean); // event conditions
+                }
+                b.ffi_state::<SequenceNextNodeState>()
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+            },
+        );
+    }
     // SAFETY: `con` is the connection the entry point registers on (this
     // function's contract), and every overload installs `FfiState<T>`'s size,
     // init and destroy callbacks together via `ffi_state::<T>()`, the pairing

@@ -43,18 +43,23 @@ const MAX_CONDITIONS: usize = 32;
 pub unsafe fn register_sequence_match_events(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionSetBuilder::new("sequence_match_events")
-        .returns_logical(LogicalType::list(TypeId::Timestamp))
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+    let mut builder = AggregateFunctionSetBuilder::new("sequence_match_events")
+        .returns_logical(LogicalType::list(TypeId::Timestamp));
+    // The same overloads for TIMESTAMP and TIMESTAMPTZ (both int64
+    // microseconds since the epoch, read identically).
+    for ts in super::TIMESTAMP_TYPES {
+        builder = builder.overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+            let mut b = builder.param(TypeId::Varchar).param(ts);
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.ffi_state::<SequenceState>()
+            b.returns_logical(LogicalType::list(ts))
+                .ffi_state::<SequenceState>()
                 .update(state_update)
                 .combine(state_combine)
                 .finalize(state_finalize)
         });
+    }
     // SAFETY: `con` is the connection the entry point registers on (this
     // function's contract), and every overload installs `FfiState<T>`'s size,
     // init and destroy callbacks together via `ffi_state::<T>()`, the pairing

@@ -37,10 +37,12 @@ impl quack_rs::aggregate::AggregateState for SequenceState {}
 pub unsafe fn register_sequence_match(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionSetBuilder::new("sequence_match")
-        .returns(TypeId::Boolean)
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+    let mut builder = AggregateFunctionSetBuilder::new("sequence_match").returns(TypeId::Boolean);
+    // The same overloads for TIMESTAMP and TIMESTAMPTZ (both int64
+    // microseconds since the epoch, read identically).
+    for ts in super::TIMESTAMP_TYPES {
+        builder = builder.overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+            let mut b = builder.param(TypeId::Varchar).param(ts);
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
@@ -49,6 +51,7 @@ pub unsafe fn register_sequence_match(
                 .combine(sequence_match_combine)
                 .finalize(match_state_finalize)
         });
+    }
     // SAFETY: `con` is the connection the entry point registers on (this
     // function's contract), and every overload installs `FfiState<T>`'s size,
     // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
@@ -70,10 +73,12 @@ pub unsafe fn register_sequence_match(
 pub unsafe fn register_sequence_count(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionSetBuilder::new("sequence_count")
-        .returns(TypeId::BigInt)
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+    let mut builder = AggregateFunctionSetBuilder::new("sequence_count").returns(TypeId::BigInt);
+    // The same overloads for TIMESTAMP and TIMESTAMPTZ (both int64
+    // microseconds since the epoch, read identically).
+    for ts in super::TIMESTAMP_TYPES {
+        builder = builder.overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+            let mut b = builder.param(TypeId::Varchar).param(ts);
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
@@ -82,6 +87,7 @@ pub unsafe fn register_sequence_count(
                 .combine(sequence_count_combine)
                 .finalize(count_state_finalize)
         });
+    }
     // SAFETY: `con` is the connection the entry point registers on (this
     // function's contract), and every overload installs `FfiState<T>`'s size,
     // init and destroy callbacks together via `ffi_state::<T>()`, the pairing

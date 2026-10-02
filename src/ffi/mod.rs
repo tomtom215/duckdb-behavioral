@@ -56,6 +56,14 @@ pub mod window_funnel;
 pub mod window_funnel_events;
 
 use quack_rs::connection::Connection;
+use quack_rs::types::TypeId;
+
+/// The timestamp types every function accepts. `TIMESTAMPTZ` is an absolute
+/// instant stored, like `TIMESTAMP`, as int64 microseconds since the Unix
+/// epoch (UTC), so both are read the same way; accepting it directly avoids
+/// the `::TIMESTAMP` cast, which converts to local time and can reorder
+/// events across a daylight-saving change.
+pub const TIMESTAMP_TYPES: [TypeId; 2] = [TypeId::Timestamp, TypeId::TimestampTz];
 use quack_rs::error::ExtensionError;
 
 /// Registers all behavioral analytics functions using a [`Connection`] handle.

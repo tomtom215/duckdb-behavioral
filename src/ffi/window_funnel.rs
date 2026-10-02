@@ -50,33 +50,37 @@ pub unsafe fn register_window_funnel(
 ) -> Result<(), quack_rs::error::ExtensionError> {
     // Register both overload groups under the same function set name.
     // DuckDB distinguishes them by parameter types.
-    let builder = AggregateFunctionSetBuilder::new("window_funnel")
-        .returns(TypeId::Integer)
-        // Group 1: WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder.param(TypeId::Interval).param(TypeId::Timestamp);
-            for _ in 0..n {
-                b = b.param(TypeId::Boolean);
-            }
-            b.ffi_state::<WindowFunnelState>()
-                .update(state_update)
-                .combine(state_combine)
-                .finalize(state_finalize)
-        })
-        // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder
-                .param(TypeId::Interval)
-                .param(TypeId::Varchar)
-                .param(TypeId::Timestamp);
-            for _ in 0..n {
-                b = b.param(TypeId::Boolean);
-            }
-            b.ffi_state::<WindowFunnelState>()
-                .update(state_update_with_mode)
-                .combine(state_combine)
-                .finalize(state_finalize)
-        });
+    let mut builder = AggregateFunctionSetBuilder::new("window_funnel").returns(TypeId::Integer);
+    // The same overloads for TIMESTAMP and TIMESTAMPTZ (both int64
+    // microseconds since the epoch, read identically).
+    for ts in super::TIMESTAMP_TYPES {
+        builder = builder
+            // Group 1: WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+                let mut b = builder.param(TypeId::Interval).param(ts);
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.ffi_state::<WindowFunnelState>()
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+            })
+            // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+                let mut b = builder
+                    .param(TypeId::Interval)
+                    .param(TypeId::Varchar)
+                    .param(ts);
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.ffi_state::<WindowFunnelState>()
+                    .update(state_update_with_mode)
+                    .combine(state_combine)
+                    .finalize(state_finalize)
+            });
+    }
     // SAFETY: `con` is the connection the entry point registers on (this
     // function's contract), and every overload installs `FfiState<T>`'s size,
     // init and destroy callbacks together via `ffi_state::<T>()`, the pairing

@@ -1167,3 +1167,81 @@ fn all_null_timestamp_group_matches_empty_group() {
         .unwrap();
     assert!(both_null);
 }
+
+/// Every function accepts `TIMESTAMPTZ` and treats it as the instant it is:
+/// under UTC the results equal the `TIMESTAMP` versions, the `*_events`
+/// functions return `TIMESTAMPTZ[]`, and events keep their real order across
+/// a daylight-saving change (the `::TIMESTAMP` cast users needed before
+/// converts to local time and reorders them).
+#[test]
+fn timestamptz_is_accepted_everywhere() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET TimeZone = 'UTC';
+         CREATE TABLE tz AS SELECT TIMESTAMP '2024-01-01' + to_seconds(i * 7) AS ts,
+                ts::TIMESTAMPTZ AS tstz, i % 3 = 0 AS a, i % 3 = 1 AS b, (i % 5)::VARCHAR AS v
+         FROM range(200) r(i);",
+    )
+    .unwrap();
+    let same: bool = db
+        .query_one(
+            "SELECT
+               window_funnel(INTERVAL 1 MINUTE, ts, a, b)
+                 = window_funnel(INTERVAL 1 MINUTE, tstz, a, b)
+               AND window_funnel(INTERVAL 1 MINUTE, 'strict_order', ts, a, b)
+                 = window_funnel(INTERVAL 1 MINUTE, 'strict_order', tstz, a, b)
+               AND window_funnel_events(INTERVAL 1 MINUTE, ts, a, b)
+                 = window_funnel_events(INTERVAL 1 MINUTE, tstz, a, b)::TIMESTAMP[]
+               AND sequence_match('(?1)(?t<10)(?2)', ts, a, b)
+                 = sequence_match('(?1)(?t<10)(?2)', tstz, a, b)
+               AND sequence_count('(?1)(?t<10)(?2)', ts, a, b)
+                 = sequence_count('(?1)(?t<10)(?2)', tstz, a, b)
+               AND sequence_match_events('(?1).*(?2)', ts, a, b)
+                 = sequence_match_events('(?1).*(?2)', tstz, a, b)::TIMESTAMP[]
+               AND sequence_next_node('forward', 'first_match', ts, v, a, a, b)
+                 IS NOT DISTINCT FROM
+                   sequence_next_node('forward', 'first_match', tstz, v, a, a, b)
+               AND retention(a, b) = retention(a, b)
+             FROM tz",
+        )
+        .unwrap();
+    assert!(same);
+    let sessions_differ: i64 = db
+        .query_one(
+            "SELECT count(*) FROM (
+               SELECT sessionize(ts, INTERVAL 20 SECOND) OVER (ORDER BY ts) AS s1,
+                      sessionize(tstz, INTERVAL 20 SECOND) OVER (ORDER BY ts) AS s2
+               FROM tz) WHERE s1 <> s2",
+        )
+        .unwrap();
+    assert_eq!(sessions_differ, 0);
+    let types: String = db
+        .query_one(
+            "SELECT typeof(window_funnel_events(INTERVAL 1 MINUTE, tstz, a, b)) || ',' ||
+                    typeof(sequence_match_events('(?1).*(?2)', tstz, a, b))
+             FROM tz",
+        )
+        .unwrap();
+    assert_eq!(
+        types,
+        "TIMESTAMP WITH TIME ZONE[],TIMESTAMP WITH TIME ZONE[]"
+    );
+
+    // 05:30Z then 06:10Z on 2020-11-01 are 01:30 EDT then 01:10 EST: casting
+    // to local TIMESTAMP reverses them, TIMESTAMPTZ keeps them in order.
+    db.execute_batch(
+        "SET TimeZone = 'America/New_York';
+         CREATE TABLE dst AS SELECT * FROM (VALUES
+           (TIMESTAMPTZ '2020-11-01 05:30:00+00', true, false),
+           (TIMESTAMPTZ '2020-11-01 06:10:00+00', false, true)) t(ts, a, b);",
+    )
+    .unwrap();
+    let (local, instant): (bool, bool) = (
+        db.query_one("SELECT sequence_match('(?1)(?2)', ts::TIMESTAMP, a, b) FROM dst")
+            .unwrap(),
+        db.query_one("SELECT sequence_match('(?1)(?2)', ts, a, b) FROM dst")
+            .unwrap(),
+    );
+    assert!(!local, "the local-time cast reorders the events");
+    assert!(instant);
+}

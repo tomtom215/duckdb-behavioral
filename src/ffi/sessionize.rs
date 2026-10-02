@@ -21,7 +21,9 @@
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionBuilder, AggregateFunctionInfo, FfiState};
+use quack_rs::aggregate::{
+    AggregateFunctionInfo, AggregateFunctionSetBuilder, AggregateOverloadBuilder, FfiState,
+};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
 
@@ -48,19 +50,27 @@ impl quack_rs::aggregate::AggregateState for SessionizeBoundaryState {}
 pub unsafe fn register_sessionize(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionBuilder::new("sessionize")
-        .param(TypeId::Timestamp)
-        .param(TypeId::Interval)
-        .returns(TypeId::BigInt)
-        .ffi_state::<SessionizeBoundaryState>()
-        .update(state_update)
-        .combine(state_combine)
-        .finalize(state_finalize);
+    // One overload per timestamp type (TIMESTAMP and TIMESTAMPTZ are both
+    // int64 microseconds since the epoch, read identically).
+    let builder = super::TIMESTAMP_TYPES.into_iter().fold(
+        AggregateFunctionSetBuilder::new("sessionize").returns(TypeId::BigInt),
+        |set, ts| {
+            set.overload(
+                AggregateOverloadBuilder::new()
+                    .param(ts)
+                    .param(TypeId::Interval)
+                    .ffi_state::<SessionizeBoundaryState>()
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize),
+            )
+        },
+    );
     // SAFETY: `con` is the connection the entry point registers on (this
     // function's contract), and every overload installs `FfiState<T>`'s size,
     // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
     // `Registrar::register_*` requires.
-    unsafe { con.register_aggregate(builder) }
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (TIMESTAMP, INTERVAL)
