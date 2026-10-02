@@ -56,8 +56,11 @@ and writes `build/release/behavioral.duckdb_extension`. See
    `allow_unsigned_extensions=true`. This does not apply when installing via
    `INSTALL behavioral FROM community`.
 
-3. **Wrong file path** (local builds only): Ensure the path points to the actual
-   `.so` or `.dylib` file produced by `cargo build --release`.
+3. **Wrong file path** (local builds only): Point `LOAD` at the stamped
+   `.duckdb_extension` file (`build/release/behavioral.duckdb_extension` from
+   `make configure release`, or the file you ran `append_extension_metadata.py`
+   on). DuckDB refuses the raw `.so`/`.dylib` from `cargo build --release`
+   ("DuckDB extensions are files ending with '.duckdb_extension'").
 
 4. **Platform mismatch** (local builds only): An extension built on Linux cannot
    be loaded on macOS, and vice versa. The community extension handles platform
@@ -81,9 +84,15 @@ satisfied.
 
 ### How many boolean conditions can I use?
 
-All functions support **2 to 32** boolean condition parameters. This matches
-ClickHouse's limit. The conditions are stored internally as a `u32` bitmask,
-so the 32-condition limit is a hard constraint of the data type.
+| Function | Conditions |
+|---|---|
+| `window_funnel`, `window_funnel_events` | 1 to 32 |
+| `retention`, `sequence_match`, `sequence_count`, `sequence_match_events` | 2 to 32 |
+| `sequence_next_node` | a base condition plus 1 to 32 event conditions |
+
+The conditions are stored internally as a `u32` bitmask, so 32 is a hard
+limit of the data type. ClickHouse's `windowFunnel` and `sequenceMatch` also
+stop at 32; its `sequenceNextNode` allows up to 64 event conditions.
 
 ### How are NULL values handled?
 
@@ -214,7 +223,7 @@ DuckDB's naming conventions.
 | Window size | Integer (seconds) | DuckDB `INTERVAL` type |
 | Mode string | Second parameter in the parameter list | Optional `VARCHAR` before timestamp |
 | Time constraints in patterns | Seconds (integer) | Seconds (integer) -- same |
-| Condition limit | 32 | 32 -- same |
+| Condition limit | 32 (64 for `sequenceNextNode`) | 32 |
 
 The `INTERVAL` type is more expressive than raw seconds. You can write
 `INTERVAL '1 hour'`, `INTERVAL '30 minutes'`, or `INTERVAL '2 days'` instead of
@@ -223,10 +232,9 @@ computing the equivalent number of seconds.
 ### Does this extension have a sessionize equivalent in ClickHouse?
 
 No. The `sessionize` function has no direct equivalent in ClickHouse's behavioral
-analytics function set. ClickHouse provides session analysis through different
-mechanisms (e.g., `sessionTimeoutSeconds` in `windowFunnel`). The `sessionize`
-window function is a DuckDB-specific addition for assigning session IDs based on
-inactivity gaps.
+analytics function set. It is an addition in this extension for assigning
+session IDs based on inactivity gaps, designed to be used as a window
+aggregate with `OVER (PARTITION BY ... ORDER BY ...)`.
 
 ### Do I need to set any experimental flags?
 
@@ -308,8 +316,10 @@ It is never needed, because every function sorts by timestamp itself.
 When events already arrive in timestamp order, a presorted check skips the
 O(n log n) sort, reducing finalize to O(n).
 
-The `sessionize` window function **does** require `ORDER BY` in the `OVER` clause
-because it is a window function, not an aggregate:
+`sessionize` is the exception: it is an aggregate meant to be used with
+`OVER (... ORDER BY ...)`, and the `ORDER BY` in the `OVER` clause is what
+makes it assign a running session ID per row (without `OVER` it returns the
+number of sessions in the group):
 
 ```sql
 sessionize(event_time, INTERVAL '30 minutes') OVER (
@@ -345,17 +355,19 @@ GROUP BY user_id;
 
 ### How much data can the extension handle?
 
-The extension has been benchmarked at scale with Criterion.rs:
+The Rust aggregate state has been benchmarked at scale with Criterion.rs.
+These are microbenchmarks of update/combine/finalize, not end-to-end SQL
+queries, taken from PERF.md Session 15 (before v0.8.0, not re-measured since):
 
-| Function | Tested Scale | Throughput | Memory Model |
+| Benchmark | Tested Scale | Throughput | Memory Model |
 |---|---|---|---|
-| `sessionize` | 1 billion rows | 830 Melem/s | O(1) per partition segment |
-| `retention` | 100 million rows | 365 Melem/s | O(1) -- single `u32` bitmask |
-| `window_funnel` | 100 million rows | 126 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_match` | 100 million rows | 95 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_count` | 100 million rows | 85 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_match_events` | 100 million rows | 93 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_next_node` | 10 million rows | 18 Melem/s | O(n) -- 32 bytes per event |
+| `sessionize_update` | 1 billion events | 830 Melem/s | O(1) per partition segment |
+| `retention_combine` | 100 million states | 365 Melem/s | O(1) -- single `u32` bitmask |
+| `window_funnel_finalize` | 100 million events | 126 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_match` | 100 million events | 95 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_count` | 100 million events | 85 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_match_events` | 100 million events | 93 Melem/s | O(n) -- 16 bytes per event |
+| `sequence_next_node` | 10 million events | 18 Melem/s | O(n) -- 32 bytes per event |
 
 In practice, real-world datasets with billions of rows are easily handled because
 the functions operate on partitioned groups (e.g., per-user), not the entire table
@@ -471,8 +483,10 @@ correctness. However, it affects performance:
 - `sessionize` and `retention` have O(1) combine (constant time regardless of
   data size), making them extremely fast even at billion-row scale.
 - Event-collecting functions have O(m) combine where m is the number of events
-  in the source state. This is still fast -- 100 million events process in
-  under 1 second -- but it is the dominant cost at scale.
+  in the source state. For scale: in the Criterion microbenchmarks, updating
+  and finalizing a single 100-million-event state takes 791 ms for
+  `window_funnel` and 1.05-1.18 s for the `sequence_*` functions; with many
+  partial states, combine becomes the dominant cost.
 
 ### Can I use these functions with PARTITION BY (window functions)?
 
@@ -688,13 +702,15 @@ backing the connection.
 
 ### How fast is the extension?
 
-Headline benchmarks (Criterion.rs, 95% CI):
+Headline microbenchmarks of the Rust aggregate state (Criterion.rs, 95% CI,
+PERF.md Session 15, recorded before v0.8.0 and not re-measured; these are not
+end-to-end SQL timings):
 
-| Function | Scale | Throughput |
+| Benchmark | Scale | Throughput |
 |---|---|---|
-| `sessionize` | 1 billion | 830 Melem/s |
-| `retention` | 100 million | 365 Melem/s |
-| `window_funnel` | 100 million | 126 Melem/s |
+| `sessionize_update` | 1 billion events | 830 Melem/s |
+| `retention_combine` | 100 million states | 365 Melem/s |
+| `window_funnel_finalize` | 100 million | 126 Melem/s |
 | `sequence_match` | 100 million | 95 Melem/s |
 | `sequence_count` | 100 million | 85 Melem/s |
 | `sequence_match_events` | 100 million | 93 Melem/s |
@@ -725,9 +741,12 @@ previous runs.
 2. **Use `GROUP BY` to keep group sizes reasonable.** Partitioning by `user_id`
    ensures each group contains only one user's events rather than the entire table.
 
-3. **Order by timestamp.** While not required for correctness, an `ORDER BY` on
-   the timestamp column enables the presorted detection optimization, which
-   skips the internal O(n log n) sort.
+3. **Don't add `ORDER BY` for the functions' sake.** Every event-collecting
+   function sorts by timestamp itself, and when rows already arrive in
+   timestamp order (for example, from a file written in that order) a
+   presorted check skips the O(n log n) sort. Never put `ORDER BY` inside the
+   call (`window_funnel(... ORDER BY ts)`): it crashes DuckDB (see
+   [Which query shapes crash DuckDB?](#which-query-shapes-crash-duckdb)).
 
 4. **Use Parquet format.** Parquet's columnar storage and predicate pushdown
    work well with DuckDB's query optimizer, reducing I/O for behavioral queries

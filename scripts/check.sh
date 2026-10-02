@@ -9,6 +9,13 @@
 
 set -euo pipefail
 
+# Dev/test builds link a prebuilt libduckdb (the `duckdb` dev-dependency has no
+# `bundled` feature). Use the cached download unless the caller points
+# DUCKDB_LIB_DIR at an existing library.
+if [[ -z "${DUCKDB_LIB_DIR:-}" ]]; then
+    export DUCKDB_DOWNLOAD_LIB="${DUCKDB_DOWNLOAD_LIB:-1}"
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'

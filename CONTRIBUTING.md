@@ -7,24 +7,32 @@ you need to get started, from setup through submitting a pull request.
 
 ```bash
 # Clone and build
-git clone https://github.com/tomtom215/duckdb-behavioral.git
+git clone --recurse-submodules https://github.com/tomtom215/duckdb-behavioral.git
 cd duckdb-behavioral
 cargo build
 
 # Run all quality checks
-./scripts/check.sh
+DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh
 
 # Or run checks individually
-cargo test                     # 453 unit tests + 1 doc-test
-cargo clippy --all-targets     # Zero warnings required
-cargo fmt -- --check           # Format check
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 515 unit + 21 integration + 1 doc-test
+cargo clippy --all-targets         # Zero warnings required
+cargo fmt -- --check               # Format check
 ```
+
+The `duckdb` dev-dependency is built without the `bundled` feature, so a bare
+`cargo test` has no libduckdb to link. `DUCKDB_DOWNLOAD_LIB=1` makes
+`libduckdb-sys` download a prebuilt libduckdb (cached in
+`target/duckdb-download/`); alternatively set `DUCKDB_LIB_DIR` (plus
+`LD_LIBRARY_PATH` on Linux) to an existing one. Never set either for release
+builds.
 
 ## Development Requirements
 
 - Rust 1.87+ (the project's MSRV)
-- A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.5.6 (for E2E testing)
+- A C toolchain/linker (gcc or clang)
+- Python 3 and `make` (for `make configure release`)
+- DuckDB CLI v1.3.2 or later for E2E testing (CI checks v1.3.2, v1.4.4, v1.5.0, v1.5.6)
 
 ## Key Principles
 
@@ -43,9 +51,11 @@ cargo fmt -- --check           # Format check
 src/
 ├── lib.rs                  # Entry point (quack_rs::entry_point_v2! macro)
 ├── common/
+│   ├── mod.rs
 │   ├── event.rs            # Shared Event type (16-byte bitmask, Copy)
 │   └── timestamp.rs        # Interval-to-microseconds conversion
 ├── pattern/
+│   ├── mod.rs
 │   ├── parser.rs           # Recursive descent pattern parser
 │   └── executor.rs         # NFA-based pattern matcher
 ├── sessionize.rs           # Session boundary tracking
@@ -55,7 +65,10 @@ src/
 ├── sequence_next_node.rs   # Next event value after pattern match
 └── ffi/
     ├── mod.rs              # register_all() dispatcher via Registrar trait
-    └── *.rs                # Per-function FFI callbacks
+    ├── version.rs          # behavioral_version() scalar
+    └── *.rs                # Per-aggregate FFI callbacks (sessionize, retention,
+                            # window_funnel, window_funnel_events, sequence,
+                            # sequence_match_events, sequence_next_node)
 ```
 
 **Design pattern**: Each function has a pure Rust state module (business logic)
@@ -67,7 +80,9 @@ has zero FFI dependencies and is fully unit-testable.
 1. Create `src/new_function.rs` with state struct (`Default + Send + 'static`),
    plus `update()`, `combine_in_place()`, and `finalize()`.
 2. Create `src/ffi/new_function.rs` using quack-rs builders (`FfiState<T>`,
-   `VectorReader`, `AggregateFunctionSetBuilder`).
+   `VectorReader`, `AggregateFunctionSetBuilder`) and the
+   `aggregate_{update,combine,finalize}_callback!` macros for the callbacks
+   (they turn a panic into a SQL error).
 3. Register in `src/ffi/mod.rs`.
 4. Add benchmark, unit tests, `AggregateTestHarness` tests, and E2E SQL tests.
 
@@ -77,13 +92,13 @@ All checks must pass before submitting a PR:
 
 | Check | Command | What it validates |
 |---|---|---|
-| Tests | `cargo test` | 453 unit tests + 1 doc-test |
+| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test` | 515 unit tests + 21 in-process integration tests + 1 doc-test |
 | Lints | `cargo clippy --all-targets` | Zero warnings (pedantic + nursery + cargo) |
 | Format | `cargo fmt -- --check` | Code formatting |
 | Docs | `cargo doc --no-deps` | Documentation builds without warnings |
 
-Run all at once with `./scripts/check.sh` or `./scripts/check.sh --quick` to
-skip doc and benchmark compilation checks.
+Run all at once with `DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh`, or add
+`--quick` to skip doc and benchmark compilation checks.
 
 ## Testing Expectations
 
@@ -103,24 +118,27 @@ DuckDB's data chunk format, and the extension loading mechanism. Both are
 mandatory.
 
 ```bash
-# Quick E2E test
-cargo build --release
-git submodule update --init
+# Quick E2E test (builds build/release/behavioral.duckdb_extension and runs test/sql/*.test)
+git submodule update --init --recursive
 make configure && make release && make test_release
 ```
+
+`DUCKDB_DOWNLOAD_LIB=1 cargo test` also runs `tests/extension_load.rs`, which
+builds the release library, stamps it, and `LOAD`s it into an in-memory
+DuckDB.
 
 ## Pull Request Process
 
 1. **Branch**: Create a feature branch from `main`
 2. **Develop**: Make changes following the architecture and style guidelines
-3. **Test**: Run `./scripts/check.sh` — all checks must pass
+3. **Test**: Run `DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh` — all checks must pass
 4. **Benchmark** (if performance-related): Include Criterion data with CIs
 5. **Document**: Update docs if function signatures, test counts, or benchmarks changed
 6. **Submit**: Open a PR with a clear description
 
 ### PR Checklist
 
-- [ ] `cargo test` passes (all tests)
+- [ ] `DUCKDB_DOWNLOAD_LIB=1 cargo test` passes (all tests)
 - [ ] `cargo clippy --all-targets` produces zero warnings
 - [ ] `cargo fmt -- --check` passes
 - [ ] E2E test against real DuckDB (if FFI or registration changes)

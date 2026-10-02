@@ -75,6 +75,10 @@ pub unsafe fn register_window_funnel(
                 .combine(state_combine)
                 .finalize(state_finalize)
         });
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract), and every overload installs `FfiState<T>`'s size,
+    // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
+    // `Registrar::register_*` requires.
     unsafe { con.register_aggregate_set(builder) }
 }
 
@@ -124,6 +128,9 @@ pub(super) unsafe fn update_impl(
     has_mode: bool,
     func: &str,
 ) {
+    // SAFETY: forwarded from this function's contract: `info`, `input` and
+    // `states` are the handles DuckDB passed to the update callback, with
+    // `states` holding one initialised state pointer per input row.
     unsafe {
         let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;

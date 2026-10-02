@@ -52,6 +52,10 @@ pub unsafe fn register_retention(
                 .combine(state_combine)
                 .finalize(state_finalize)
         });
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract), and every overload installs `FfiState<T>`'s size,
+    // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
+    // `Registrar::register_*` requires.
     unsafe { con.register_aggregate_set(builder) }
 }
 

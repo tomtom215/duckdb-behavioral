@@ -49,5 +49,7 @@ pub unsafe fn register_behavioral_version(
     let builder = ScalarFunctionBuilder::new("behavioral_version")
         .returns(TypeId::Varchar)
         .function(version_callback);
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract); the scalar has no state.
     unsafe { con.register_scalar(builder) }
 }

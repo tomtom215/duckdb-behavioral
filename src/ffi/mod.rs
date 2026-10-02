@@ -5,14 +5,19 @@
 //!
 //! # Architecture
 //!
-//! All modules except [`sessionize`] use the `quack-rs` v0.14 SDK for
-//! registration, state management, and vector I/O:
+//! Every module uses the `quack-rs` v0.18.0 SDK for registration, state
+//! management, and vector I/O:
 //!
 //! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function
 //!   sets with N overloads. Supports both simple returns (`.returns(TypeId)`) and
 //!   parameterized returns (`.returns_logical(LogicalType)`) for `LIST(T)` types.
 //! - [`quack_rs::aggregate::FfiState<T>`] — `#[repr(C)]` wrapper providing safe
 //!   init/destroy lifecycle and null-checked `with_state_mut()` accessors.
+//! - `quack_rs::aggregate_update_callback!`, `aggregate_combine_callback!`, and
+//!   `aggregate_finalize_callback!` — generate every aggregate's update,
+//!   combine, and finalize callbacks with a panic guard that reports a panic as
+//!   a SQL error instead of unwinding into `DuckDB` (the release profile uses
+//!   `panic = "unwind"` so the guard is effective).
 //! - [`quack_rs::vector::VectorReader`] — safe vector reading (`read_bool()`,
 //!   `read_str()`, `read_i64()`, `read_interval()`).
 //! - [`quack_rs::vector::VectorWriter`] — safe vector writing (`write_i32()`,
@@ -23,20 +28,23 @@
 //! - [`quack_rs::types::LogicalType::list()`] — RAII construction of `LIST(T)`
 //!   types for `returns_logical()` and function registration.
 //!
-//! All aggregate functions use quack-rs builders for registration: the six
-//! variadic functions use `AggregateFunctionSetBuilder` (including `retention`
-//! and `sequence_match_events`, which use
+//! All 8 aggregate functions use quack-rs builders for registration: the seven
+//! variadic functions use `AggregateFunctionSetBuilder` (including `retention`,
+//! `window_funnel_events`, and `sequence_match_events`, which use
 //! `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return
 //! types), and [`sessionize`] uses
 //! [`quack_rs::aggregate::AggregateFunctionBuilder`] for its single fixed
-//! signature. No module in this crate registers through raw `libduckdb-sys`
-//! calls anymore.
+//! signature. [`version`] registers the `behavioral_version()` scalar through
+//! quack-rs's scalar builder. No module in this crate registers through raw
+//! `libduckdb-sys` calls.
 //!
 //! # Entry Point
 //!
 //! Registration uses the [`quack_rs::entry_point_v2!`] macro, which provides a
 //! [`Connection`] implementing the [`Registrar`](quack_rs::connection::Registrar) trait — a version-agnostic API
-//! for registering extension components across `DuckDB` 1.4.x and 1.5.x.
+//! for registering extension components. The extension uses only the stable
+//! `DuckDB` C API (stamped C API version v1.2.0, ABI type `C_STRUCT`), so one
+//! binary loads into `DuckDB` 1.3.2 and later releases.
 
 pub mod retention;
 pub mod sequence;

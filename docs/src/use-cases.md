@@ -613,8 +613,8 @@ ORDER BY f.test_group;
 
 | test_group | users | avg_funnel_depth | completed_onboarding | completion_rate_pct | completed_fast | fast_completion_rate_pct |
 |---|---|---|---|---|---|---|
-| control | 3 | 3.00 | 1 | 33.3 | 0 | 0.0 |
-| treatment | 3 | 4.33 | 2 | 66.7 | 2 | 100.0 |
+| control | 3 | 3.00 | 1 | 33.3 | 1 | 100.0 |
+| treatment | 3 | 4.67 | 2 | 66.7 | 2 | 100.0 |
 
 ### Step-by-Step Funnel Comparison
 
@@ -655,15 +655,19 @@ ORDER BY test_group, step;
 
 ### Interpretation
 
-The treatment group shows stronger behavioral metrics across all dimensions:
+The treatment group shows stronger funnel metrics; per-step speed does not
+separate the groups in this sample:
 
-- **Funnel depth**: Average 4.33 steps vs. 3.00 -- users progress further
+- **Funnel depth**: Average 4.67 steps vs. 3.00 -- users progress further
   through onboarding.
 - **Completion rate**: 66.7% vs. 33.3% -- twice as many users complete the
   full onboarding.
-- **Speed**: All treatment completers finished within 30 minutes between each
-  step. The single control completer (user A) took 60 minutes overall, with a
-  25-minute gap between profile setup and tutorial start.
+- **Speed**: Every completer in both groups moved through each step within
+  30 minutes, so `fast_completion_rate_pct` is 100.0 for both. The single
+  control completer (user A) took 60 minutes overall, but its largest gap
+  (25 minutes, between profile setup and tutorial start) is still within the
+  30-minute per-step limit; the treatment completers took 10 and 12 minutes
+  overall.
 - **Drop-off pattern**: In the control group, one user (C) dropped off at step
   1 (signup only), suggesting the immediate post-signup experience needs work.
   In the treatment group, the only non-completing user (F) still reached step 4

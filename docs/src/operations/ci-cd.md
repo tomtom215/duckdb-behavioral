@@ -7,23 +7,26 @@ and release management. All workflows are defined in `.github/workflows/`.
 
 ### CI (`ci.yml`)
 
-Runs on every push to `main` and every pull request. 13 independent jobs
-ensure code quality across multiple dimensions.
+Runs on every push to `main` and every pull request. 14 jobs ensure code
+quality across multiple dimensions. The workflow sets `DUCKDB_DOWNLOAD_LIB=1`
+so test builds link a prebuilt libduckdb instead of compiling DuckDB from
+source.
 
 | Job | Purpose | Tool |
 |-----|---------|------|
 | **check** | Verify compilation | `cargo check --all-targets` |
-| **test** | Run 486 unit tests + 1 doc-test | `cargo test` |
+| **wasm-check** | Library compiles for DuckDB-WASM | `cargo check --target wasm32-unknown-emscripten --lib` |
+| **test** | Run 515 unit tests + 21 in-process integration tests, then the doc-test | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
 | **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
 | **fmt** | Formatting verification | `cargo fmt --check` |
-| **doc** | Documentation builds without warnings | `cargo doc` with `-Dwarnings` |
-| **msrv** | Minimum Supported Rust Version (1.87) | `cargo check` with pinned toolchain |
+| **doc** | Documentation builds without warnings | `cargo doc --no-deps --document-private-items` with `-Dwarnings` |
+| **msrv** | Minimum Supported Rust Version (1.87) | `cargo +1.87 check --all-targets` |
 | **bench-compile** | Benchmarks compile (no execution) | `cargo bench --no-run` |
 | **deny** | License, advisory, and source auditing | `cargo-deny` |
 | **semver** | Semver compatibility check | `cargo-semver-checks` |
 | **coverage** | Code coverage reporting | `cargo-tarpaulin` + Codecov |
-| **cross-platform** | Linux + macOS test matrix | `cargo test` on both OSes |
-| **extension-build** | Community extension packaging | `make configure && make release` |
+| **cross-platform** | Linux + macOS test matrix | `cargo nextest run --all-targets --profile ci` on both OSes |
+| **extension-build** | Community extension packaging (without the prebuilt-libduckdb download) | `make configure && make release` |
 | **ci-gate** | Required status check gate | Evaluates all job results |
 
 ### CodeQL (`codeql.yml`)
@@ -34,7 +37,7 @@ pull request, and on a weekly schedule (Monday 06:00 UTC). Uses the
 
 - **Triggers**: push to main, PRs, weekly cron
 - **Language**: Rust
-- **Action version**: `github/codeql-action` v4.33.0 (SHA-pinned)
+- **Action version**: `github/codeql-action` v4.36.2 (SHA-pinned)
 - **Permissions**: `security-events: write` (required to upload SARIF results)
 
 **Prerequisite — Disable Default Setup:**
@@ -70,6 +73,11 @@ instance.
 
 **Platforms tested:** Linux x86_64, macOS ARM64
 
+**Compatibility job (`compat`):** The extension is stamped for the stable C API
+(ABI type `C_STRUCT`, C API v1.2.0). The `compat` job downloads the Linux
+artifact built by the E2E job, loads it into DuckDB v1.3.2, v1.4.4, v1.5.0,
+and v1.5.6, and compares a query's output against the expected result.
+
 ### Release (`release.yml`)
 
 Triggered on git tag push (`v*`) or manual dispatch. Builds the extension
@@ -86,8 +94,8 @@ release with SHA256 checksums and build provenance attestations.
 
 **Supply chain security:**
 - SHA256 checksums for all artifacts
-- GitHub artifact attestation via `actions/attest-build-provenance@v4`
-- Immutable artifacts with 30-day retention
+- GitHub artifact attestation via `actions/attest-build-provenance` v4.1.0 (SHA-pinned)
+- Build artifacts retained for 90 days
 - Build provenance tied to specific git commit
 
 ### Community Submission (`community-submission.yml`)
@@ -133,14 +141,14 @@ mdBook v0.4.40 with custom CSS styling.
 ```bash
 # Run the same checks as CI
 cargo check --all-targets
-cargo test --all-targets && cargo test --doc
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 515 unit + 21 integration + 1 doc-test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --document-private-items
 cargo deny check advisories bans licenses sources
 
-# Build extension (requires submodule)
-git submodule update --init
+# Build extension (requires submodule); do not set DUCKDB_DOWNLOAD_LIB here
+git submodule update --init --recursive
 make configure
 make release
 

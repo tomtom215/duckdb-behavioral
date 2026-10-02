@@ -26,6 +26,7 @@ reproducible via `cargo bench`.
 - [Session 8: sequenceNextNode Baseline](#session-8-sequencenextnode-baseline)
 - [Session 9: Rc\<str\> Optimization + String Pool Negative Result](#session-9-rcstr-optimization--string-pool-negative-result)
 - [Session 11: NFA Reusable Stack + Fast-Path Linear Scan](#session-11-nfa-reusable-stack--fast-path-linear-scan)
+- [Session 18 (v0.8.0): Correctness-Driven Arithmetic + Determinism — Measured Cost](#session-18-v080-correctness-driven-arithmetic--determinism--measured-cost)
 - [Current Baseline](#current-baseline)
   - [Sessionize](#sessionize)
   - [Retention](#retention)
@@ -34,7 +35,7 @@ reproducible via `cargo bench`.
   - [Sort (Isolated)](#sort-isolated)
   - [Sequence Next Node](#sequence-next-node)
   - [Per-Element Cost at Scale](#per-element-cost-at-scale)
-  - [Billion-Row Headline Numbers](#billion-row-headline-numbers)
+  - [Headline Numbers](#headline-numbers)
 - [Session Improvement Protocol](#session-improvement-protocol)
   - [Before Starting Work](#before-starting-work)
   - [During Work](#during-work)
@@ -78,7 +79,7 @@ cargo bench -- sequence_match
 | `sequence_match` | `sequence_match` | update + finalize | 100 to 100M events | NFA pattern matching |
 | `sequence_count` | `sequence_count` | update + finalize | 100 to 100M events | Non-overlapping counting |
 | `sequence_combine` | `sequence_*` | combine_in_place + finalize | 100 to 1M states | In-place append + NFA cost |
-| `sort_events` | (isolated) | sort only | 100 to 100M events | pdqsort scaling (random) |
+| `sort_events` | (isolated) | sort only | 100 to 100M events | pdqsort scaling (reverse-ordered timestamps with jitter) |
 | `sort_events_presorted` | (isolated) | sort only | 100 to 100M events | pdqsort adaptive path |
 | `sequence_next_node` | `sequence_next_node` | update + finalize | 100 to 10M events | Sequential matching + Arc\<str\> clone |
 | `sequence_next_node_combine` | `sequence_next_node` | combine_in_place + finalize | 100 to 1M states | In-place append + sequential matching |
@@ -817,7 +818,7 @@ reference-hardware baseline below).
 | `window_funnel_finalize/100M` | 602.1 ms (166 Melem/s) | 576.7 ms (173 Melem/s) | −4.2% |
 | `sequence_match/10M` | 65.26 ms (153 Melem/s) | **62.67 ms (160 Melem/s)** | **−4.0% (faster)** |
 | `sequence_next_node/1M` | 37.44 ms (26.7 Melem/s) | 38.64 ms (25.9 Melem/s) | +3.2% |
-| `sort_events/10M` (random) | 122.2 ms (81.9 Melem/s) | 127.0 ms (78.7 Melem/s) | +4.0% |
+| `sort_events/10M` (reverse-ordered, jittered) | 122.2 ms (81.9 Melem/s) | 127.0 ms (78.7 Melem/s) | +4.0% |
 | `sort_events_presorted/10M` | 104.8 ms (95.4 Melem/s) | 103.9 ms (96.3 Melem/s) | ±0% |
 
 #### What changed and why
@@ -834,7 +835,7 @@ reference-hardware baseline below).
    682–715 Melem/s) — unsigned compare + dropped sign handling.
 
 2. **Deterministic sort key** `(timestamp, conditions)` (was timestamp-only):
-   +4.0% on fully-random 10M sorts, ±0% on the presorted common path. Buys
+   +4.0% on the reverse-ordered, jittered 10M sort benchmark, ±0% on the presorted common path. Buys
    result determinism under parallel aggregation. Accepted.
 
 3. **`sequence_next_node` ClickHouse-exact rewrite** (consecutive chains,
@@ -1030,7 +1031,7 @@ Cost per element at scale. Session 15 refresh numbers:
 | `sequence_count` | 100M | 1.18 s | 11.8 | 85 Melem/s | Sort + O(n) fast-path counting |
 | `sequence_match_events` | 100M | 1.07 s | 10.7 | 93 Melem/s | Sort + NFA + timestamp collection |
 | `sequence_next_node` | 10M | 546 ms | 54.6 | 18 Melem/s | Sort + sequential scan + Arc\<str\> alloc |
-| `sort_events` (random) | 100M | 2.079 s | 20.79 | 48 Melem/s | O(n log n) pdqsort, DRAM-bound |
+| `sort_events` (reverse-ordered, jittered) | 100M | 2.079 s | 20.79 | 48 Melem/s | O(n log n) pdqsort, DRAM-bound |
 | `sort_events` (presorted) | 100M | 1.895 s | 18.95 | 53 Melem/s | O(n) adaptive, DRAM-bound |
 
 ### Headline Numbers
@@ -1047,7 +1048,7 @@ Criterion-validated, reproducible headline numbers for portfolio presentation
 | `sequence_count` | 100 million | 1.18 s | 85 Melem/s | 11.8 |
 | `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s | 10.7 |
 | `sequence_next_node` | 10 million | 546 ms | 18 Melem/s | 54.6 |
-| `sort_events` (random) | 100 million | 2.08 s | 48 Melem/s | 20.8 |
+| `sort_events` (reverse-ordered, jittered) | 100 million | 2.08 s | 48 Melem/s | 20.8 |
 
 Note: Minor throughput differences from Session 14 reflect Criterion 0.8.2's
 updated statistical sampling and rand 0.9.2's different data generation.

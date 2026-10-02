@@ -48,6 +48,10 @@ pub unsafe fn register_sequence_match(
                 .combine(sequence_state_combine)
                 .finalize(match_state_finalize)
         });
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract), and every overload installs `FfiState<T>`'s size,
+    // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
+    // `Registrar::register_*` requires.
     unsafe { con.register_aggregate_set(builder) }
 }
 
@@ -77,6 +81,10 @@ pub unsafe fn register_sequence_count(
                 .combine(sequence_state_combine)
                 .finalize(count_state_finalize)
         });
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract), and every overload installs `FfiState<T>`'s size,
+    // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
+    // `Registrar::register_*` requires.
     unsafe { con.register_aggregate_set(builder) }
 }
 

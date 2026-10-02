@@ -134,20 +134,19 @@ No build tools, compilation, or `-unsigned` flag required.
 ### From Source
 
 ```bash
-git clone https://github.com/tomtom215/duckdb-behavioral.git
+git clone --recurse-submodules https://github.com/tomtom215/duckdb-behavioral.git
 cd duckdb-behavioral
-cargo build --release
+make configure release   # cargo build --release + metadata footer
 ```
 
-Then load the extension in DuckDB:
+This produces `build/release/behavioral.duckdb_extension`. DuckDB only loads
+files ending in `.duckdb_extension`, so the raw `target/release/libbehavioral.so`
+(or `.dylib`) cannot be loaded directly. Locally built extensions are unsigned,
+so start DuckDB with `-unsigned`:
 
-```sql
-LOAD 'path/to/target/release/libbehavioral.so';  -- Linux
-LOAD 'path/to/target/release/libbehavioral.dylib'; -- macOS
+```bash
+duckdb -unsigned -c "LOAD 'build/release/behavioral.duckdb_extension'; SELECT behavioral_version();"
 ```
-
-> **Note:** DuckDB requires the `-unsigned` flag for locally-built extensions:
-> `duckdb -unsigned`
 
 For detailed installation instructions, troubleshooting, and a complete
 worked example, see the [Getting Started](./getting-started.md) guide.
@@ -184,40 +183,46 @@ flowchart TD
     style SNN fill:#d9d9d9,stroke:#333333,stroke-width:2px,color:#1a1a1a
 ```
 
-Seven functions covering the full spectrum of behavioral analytics:
+Eight aggregate functions plus one diagnostic scalar:
 
 | Function | Type | Returns | Description |
 |---|---|---|---|
-| [`sessionize`](./functions/sessionize.md) | Window | `BIGINT` | Assigns session IDs based on inactivity gaps |
+| [`sessionize`](./functions/sessionize.md) | Aggregate (used with `OVER (ORDER BY ...)`) | `BIGINT` | Assigns session IDs based on inactivity gaps |
 | [`retention`](./functions/retention.md) | Aggregate | `BOOLEAN[]` | Cohort retention analysis |
 | [`window_funnel`](./functions/window-funnel.md) | Aggregate | `INTEGER` | Conversion funnel step tracking |
+| [`window_funnel_events`](./functions/window-funnel-events.md) | Aggregate | `LIST(TIMESTAMP)` | Timestamps of the best funnel chain |
 | [`sequence_match`](./functions/sequence-match.md) | Aggregate | `BOOLEAN` | Pattern matching over event sequences |
 | [`sequence_count`](./functions/sequence-count.md) | Aggregate | `BIGINT` | Count non-overlapping pattern matches |
 | [`sequence_match_events`](./functions/sequence-match-events.md) | Aggregate | `LIST(TIMESTAMP)` | Return matched condition timestamps |
 | [`sequence_next_node`](./functions/sequence-next-node.md) | Aggregate | `VARCHAR` | Next event value after pattern match |
+| `behavioral_version` | Scalar | `VARCHAR` | Version of the loaded extension |
 
-All functions support **2 to 32 boolean conditions**, matching ClickHouse's
-limit. See the [ClickHouse Compatibility](./internals/clickhouse-compatibility.md)
+Condition limits: `window_funnel` and `window_funnel_events` accept 1 to 32
+conditions; `retention`, `sequence_match`, `sequence_count`, and
+`sequence_match_events` accept 2 to 32; `sequence_next_node` accepts a base
+condition plus 1 to 32 event conditions (ClickHouse allows up to 64 for
+`sequenceNextNode`). See the [ClickHouse Compatibility](./internals/clickhouse-compatibility.md)
 page for the full parity matrix.
 
 ---
 
 ## Performance
 
-All functions are engineered for large-scale analytical workloads. Every
-performance claim below is backed by
-[Criterion.rs](https://bheisler.github.io/criterion.rs/book/) benchmarks with
-95% confidence intervals, validated across multiple runs.
+The numbers below are
+[Criterion.rs](https://bheisler.github.io/criterion.rs/book/) microbenchmarks
+of the Rust aggregate state (update/combine/finalize), not end-to-end SQL
+queries, with 95% confidence intervals. They are the PERF.md Session 15
+headline numbers, recorded before v0.8.0 and not re-measured since.
 
 | Function | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| **`sessionize`** | **1 billion rows** | **1.20 s** | **830 Melem/s** |
-| **`retention`** | **100 million rows** | **274 ms** | **365 Melem/s** |
-| `window_funnel` | 100 million rows | 791 ms | 126 Melem/s |
-| `sequence_match` | 100 million rows | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million rows | 1.18 s | 85 Melem/s |
-| `sequence_match_events` | 100 million rows | 1.07 s | 93 Melem/s |
-| `sequence_next_node` | 10 million rows | 546 ms | 18 Melem/s |
+| **`sessionize_update`** | **1 billion events** | **1.20 s** | **830 Melem/s** |
+| **`retention_combine`** | **100 million states** | **274 ms** | **365 Melem/s** |
+| `window_funnel_finalize` | 100 million events | 791 ms | 126 Melem/s |
+| `sequence_match` | 100 million events | 1.05 s | 95 Melem/s |
+| `sequence_count` | 100 million events | 1.18 s | 85 Melem/s |
+| `sequence_match_events` | 100 million events | 1.07 s | 93 Melem/s |
+| `sequence_next_node` | 10 million events | 546 ms | 18 Melem/s |
 
 Key design choices that enable this performance:
 
@@ -229,8 +234,8 @@ Key design choices that enable this performance:
   of O(N^2) from repeated allocation
 - **NFA fast paths** -- common pattern shapes dispatch to specialized O(n) linear
   scans instead of full NFA backtracking
-- **Presorted detection** -- O(n) check skips O(n log n) sort when events arrive
-  in timestamp order (common for `ORDER BY` queries)
+- **Presorted detection** -- O(n) check skips O(n log n) sort when events
+  already arrive in timestamp order
 
 Full methodology, per-element cost analysis, and optimization history are
 documented in the [Performance](./internals/performance.md) section.
@@ -246,11 +251,11 @@ For a comprehensive technical overview, see the
 
 | Area | Highlights |
 |---|---|
-| **Language & Safety** | Pure Rust core with `unsafe` confined to the FFI bridge (8 function modules). Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 486 unit tests, 76 E2E SQL queries across 8 test files against real DuckDB, 29 property-based tests (proptest), 88.4% mutation testing kill rate (cargo-mutants). |
-| **Performance** | Fifteen sessions of measured optimization with Criterion.rs. Billion-row benchmarks with 95% confidence intervals. Five negative results documented honestly. |
+| **Language & Safety** | Pure Rust core with `unsafe` confined to the FFI bridge (`src/ffi/`, 9 files). Aggregate callbacks wrapped by quack-rs `aggregate_*_callback!` macros, which turn a panic into a SQL error. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
+| **Testing Rigor** | 515 unit tests, 21 in-process integration tests that `LOAD` the built extension, 78 sqllogictest directives (44 `query` + 34 `statement`) across 8 SQL test files run against the DuckDB CLI, 29 property-based tests (proptest), 88.4% mutation kill rate (cargo-mutants, measured on v0.4.x and not re-measured since). |
+| **Performance** | Optimization sessions recorded in [PERF.md](https://github.com/tomtom215/duckdb-behavioral/blob/main/PERF.md) with before/after Criterion.rs measurements and 95% confidence intervals, including a 1-billion-event `sessionize_update` benchmark and five documented negative results. |
 | **Algorithm Design** | Custom NFA pattern engine with recursive descent parser, fast-path classification, and lazy backtracking. Bitmask-based retention with O(1) combine. |
-| **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. 31 function set overloads per variadic function. Correct combine semantics for segment tree windowing. |
+| **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. Variadic signatures registered as function sets (31 overloads for `retention` and the `sequence_match`/`sequence_count`/`sequence_match_events` family, 64 for `window_funnel`/`window_funnel_events`, 32 for `sequence_next_node`). Stable C API (v1.2.0): one binary loads into DuckDB 1.3.2 through 1.5.6. Correct combine semantics for segment tree windowing. |
 | **CI/CD** | 14 CI jobs (incl. a DuckDB-WASM compile check), 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
 | **Feature Completeness** | All six ClickHouse behavioral functions (source-verified semantics) plus `sessionize` and `window_funnel_events`: 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
 
@@ -279,7 +284,7 @@ For a comprehensive technical overview, see the
 
 - **DuckDB 1.3.2 or later** (built against 1.5.6; stable C API, so one binary serves every release CI checks: 1.3.2, 1.4.4, 1.5.0, 1.5.6)
 - **Rust 1.87+** (MSRV) for building from source
-- A C compiler for DuckDB system bindings
+- Python 3 and `make` for `make configure release` (stamps the metadata footer)
 
 ## Source Code
 

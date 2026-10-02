@@ -23,8 +23,11 @@ sessionize(timestamp_col, INTERVAL 'gap') OVER (
 ) → BIGINT
 ```
 
-**Key facts:** Window function (not aggregate). Requires `OVER` clause. Returns
-1-indexed session IDs.
+**Key facts:** Aggregate designed to be used with `OVER (... ORDER BY ...)`,
+where it returns 1-indexed session IDs per row. Without `OVER` it returns the
+number of sessions in the group. Never use `OVER ()` or a frame covering the
+whole partition: those shapes crash DuckDB
+([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109)).
 
 ---
 
@@ -48,7 +51,9 @@ window_funnel(INTERVAL 'window', 'mode_str', timestamp_col, cond1, ...) → INTE
 ```
 
 **Key facts:** Returns furthest step reached (0 = no step matched). Optional
-mode string before timestamp.
+mode string before timestamp. Supports 1–32 conditions. One event that
+satisfies several consecutive conditions fills several steps (unless
+`strict_once`).
 
 **Modes:**
 
@@ -75,13 +80,17 @@ window_funnel_events(INTERVAL 'window', 'mode_str', timestamp_col, cond1, ...) �
 
 **Key facts:** Returns one timestamp per matched step of the best funnel
 chain (list length equals `window_funnel`'s result). Empty list when the
-entry condition never matched. Same modes as `window_funnel`.
+entry condition never matched. Same modes and 1–32 condition limit as
+`window_funnel`.
 
 ### sequence_match — Did pattern occur?
 
 ```sql
 sequence_match('pattern', timestamp_col, cond1, cond2, ...) → BOOLEAN
 ```
+
+`sequence_match`, `sequence_count`, and `sequence_match_events` take 2–32
+conditions. One event cannot fill two pattern steps.
 
 ---
 
@@ -114,7 +123,20 @@ sequence_next_node('direction', 'base', timestamp_col, value_col,
 
 **Directions:** `'forward'`, `'backward'`
 
-**Bases:** `'head'`, `'tail'` (first/last `base_condition` event), `'first_match'`, `'last_match'` (first/last complete match) — four distinct strategies, 8 direction × base combinations
+**Bases** (each selects a single anchor):
+
+| Base | Anchor |
+|---|---|
+| `'head'` | The literal first event (sorted); it must satisfy `base_condition`, otherwise `NULL` |
+| `'tail'` | The literal last event (sorted); it must satisfy `base_condition`, otherwise `NULL` |
+| `'first_match'` | The first event satisfying `base_condition` AND `event1` |
+| `'last_match'` | The last event satisfying `base_condition` AND `event1` |
+
+The chain `event1, event2, ...` must match **consecutive** events from the
+anchor (ascending for `forward`, descending for `backward`); a failed chain is
+not retried at another anchor. `'forward'` with `'tail'` and `'backward'` with
+`'head'` are rejected with an error, leaving 6 valid direction × base
+combinations. Takes a base condition plus 1–32 event conditions.
 
 ---
 
@@ -173,10 +195,10 @@ install, and a local build could serve different versions.
 
 | Limit | Value |
 |---|---|
-| Boolean conditions | 2 – 32 per function call |
+| Boolean conditions | `window_funnel`, `window_funnel_events`: 1 – 32; `retention`, `sequence_match`, `sequence_count`, `sequence_match_events`: 2 – 32; `sequence_next_node`: base condition + 1 – 32 |
 | Interval type | No month-based intervals (days, hours, minutes, seconds only) |
-| `sessionize` function type | Window function (requires `OVER` clause) |
-| All other functions | Aggregate functions (use `GROUP BY`) |
+| `sessionize` | Aggregate used with `OVER (... ORDER BY ...)` for per-row session IDs |
+| All other aggregates | Normally used with `GROUP BY` |
 
 ---
 
@@ -187,5 +209,5 @@ install, and a local build could serve different versions.
 | `windowFunnel(3600)(ts, c1, c2)` | `window_funnel(INTERVAL '1 hour', ts, c1, c2)` |
 | `sequenceMatch('pat')(ts, c1, c2)` | `sequence_match('pat', ts, c1, c2)` |
 | `sequenceCount('pat')(ts, c1, c2)` | `sequence_count('pat', ts, c1, c2)` |
-| `sequenceNextNode('f','h')(ts, v, b, e1)` | `sequence_next_node('f', 'h', ts, v, b, e1)` |
+| `sequenceNextNode('forward', 'head')(ts, v, b, e1)` | `sequence_next_node('forward', 'head', ts, v, b, e1)` |
 | `retention(c1, c2, c3)` | `retention(c1, c2, c3)` |
