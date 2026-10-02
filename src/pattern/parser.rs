@@ -62,6 +62,21 @@ pub struct CompiledPattern {
     pub steps: Vec<PatternStep>,
 }
 
+impl CompiledPattern {
+    /// The highest condition number `N` referenced by a `(?N)` step
+    /// (1-based), or `None` if the pattern has no condition step.
+    #[must_use]
+    pub fn max_condition(&self) -> Option<usize> {
+        self.steps
+            .iter()
+            .filter_map(|s| match s {
+                PatternStep::Condition(idx) => Some(idx + 1),
+                _ => None,
+            })
+            .max()
+    }
+}
+
 /// Error returned when pattern parsing fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -140,6 +155,7 @@ impl<'a> Parser<'a> {
             if self.pos >= self.input.len() {
                 break;
             }
+            let start = self.pos;
             let step = self.parse_step()?;
             // Collapse consecutive `.*` steps: `.*.*` matches exactly the
             // same event sequences as `.*`, but each extra copy multiplies
@@ -148,6 +164,21 @@ impl<'a> Parser<'a> {
             // the fast paths.
             if step == PatternStep::AnyEvents && steps.last() == Some(&PatternStep::AnyEvents) {
                 continue;
+            }
+            // A time constraint is measured from the last event consumed by
+            // a `(?N)` or `.` step; before any such step it has nothing to
+            // measure from. (ClickHouse measures it from whichever event its
+            // implicit leading `.*` happens to be at.)
+            if matches!(step, PatternStep::TimeConstraint(..))
+                && !steps
+                    .iter()
+                    .any(|s| matches!(s, PatternStep::Condition(_) | PatternStep::OneEvent))
+            {
+                return Err(PatternError {
+                    message: "time constraint must follow an event condition `(?N)` or `.`"
+                        .to_string(),
+                    position: start,
+                });
             }
             steps.push(step);
         }

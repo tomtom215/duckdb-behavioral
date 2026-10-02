@@ -146,7 +146,13 @@ fn classify_pattern(pattern: &CompiledPattern) -> PatternShape {
     // Has AnyEvents — check if it's the standard wildcard-separated form.
     // Accept any mix of Condition and AnyEvents (consecutive AnyEvents is
     // just .*.* which matches any number of events, same as .*).
-    if has_any_events {
+    // Only valid when no two conditions are adjacent: `(?1)(?2).*(?3)`
+    // requires `(?2)` on the event right after `(?1)`, which the
+    // step-counter scan cannot express.
+    let adjacent_conditions = pattern.steps.windows(2).any(|w| {
+        matches!(w[0], PatternStep::Condition(_)) && matches!(w[1], PatternStep::Condition(_))
+    });
+    if has_any_events && !adjacent_conditions {
         return PatternShape::WildcardSeparated(conditions);
     }
 
@@ -279,8 +285,7 @@ fn execute_pattern_nfa(
     let mut states = Vec::with_capacity(pattern.steps.len() * 2);
 
     while search_start < events.len() {
-        if let Some(match_end) = try_match_from(pattern, events, search_start, budget, &mut states)?
-        {
+        if let Some(next) = try_match_from(pattern, events, search_start, budget, &mut states)? {
             total_matches += 1;
             if !count_all {
                 return Ok(MatchResult {
@@ -288,8 +293,10 @@ fn execute_pattern_nfa(
                     count: 1,
                 });
             }
-            // For non-overlapping count, advance past this match
-            search_start = match_end + 1;
+            // Non-overlapping count: continue after the match. A match that
+            // consumed no events (e.g. `.*`) still advances one event, as
+            // ClickHouse does; otherwise the loop would never end.
+            search_start = next.max(search_start + 1);
         } else {
             search_start += 1;
         }
@@ -303,8 +310,9 @@ fn execute_pattern_nfa(
 
 /// Tries to match the full pattern starting from the given event index.
 ///
-/// Returns `Some(end_index)` if a full match is found (the index of the last
-/// matched event), or `None` if no match is possible from this starting position.
+/// Returns `Some(next)` if a full match is found, where `next` is the index of
+/// the first event after the match (equal to `start` for a match that consumed
+/// no events), or `None` if no match is possible from this starting position.
 ///
 /// The `states` Vec is pre-allocated by the caller and reused across calls
 /// to avoid per-position heap allocation (see `execute_pattern` for rationale).
@@ -334,12 +342,7 @@ fn try_match_from(
 
         // Successfully matched all steps
         if state.step_idx >= pattern.steps.len() {
-            // Return the index of the last consumed event (one before current)
-            return Ok(Some(if state.event_idx > 0 {
-                state.event_idx - 1
-            } else {
-                0
-            }));
+            return Ok(Some(state.event_idx));
         }
 
         // No more events to consume
@@ -952,15 +955,59 @@ mod tests {
     }
 
     #[test]
-    fn test_time_constraint_vacuous_truth_at_pattern_start() {
-        // Kills mutant: removing the else branch for time constraints
-        // when last_match_ts is None. A time constraint at the start
-        // of a pattern has no previous match to compare against and
-        // should be vacuously true.
-        let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
-        let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern(&pattern, &events, false).unwrap();
-        assert!(result.matched);
+    fn test_time_constraint_without_anchor_is_rejected() {
+        // A time constraint before any `(?N)` or `.` has nothing to measure
+        // from. It used to be treated as always true; ClickHouse 26.9.8.3
+        // answers `(?t>0)(?1)` over one c1 event with 0 where that gave true.
+        for p in ["(?t<=5)(?1)", ".*(?t<5)(?1)", "(?t<1)(?t<2)(?1)"] {
+            let err = parse_pattern(p).unwrap_err();
+            assert!(err.message.contains("must follow an event"), "{p}: {err}");
+        }
+        // After `.` the constraint is anchored at the event `.` consumed.
+        let pattern = parse_pattern(".(?t<=5)(?1)").unwrap();
+        let events = make_events(&[(100, &[false]), (100, &[true])]);
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    #[test]
+    fn test_adjacent_conditions_with_wildcard_keep_adjacency() {
+        // `(?1)(?2).*(?3)` requires (?2) on the event right after (?1). The
+        // wildcard fast path used to drop that requirement. ClickHouse
+        // 26.9.8.3 returns 0 for these events; the old code returned true.
+        let pattern = parse_pattern("(?1)(?2).*(?3)").unwrap();
+        let events = make_events(&[
+            (1, &[true, false, false]),
+            (2, &[false, false, true]),
+            (3, &[false, true, false]),
+            (4, &[false, false, true]),
+        ]);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
+        assert!(!result.matched);
+        assert_eq!(result.count, 0);
+        // ClickHouse counts 1 for `(?1)(?1).*` over c1,c1,c1,c2,c1 (the old
+        // code counted 2).
+        let pattern = parse_pattern("(?1)(?1).*").unwrap();
+        let events = make_events(&[
+            (0, &[true, false]),
+            (0, &[true, false]),
+            (0, &[true, false]),
+            (0, &[false, true]),
+            (1, &[true, false]),
+        ]);
+        assert_eq!(execute_pattern(&pattern, &events, true).unwrap().count, 1);
+    }
+
+    #[test]
+    fn test_count_of_pattern_matching_no_events_terminates() {
+        // `.*` matches the empty sequence; counting used to restart at the
+        // same position forever. ClickHouse 26.9.8.3 counts one match per
+        // event (2 here), advancing one event after an empty match.
+        let pattern = parse_pattern(".*").unwrap();
+        let events = make_events(&[(1, &[true, false]), (2, &[false, true])]);
+        assert_eq!(execute_pattern(&pattern, &events, true).unwrap().count, 2);
+        let pattern = parse_pattern("(?1).*").unwrap();
+        let events = make_events(&[(1, &[true]), (2, &[true]), (3, &[true])]);
+        assert_eq!(execute_pattern(&pattern, &events, true).unwrap().count, 3);
     }
 
     #[test]
@@ -1351,11 +1398,11 @@ mod tests {
     }
 
     #[test]
-    fn test_events_time_constraint_vacuous_truth() {
-        // Time constraint at pattern start with no prior timestamp.
-        // Should be vacuously true for event collection too.
-        let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
-        let events = make_events(&[(100, &[true])]);
+    fn test_events_time_constraint_after_one_event() {
+        // `.` anchors a following time constraint, so event collection sees
+        // the constraint measured from the `.` event.
+        let pattern = parse_pattern(".(?t<=5)(?1)").unwrap();
+        let events = make_events(&[(100, &[false]), (100, &[true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
         assert_eq!(result, vec![100]);
     }

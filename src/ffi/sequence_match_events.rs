@@ -86,9 +86,23 @@ quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
             if state.pattern_str.is_none() && pattern_reader.is_valid(i) {
                 let s = pattern_reader.read_str(i);
                 state.set_pattern(s);
-                if let Err(e) = parse_pattern(s) {
-                    info.set_error(&format!("invalid sequence pattern '{s}': {e}"));
-                    return;
+                match parse_pattern(s) {
+                    Err(e) => {
+                        info.set_error(&format!("invalid sequence pattern '{s}': {e}"));
+                        return;
+                    }
+                    // As in ClickHouse, a condition number beyond those
+                    // passed is an error, not a step that never matches.
+                    Ok(p) if p.max_condition().is_some_and(|n| n > cond_readers.len()) => {
+                        info.set_error(&format!(
+                            "invalid sequence pattern '{s}': condition (?{}) is out of range; \
+                             {} conditions were passed",
+                            p.max_condition().unwrap_or(0),
+                            cond_readers.len()
+                        ));
+                        return;
+                    }
+                    Ok(_) => {}
                 }
             }
 

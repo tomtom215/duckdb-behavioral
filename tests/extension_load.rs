@@ -890,3 +890,51 @@ fn null_window_skips_the_row() {
     assert_eq!(funnel("w"), 1);
     assert_eq!(events("w"), "['2024-01-01 00:00:00']");
 }
+
+/// Sequence pattern defects found by differential testing against ClickHouse
+/// 26.9.8.3, checked through the loaded extension.
+#[test]
+fn sequence_pattern_clickhouse_parity_fixes() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE sp(ts TIMESTAMP, c1 BOOLEAN, c2 BOOLEAN, c3 BOOLEAN);
+         INSERT INTO sp VALUES
+            ('2020-01-01 00:00:01', true,  false, false),
+            ('2020-01-01 00:00:02', false, false, true),
+            ('2020-01-01 00:00:03', false, true,  false),
+            ('2020-01-01 00:00:04', false, false, true);",
+    )
+    .unwrap();
+    // Adjacent conditions next to `.*` keep their adjacency (ClickHouse: 0, 0).
+    let matched: bool = db
+        .query_one("SELECT sequence_match('(?1)(?2).*(?3)', ts, c1, c2, c3) FROM sp")
+        .unwrap();
+    let count: i64 = db
+        .query_one("SELECT sequence_count('(?1)(?2).*(?3)', ts, c1, c2, c3) FROM sp")
+        .unwrap();
+    assert!(!matched);
+    assert_eq!(count, 0);
+    // A pattern matching zero events terminates (ClickHouse counts 4 here).
+    let count: i64 = db
+        .query_one("SELECT sequence_count('.*', ts, c1, c2, c3) FROM sp")
+        .unwrap();
+    assert_eq!(count, 4);
+    // Out-of-range condition numbers and anchorless time constraints are errors.
+    for (sql, needle) in [
+        (
+            "SELECT sequence_match('(?1)(?4)', ts, c1, c2, c3) FROM sp",
+            "condition (?4) is out of range",
+        ),
+        (
+            "SELECT sequence_match_events('(?1)(?4)', ts, c1, c2, c3) FROM sp",
+            "condition (?4) is out of range",
+        ),
+        (
+            "SELECT sequence_count('(?t>0)(?1)', ts, c1, c2, c3) FROM sp",
+            "time constraint must follow an event condition",
+        ),
+    ] {
+        let err = db.query_one::<i64>(sql).map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains(needle), "{sql}: {err}");
+    }
+}
