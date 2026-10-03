@@ -185,7 +185,7 @@ combinations. Takes a base condition plus 1–32 event conditions.
 ### behavioral_version — Which build is loaded?
 
 ```sql
-behavioral_version() → VARCHAR   -- e.g. '0.9.1'
+behavioral_version() → VARCHAR   -- e.g. '0.10.0'
 ```
 
 **Key facts:** Diagnostic scalar; useful when the community channel, a pinned

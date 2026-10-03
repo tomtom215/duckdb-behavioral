@@ -67,9 +67,10 @@ WHERE len(chain) = 3;
 - Same scan as `window_funnel` (ClickHouse's `windowFunnel` algorithm), all
   [modes](./window-funnel.md#modes) supported.
 - Returns the chain that reached the most steps. When the funnel completes,
-  the scan stops there, so the first chain to complete is returned. When it
-  does not, the chain with the latest entry among those reaching the most
-  steps is returned (on a tie, the one completed last). For example, with
+  the scan stops at the first event that completes it; of the chains that
+  event completes, the one with the latest entry is returned. When it does
+  not complete, the chain with the latest entry among those reaching the
+  most steps is returned (on a tie, the one completed last). For example, with
   `c1` at 0 s and 2 s and `c2` at 1 s and 3 s, a two-step funnel returns
   `[0 s, 1 s]`; adding a third step that never matches returns `[2 s, 3 s]`.
 - An event that fills several steps contributes its timestamp once per step,

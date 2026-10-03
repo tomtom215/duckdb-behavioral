@@ -421,7 +421,7 @@ and `compat` matrix; leave `TARGET_DUCKDB_VERSION` at the C API version
 
 | Metric | Value |
 |---|---|
-| Unit tests | 518 + 1 doc-test |
+| Unit tests | 545 + 1 doc-test |
 | Integration tests | 21 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
 | E2E tests | 12 workflow steps (2 platforms) + 8 SQL logic test files (against real DuckDB CLI), plus a compat job loading one binary into DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
 | Differential tests | `window_funnel`, `retention`, `sequence_*` and `sequence_next_node` fuzzed against ClickHouse 26.9.8.3 (see below) |
@@ -489,7 +489,7 @@ appended; see [Getting Started](https://tomtom215.github.io/duckdb-behavioral/ge
 ## Development
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 518 unit + 21 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 545 unit + 28 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks

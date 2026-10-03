@@ -15,7 +15,7 @@ cargo build
 DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh
 
 # Or run checks individually
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 518 unit + 21 integration + 1 doc-test
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 545 unit + 28 integration + 1 doc-test
 cargo clippy --all-targets         # Zero warnings required
 cargo fmt -- --check               # Format check
 ```
@@ -93,7 +93,7 @@ All checks must pass before submitting a PR:
 
 | Check | Command | What it validates |
 |---|---|---|
-| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test` | 518 unit tests + 21 in-process integration tests + 1 doc-test |
+| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test` | 545 unit tests + 28 in-process integration tests + 1 doc-test |
 | Lints | `cargo clippy --all-targets` | Zero warnings (pedantic + nursery + cargo) |
 | Format | `cargo fmt -- --check` | Code formatting |
 | Docs | `cargo doc --no-deps` | Documentation builds without warnings |

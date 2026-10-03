@@ -813,9 +813,10 @@ impl WindowFunnelState {
     ///
     /// Returns one timestamp per step reached, so the length always equals
     /// [`finalize`](Self::finalize)'s result. When the funnel completes, the
-    /// scan stops and the first chain to complete is returned. Otherwise,
-    /// among chains reaching the most steps, the one with the latest entry is
-    /// returned (on a tie, the one completed last). An event that fills
+    /// scan stops at the first event that completes it, and of the chains
+    /// that event completes, the one with the latest entry is returned.
+    /// Otherwise, among chains reaching the most steps, the one with the
+    /// latest entry is returned (on a tie, the one completed last). An event that fills
     /// several steps contributes its timestamp once per step. Empty when no
     /// entry condition matches.
     #[must_use]
@@ -2792,6 +2793,15 @@ mod mutation_tests {
             let mut s = state(10, mode, 2, &[(0, &[0]), (1, &[1]), (2, &[0]), (3, &[1])]);
             assert_eq!(s.finalize_events(), vec![0, S], "{mode:?}");
         }
+    }
+
+    /// When one event completes the funnel for several chains, the one with
+    /// the latest entry is returned: here the row at 5 s, which is both the
+    /// entry and step 2, rather than the entry at 0 s.
+    #[test]
+    fn completing_event_returns_latest_entry_chain() {
+        let mut s = state(10, FunnelMode::DEFAULT, 2, &[(0, &[0]), (5, &[0, 1])]);
+        assert_eq!(s.finalize_events(), vec![5 * S, 5 * S]);
     }
 
     /// An incomplete funnel returns the latest-entry chain among those

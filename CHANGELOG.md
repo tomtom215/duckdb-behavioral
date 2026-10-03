@@ -7,8 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Results change for some inputs (see **Behaviour changes**); a minor version
-bump is appropriate.
+## [0.10.0] - 2026-10-02
+
+Results change for some inputs (see **Behaviour changes**).
 
 ### Fixed
 
@@ -38,6 +39,15 @@ bump is appropriate.
     (default mode 0.09–0.10 s).
   - A 1M-row same-timestamp burst: 6.5 s → 0.23 s.
   - Results matched the exhaustive reference in all 648,000 fuzzed cases.
+- **Queries with many small groups are 1.4–6.5× faster** (2M groups of 2
+  rows on DuckDB 1.5.6): `window_funnel` 0.59–0.81 s → 0.17–0.18 s and
+  `sequence_match` 1.16–1.28 s → 0.18–0.19 s with 4 threads. Small groups no
+  longer allocate per row, and the pattern is shared between groups instead
+  of copied. A single very large group is 5–10% slower (see PERF.md
+  Session 20).
+- **`window_funnel` with a `NULL` mode on some rows and `'strict_order'` on
+  others** dropped rows with no true condition that arrived before the mode,
+  so they did not break the chain (2 instead of 1).
 - **`sequence_match_events` without a full match is up to 3× faster** for
   gaps of nothing, `.*` or one time constraint other than `==`. A 201-step
   pattern over 1M events took 10.1 s → 3.3 s.
@@ -49,6 +59,10 @@ bump is appropriate.
   - Long patterns are shortened to 60 characters plus their length.
 - **CI could not fail**: the clippy, test, semver and coverage steps piped
   into `tee` under `bash -e` without `pipefail`, so their status was always 0.
+- **The release workflow's `linux_arm64` artifact was built for x86-64**: the
+  community Makefile passes `--target` only for macOS, so the cross-compile
+  job built for its own architecture. It now runs on an arm64 runner, and
+  every release build checks the library's architecture with `file`.
 
 - **Sequence patterns no longer take quadratic time per group.**
   `sequence_match`, `sequence_count` and `sequence_match_events` matched any
@@ -150,8 +164,10 @@ bump is appropriate.
 - `'timestamp_dedup'` is documented as what it always computed: an alias of
   `strict_increase`. `'strict'` stays accepted as an alias of
   `'strict_deduplication'` (ClickHouse 26.9 rejects it).
-- `window_funnel_events` returns the chain with the latest entry among those
-  reaching the most steps.
+- `window_funnel_events` returns, when the funnel completes, the
+  latest-entry chain completed by the first event that completes it;
+  otherwise the chain with the latest entry among those reaching the most
+  steps.
 
 ### Added
 
@@ -740,7 +756,10 @@ all bumping deps to versions at or below those landed here: #58, #61,
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.6.0...v0.8.0
 [0.7.0]: https://github.com/tomtom215/duckdb-behavioral/commit/f50cb24
 [0.6.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.5.0...v0.6.0

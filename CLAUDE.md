@@ -155,7 +155,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (518 unit + 21 integration + 1 doc-test).
+# Run all tests (545 unit + 28 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -183,7 +183,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.9.1 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -274,14 +274,14 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **518 unit tests** covering all functions, edge cases, combine associativity,
+- **545 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
   modules -- `sequence_match` and `sequence_count` share one state type;
   `window_funnel_events` shares `WindowFunnelState`)
 - **1 doc-test** for the pattern parser
-- **21 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **28 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
@@ -428,12 +428,14 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **Edge cases**: Threshold boundaries, NULL handling, empty inputs
 - **Combine correctness**: Empty combine, boundary detection, associativity,
   config propagation via `AggregateTestHarness`
-- **Property-based tests**: 31 proptest tests verifying algebraic properties
+- **Property-based tests**: 33 proptest tests verifying algebraic properties
   (associativity, commutativity, identity, idempotency, monotonicity),
-  including 10 tests exercising 32-condition paths, plus 2 differential
-  tests checking the pattern matcher against the original backtracking
-  search (`src/pattern/reference_nfa.rs`, test-only) result for result
-- **Mutation-testing-guided tests**: 51 tests from cargo-mutants analysis
+  including tests at the 32-condition limit, a brute-force check of the
+  `strict_once` matching, and 2 differential tests checking the pattern
+  matcher against the original backtracking search
+  (`src/pattern/reference_nfa.rs`, test-only) result for result
+- **Mutation-testing-guided tests**: 51 tests from the v0.4.x cargo-mutants
+  analysis, plus the `mutation_tests` modules (14 tests) from the 0.10.0 run
 - **Pattern parser**: All operators, error positions, whitespace tolerance
 - **Pattern executor**: Match/no-match, wildcards, time constraints, counting,
   event collection, fast-path classification, linear scaling on the shapes
@@ -448,9 +450,9 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
-Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 518 unit tests run in <1 second (the doc-test in
-~2s). The 21 in-process integration tests add ~15s on a cold run — they build and
-`LOAD` the real release `cdylib` — and are near-instant once that artifact is
+Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 545 unit tests take about 2 s (the doc-test
+about 1 s). The 28 in-process integration tests add 20–35 s when the release
+`cdylib` must be rebuilt (they build and `LOAD` it) and about 5 s once it is
 cached.
 
 **In-process integration tests** (`tests/extension_load.rs`, run by `cargo test`):

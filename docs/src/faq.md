@@ -28,7 +28,7 @@ git submodule update --init --recursive   # first time only
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension   # .dylib on macOS
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.9.1 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
   -o /tmp/behavioral.duckdb_extension
 ```
 

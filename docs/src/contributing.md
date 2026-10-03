@@ -22,11 +22,11 @@ cargo build
 ### Running Tests
 
 ```bash
-# 518 unit tests + 21 in-process integration tests + 1 doc-test.
+# 545 unit tests + 28 in-process integration tests + 1 doc-test.
 # DUCKDB_DOWNLOAD_LIB=1 links a prebuilt libduckdb (the `duckdb` dev-dependency
 # has no `bundled` feature, so a bare `cargo test` fails to link). The unit
-# tests run in under a second; the integration tests build and LOAD the
-# release cdylib, about 20 s on a cold run.
+# tests take about 2 s; the integration tests build and LOAD the release
+# cdylib, 20-35 s when it must be rebuilt.
 DUCKDB_DOWNLOAD_LIB=1 cargo test
 
 # Clippy (zero warnings required)
@@ -115,7 +115,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.9.1 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
   -o /tmp/behavioral.duckdb_extension
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
 

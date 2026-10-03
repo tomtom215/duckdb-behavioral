@@ -108,23 +108,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The community Makefile passes --target only for the osx_*
+          # platforms; Linux builds for the runner's own architecture, so
+          # linux_arm64 needs an arm64 runner. `arch` is what `file` reports
+          # for the built library (checked below).
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux_amd64
             lib_ext: so
-          - os: ubuntu-22.04
+            arch: x86-64
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             platform: linux_arm64
             lib_ext: so
-            cross: true
+            arch: aarch64
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: osx_amd64
             lib_ext: dylib
+            arch: x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
             platform: osx_arm64
             lib_ext: dylib
+            arch: arm64
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -145,12 +152,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install cross-compilation tools
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
       # Build via community extension Makefile for metadata correctness
       - name: Configure extension
         run: |
@@ -161,8 +162,19 @@ jobs:
       - name: Build release extension
         run: |
           DUCKDB_PLATFORM=${{ matrix.platform }} make release
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
+
+      - name: Verify binary architecture
+        run: |
+          set -euo pipefail
+          for f in "build/release/${{ env.EXTENSION_NAME }}.duckdb_extension" \
+                   "build/release/lib${{ env.EXTENSION_NAME }}.${{ matrix.lib_ext }}"; do
+            desc=$(file -b "$f")
+            echo "$f: $desc"
+            if ! grep -q "${{ matrix.arch }}" <<<"$desc"; then
+              echo "::error::$f is not ${{ matrix.arch }} (platform ${{ matrix.platform }})"
+              exit 1
+            fi
+          done
 
       # Package artifacts with checksums
       - name: Package extension
