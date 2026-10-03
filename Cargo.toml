@@ -3,7 +3,7 @@
 
 [package]
 name = "duckdb-behavioral"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 rust-version = "1.87"
 authors = ["Tom F <tomtom215@users.noreply.github.com>"]
@@ -20,8 +20,9 @@ name = "behavioral"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-quack-rs = "=0.15.0"
-libduckdb-sys = { version = "=1.10505.0", features = ["loadable-extension"] }
+quack-rs = "=0.18.0"
+libduckdb-sys = { version = "=1.10506.0", features = ["loadable-extension"] }
+smallvec = { version = "1", features = ["const_new"] }
 
 [dev-dependencies]
 # No `bundled` feature: dev/test builds link a prebuilt libduckdb downloaded by
@@ -29,12 +30,12 @@ libduckdb-sys = { version = "=1.10505.0", features = ["loadable-extension"] }
 # `DUCKDB_DOWNLOAD_LIB=1 cargo test`) instead of compiling DuckDB's C++ tree from
 # source. Offline alternative: set DUCKDB_LIB_DIR to a directory containing
 # libduckdb (plus LD_LIBRARY_PATH on Linux). Never set either for release builds.
-duckdb = "=1.10505.0"
+duckdb = "=1.10506.0"
 # `bundled-test-prebuilt` exposes `quack_rs::testing::InMemoryDb` (used by the
 # in-process extension-load integration test, `tests/extension_load.rs`) while
 # linking the same prebuilt libduckdb as the `duckdb` dev-dependency above.
 # This feature is dev-only and never reaches the release `.so`.
-quack-rs = { version = "=0.15.0", features = ["bundled-test-prebuilt"] }
+quack-rs = { version = "=0.18.0", features = ["bundled-test-prebuilt"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1"
 
@@ -70,7 +71,11 @@ harness = false
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# Must stay "unwind": every aggregate callback runs under quack-rs's
+# `catch_unwind` guard (aggregate_*_callback! macros), which turns a panic into
+# a SQL error. Under "abort" the guard is inert and a panic kills the host
+# DuckDB process.
+panic = "unwind"
 strip = true
 
 [profile.profiling]
@@ -83,7 +88,7 @@ opt-level = 3
 lto = "thin"
 
 [lints.rust]
-unsafe_op_in_unsafe_fn = "allow"
+unsafe_op_in_unsafe_fn = "warn"
 missing_docs = "warn"
 
 [lints.clippy]

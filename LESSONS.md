@@ -56,3 +56,23 @@ E2E testing against real DuckDB discovered three critical bugs that no unit test
 
 **15. DuckDB function set registration fails silently.**
 `duckdb_register_aggregate_function_set` returns an error code but produces no diagnostic explaining why. The fix for our case: `duckdb_aggregate_function_set_name` must be called on each function in the set, not just the set itself. This is undocumented in the C API and was discovered by reading DuckDB's test code.
+
+## Distribution & Robustness
+
+**16. Decide the ABI from the binary, not from a comment.**
+The Makefile set `USE_UNSTABLE_C_API=1` under a comment saying the Rust bindings needed the unstable C API. They did not: disassembling an unstripped release build and listing the `__DUCKDB_*` function-pointer statics that are *loaded* showed 76 of 546 slots used, the highest at 306, all inside the 357-slot stable prefix. The unstable stamp pinned each binary to one DuckDB release, so the community channel dropped the extension the day DuckDB v1.5.6 shipped. Stamped `C_STRUCT` for C API v1.2.0, one binary loads into DuckDB 1.3.2 through 1.5.6.
+
+**17. `panic = "abort"` silently disables every panic guard.**
+`catch_unwind` catches nothing under `abort`; the runtime aborts before unwinding begins. Combined with raw `extern "C"` callbacks, any panic in an aggregate killed the user's DuckDB process. Use the SDK's guarded callback macros and `panic = "unwind"`, and test the profile, because nothing else will notice the setting coming back.
+
+**18. A DuckDB C API defect cannot always be fixed from the extension.**
+`agg(x ORDER BY y)`, `OVER ()` and `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frames hand every C API aggregate a one-element state array with `count > 1` (duckdb/duckdb#26109). The callback cannot detect it without performing the out-of-bounds read, and the C API has no aggregate bind hook to refuse the query. Map the exact shapes with valgrind, document them where users look, and give the workaround.
+
+**19. A toolchain file overrides the toolchain your CI step installs.**
+`rust-toolchain.toml` pins `channel = "stable"`, so the MSRV job's `dtolnay/rust-toolchain@1.87` followed by a bare `cargo check` ran stable and never tested 1.87. Invoke the toolchain explicitly (`cargo +1.87`).
+
+**20. A parity claim is only as good as a differential test against the real system.**
+The docs said "complete ClickHouse parity", backed by reading ClickHouse's source and docs. Running both engines on the same random event groups (`clickhouse local` makes this cheap) showed `window_funnel` disagreeing in 5–30% of groups in almost every mode, and found three wrong-result or hang bugs in the `sequence_*` fast paths that 486 unit tests missed. The same comparison also exposed defects in ClickHouse itself. An exhaustive reference (ClickHouse's algorithm, keeping every chain) let each remaining difference be attributed instead of argued about. Re-run the comparison whenever matching code changes.
+
+**21. A worst case nobody benchmarked is still the product.**
+Lesson 6 fixed the backtracking search's exploration order, and the benchmarks only measured patterns that match quickly. Any pattern that could not complete through `.*` or a skipping time gate stayed quadratic per group (8–9 s at 32,000 events, 32–35 s for `sequence_match_events`). Replacing the search did not mean re-deriving its semantics from prose: the old code was kept test-only as an oracle, and differential proptests decide equivalence (they catch planted bugs in the new matcher's edge handling, such as a trailing `.*(?t<5)`, which matches only at the end of the events). Time the not-found case, and keep the old implementation as the spec when replacing one.

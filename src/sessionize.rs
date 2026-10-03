@@ -276,8 +276,13 @@ pub struct SessionizeBoundaryState {
     pub last_ts: Option<i64>,
     /// Number of session BOUNDARIES (gaps exceeding threshold) in this segment.
     pub boundaries: i64,
-    /// Gap threshold in microseconds.
+    /// Gap threshold in microseconds, as set for the row being added.
     pub threshold_us: i64,
+    /// Gap threshold of this segment's first row. A row starts a new session
+    /// when its gap to the previous row exceeds the row's own threshold, so
+    /// the boundary between two combined segments is judged by the right
+    /// segment's first row.
+    pub first_threshold_us: i64,
     /// Whether the rightmost row in this segment had a `NULL` timestamp.
     /// Used by the FFI finalize to emit `NULL` for `NULL`-timestamp rows.
     pub current_row_null: bool,
@@ -292,6 +297,7 @@ impl SessionizeBoundaryState {
             last_ts: None,
             boundaries: 0,
             threshold_us: 0,
+            first_threshold_us: 0,
             current_row_null: false,
         }
     }
@@ -314,6 +320,7 @@ impl SessionizeBoundaryState {
             None => {
                 self.first_ts = Some(timestamp_us);
                 self.last_ts = Some(timestamp_us);
+                self.first_threshold_us = self.threshold_us;
             }
             Some(prev) => {
                 // Overflow-exact gap check under the window ORDER BY
@@ -360,16 +367,21 @@ impl SessionizeBoundaryState {
             }
             (Some(_), Some(other_first)) => {
                 let cross_boundary = self.last_ts.map_or(0, |self_last| {
-                    // saturating_sub mirrors update(): infinite cross-segment
-                    // gaps must count as boundaries, not wrap negative.
-                    i64::from(other_first.saturating_sub(self_last) > self.threshold_us)
+                    // The same exact u64 gap as update() (segments are in
+                    // frame order, so the gap is non-negative), judged by the
+                    // threshold of the row that starts the right segment.
+                    i64::from(
+                        other_first.wrapping_sub(self_last) as u64
+                            > other.first_threshold_us as u64,
+                    )
                 });
 
                 Self {
                     first_ts: self.first_ts,
                     last_ts: other.last_ts.or(self.last_ts),
                     boundaries: self.boundaries + other.boundaries + cross_boundary,
-                    threshold_us: self.threshold_us,
+                    threshold_us: other.threshold_us,
+                    first_threshold_us: self.first_threshold_us,
                     current_row_null: other.current_row_null,
                 }
             }
@@ -396,6 +408,49 @@ impl Default for SessionizeBoundaryState {
 #[cfg(test)]
 mod boundary_tests {
     use super::*;
+
+    #[test]
+    fn combine_judges_infinite_gap_like_update() {
+        // A gap from -infinity to +infinity (about 2^64 microseconds) exceeds
+        // even an i64::MAX threshold. update() computes it exactly in u64;
+        // combine used saturating i64 arithmetic and missed the boundary.
+        let threshold = i64::MAX;
+        let mut sequential = SessionizeBoundaryState::new();
+        sequential.threshold_us = threshold;
+        sequential.update(-i64::MAX);
+        sequential.update(i64::MAX);
+
+        let mut left = SessionizeBoundaryState::new();
+        left.threshold_us = threshold;
+        left.update(-i64::MAX);
+        let mut right = SessionizeBoundaryState::new();
+        right.threshold_us = threshold;
+        right.update(i64::MAX);
+
+        assert_eq!(sequential.finalize(), 2);
+        assert_eq!(left.combine(&right).finalize(), sequential.finalize());
+    }
+
+    #[test]
+    fn combine_judges_boundary_by_right_segment_threshold() {
+        // Rows 0 s (gap 0) and 5 s (gap 10 s): the second row's own gap
+        // keeps it in the first session, sequentially and when combined.
+        let mut sequential = SessionizeBoundaryState::new();
+        sequential.threshold_us = 0;
+        sequential.update(0);
+        sequential.threshold_us = 10_000_000;
+        sequential.update(5_000_000);
+
+        let mut left = SessionizeBoundaryState::new();
+        left.threshold_us = 0;
+        left.update(0);
+        let mut right = SessionizeBoundaryState::new();
+        right.threshold_us = 10_000_000;
+        right.update(5_000_000);
+
+        assert_eq!(sequential.finalize(), 1);
+        assert_eq!(left.combine(&right).finalize(), 1);
+    }
 
     #[test]
     fn test_empty_state() {

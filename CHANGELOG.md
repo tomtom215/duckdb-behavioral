@@ -7,6 +7,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-02
+
+Results change for some inputs (see **Behaviour changes**).
+
+### Fixed
+
+- **A long pattern on a large group no longer aborts DuckDB.**
+  - What happened: the sequence matcher's working memory (one byte per
+    event per step) sits outside DuckDB's `memory_limit`, and a failed
+    allocation aborted the process. `repeat('.', 60000)` over 60,000 rows
+    under a 3 GB limit exited with code 134.
+  - Changes:
+    - The working memory is now one bit per event per step: an 801-step
+      pattern over 1M events peaked at 148 MB (819 MB before).
+    - Patterns are capped at 1024 steps.
+    - Allocation failures in the matcher, and while collecting events in
+      update and combine, raise an `out of memory` error and the session
+      continues.
+- **Configuration arguments that differ between rows of a group are an
+  error.**
+  - What happened: the pattern, window, mode, direction and base were taken
+    from the first row each partial state happened to see. Results depended
+    on row order and thread scheduling: the same two rows gave 2 in one
+    order and 1 in the other. An invalid value on a later row was ignored.
+  - Now: every update and combine compares the values, so the error does
+    not depend on order. `NULL`s are still ignored.
+- **`window_funnel` with `strict_once` is 19–28× faster.** Measured on
+  DuckDB 1.5.6:
+  - 250k rows in 1,000 groups with 31 conditions: 4.0–4.1 s → 0.18–0.21 s
+    (default mode 0.09–0.10 s).
+  - A 1M-row same-timestamp burst: 6.5 s → 0.23 s.
+  - Results matched the exhaustive reference in all 648,000 fuzzed cases.
+- **Queries with many small groups are 1.4–6.5× faster** (2M groups of 2
+  rows on DuckDB 1.5.6): `window_funnel` 0.59–0.81 s → 0.17–0.18 s and
+  `sequence_match` 1.16–1.28 s → 0.18–0.19 s with 4 threads. Small groups no
+  longer allocate per row, and the pattern is shared between groups instead
+  of copied. A single very large group is 5–10% slower (see PERF.md
+  Session 20).
+- **`window_funnel` with a `NULL` mode on some rows and `'strict_order'` on
+  others** dropped rows with no true condition that arrived before the mode,
+  so they did not break the chain (2 instead of 1).
+- **`sequence_match_events` without a full match is up to 3× faster** for
+  gaps of nothing, `.*` or one time constraint other than `==`. A 201-step
+  pattern over 1M events took 10.1 s → 3.3 s.
+- **`sequence_next_node` with a `NULL` direction and base `'tail'`** returned
+  `NULL`. A `NULL` direction means `'forward'`, so this is now the documented
+  `forward`/`tail` error. The check runs at finalize, independent of row order.
+- **Error messages**:
+  - Multi-byte characters are named whole (`'é'` printed as `'Ã'` before).
+  - Long patterns are shortened to 60 characters plus their length.
+- **CI could not fail**: the clippy, test, semver and coverage steps piped
+  into `tee` under `bash -e` without `pipefail`, so their status was always 0.
+- **The release workflow's `linux_arm64` artifact was built for x86-64**: the
+  community Makefile passes `--target` only for macOS, so the cross-compile
+  job built for its own architecture. It now runs on an arm64 runner, and
+  every release build checks the library's architecture with `file`.
+
+- **Sequence patterns no longer take quadratic time per group.**
+  `sequence_match`, `sequence_count` and `sequence_match_events` matched any
+  pattern beyond the two fast-path shapes with a backtracking search that
+  re-scanned the rest of the group from every start. That made a group
+  quadratic whenever the pattern did not complete, for example after `.*`
+  followed by a time constraint, or after a skipping constraint such as
+  `(?t>=5)`. It also could not be cancelled. At 32,000 events in one group,
+  the old build took 8.3–9.1 s for `(?1).*(?t<5)(?2).*(?3)`, 1.8–2.4 s for
+  `(?1)(?t>=5)(?3)`, and 32–35 s for `sequence_match_events` on the first
+  pattern. The new matcher takes 0.003–0.007 s on all three, and 0.78–1.29 s
+  at 10 million events. These are SQL timings on DuckDB 1.5.6, 3 runs each.
+  It computes, per event-consuming step, the positions from which the rest
+  of the pattern can still complete, then walks forward greedily. This is
+  O(s · n log n) for `n` events and `s` pattern steps, and the results are
+  identical:
+  - Differential property tests compare it with the original search (kept
+    test-only) on 20,000 random pattern/event cases per run. An extended
+    400,000-case run with groups of up to 40 events also passed.
+  - The ClickHouse differential fuzzer produced byte-identical output with
+    the old and new builds over 14,883 groups.
+
+  The exploration-budget error ("pattern exploration budget exceeded") no
+  longer exists: patterns that used to hit it now return their result.
+  One trade-off: a pattern with a time constraint where every pair matches
+  and nothing is skipped (Criterion `sequence_match_time_constraint`,
+  `(?1)(?t<=600)(?2)`) went from 14.3 ms to 21.6–23.9 ms at 1 million events
+  (two runs), because the matcher always makes its backward pass. See
+  PERF.md Session 19.
+
+- **`window_funnel` / `window_funnel_events` now follow ClickHouse's
+  `windowFunnel`.** Differential testing against ClickHouse 26.9.8.3 found
+  the previous greedy scan disagreeing in 5–30% of random groups for every
+  mode combination but one. The engine is now a port of ClickHouse's
+  algorithm:
+  - An event satisfying several conditions fills several steps, the entry
+    step included.
+  - `strict_order` is broken by condition-less events and by a step arriving
+    early.
+  - `strict_deduplication` stops on any repeat of a reached step.
+  - `allow_reentry` skips early steps instead of resetting the chain.
+
+  Two ClickHouse defects are deliberately not reproduced:
+  - ClickHouse loses valid chains under `strict_increase`.
+  - Under `strict_once`, ClickHouse orders tied rows by arrival. The
+    extension orders them by bitmask instead, and uses bipartite matching
+    rather than exponential chain enumeration.
+
+  Over 1,296,000 cases the extension equals an exhaustive reference.
+- **`sequence_match` / `sequence_count`**: patterns mixing adjacent
+  conditions with `.*` (`(?1)(?2).*(?3)`) lost the adjacency requirement and
+  reported false matches and inflated counts.
+- **`sequence_count`** never returned for a pattern that can match zero
+  events (`.*`).
+- **`sequence_next_node`**: rows tying on (timestamp, value) gave results that
+  depended on row order (flipping from 33 tied rows); the sort key is now
+  total.
+- **`sessionize`**: with a gap that varies per row, results depended on how
+  DuckDB's segment tree split the frame. The boundary between segments is
+  now judged by the right segment's first row. A ±infinity gap is also now
+  computed exactly in combine.
+- **`window_funnel(NULL::INTERVAL, ...)`** returned 1 (a zero-length window)
+  instead of skipping the row.
+- **`interval_to_micros`** rejected a mixed-sign interval whose total fits in
+  `i64`.
+- **Panics no longer kill DuckDB.** The release profile set
+  `panic = "abort"` and every aggregate callback was an unguarded
+  `extern "C" fn`. Callbacks now use quack-rs's guarded
+  `aggregate_*_callback!` macros under `panic = "unwind"`, so a panic becomes
+  a SQL error.
+- **The extension loads on any DuckDB release from 1.3.2.** It was built for
+  the unstable C API (`C_STRUCT_UNSTABLE`), which pins a binary to one DuckDB
+  release (v1.5.5). The community channel therefore stopped serving it when
+  DuckDB v1.5.6 shipped. It uses only the stable C API (76 of 546 slots,
+  highest 306 of the 357-slot stable prefix) and is now stamped `C_STRUCT` /
+  C API v1.2.0. CI loads one binary into DuckDB 1.3.2, 1.4.4, 1.5.0 and
+  1.5.6.
+
+### Behaviour changes
+
+- A group whose configuration arguments differ between rows is an error (see
+  **Fixed**).
+- Patterns longer than 1024 steps are rejected.
+- `window_funnel` mode names are case-insensitive, like `sequence_next_node`'s
+  direction and base (`'STRICT_ORDER'` was an error).
+- `sequence_match` / `sequence_count` return `NULL` for a group whose
+  timestamps are all `NULL`, as for an empty group (was `false` / `0`).
+
+- Errors now raised (previously silently accepted, now rejected as in
+  ClickHouse or because the input has no defined meaning):
+  - `window_funnel` with `'allow_reentry'` but without `'strict_order'`.
+  - A `(?N)` larger than the number of conditions passed.
+  - A time constraint before any `(?N)` or `.` (it used to be treated as
+    always true).
+  - `sequence_next_node` with `forward` + `tail` or `backward` + `head`
+    (these always returned NULL).
+- `window_funnel` / `window_funnel_events` accept a single condition, as
+  ClickHouse does.
+- `'timestamp_dedup'` is documented as what it always computed: an alias of
+  `strict_increase`. `'strict'` stays accepted as an alias of
+  `'strict_deduplication'` (ClickHouse 26.9 rejects it).
+- `window_funnel_events` returns, when the funnel completes, the
+  latest-entry chain completed by the first event that completes it;
+  otherwise the chain with the latest entry among those reaching the most
+  steps.
+
+### Added
+
+- **`TIMESTAMPTZ` is accepted wherever `TIMESTAMP` is.** Before, it was a
+  binder error, and the `::TIMESTAMP` workaround converts to local time,
+  which can reorder events around a daylight-saving change.
+  `window_funnel_events` and `sequence_match_events` return `TIMESTAMPTZ[]`
+  for `TIMESTAMPTZ` input. The extension now registers 540 overloads, and
+  `LOAD` still takes 0.03–0.12 s.
+
+### Changed
+
+- quack-rs 0.15.0 → 0.18.0. libduckdb-sys / duckdb 1.10505.0 → 1.10506.0
+  (DuckDB v1.5.5 → v1.5.6). State callbacks are installed with
+  `ffi_state::<T>()`.
+- rustls 0.23.42 → 0.23.45 (RUSTSEC-2026-0285; build-time downloader only).
+- CI: the MSRV job now actually runs 1.87 (`cargo +1.87`; the toolchain file
+  had redirected it to stable). `e2e.yml` gains a `compat` job.
+
+### Documentation
+
+- The README and docs-index "User Flow Analysis" example used `GROUP BY ALL`
+  over aggregates only. That merged all users into one sequence and counted
+  events (it returned `Cart | 9` instead of `Cart 2, Search 1`). It now
+  groups by user first.
+- The crash list is precise. It covers `agg(... ORDER BY ...)`, `OVER ()` and
+  `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frames, with verified safe
+  alternatives: `OVER (PARTITION BY 1)`, and `OVER (PARTITION BY u)` without
+  `ORDER BY`.
+- New FAQ and README sections:
+  - Running window frames are quadratic for the event-collecting functions
+    (40,000 rows: 11.1 s, 1.25 GB).
+  - A query cannot be cancelled while one group is finalized; the C API
+    exposes no interrupt check.
+  - Memory outside `memory_limit`.
+- `TIMESTAMP_NS` input is truncated to microseconds.
+
+- Documented DuckDB's C API defect duckdb/duckdb#26109, verified under
+  valgrind on 1.5.6: `agg(... ORDER BY ...)`, `OVER ()` and whole-partition
+  frames read out of bounds and usually segfault for every C API aggregate.
+  The FAQ had suggested `ORDER BY` inside the call for speed.
+- Corrected the parity claims to the differential-testing results. Also
+  corrected install/load instructions (a bare `.so` cannot be loaded), NULL
+  handling, example outputs, counts, and performance-number provenance.
+
+
 ## [0.9.1] - 2026-07-23
 
 ### Changed
@@ -549,7 +756,10 @@ all bumping deps to versions at or below those landed here: #58, #61,
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.6.0...v0.8.0
 [0.7.0]: https://github.com/tomtom215/duckdb-behavioral/commit/f50cb24
 [0.6.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.5.0...v0.6.0

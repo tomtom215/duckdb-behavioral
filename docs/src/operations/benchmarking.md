@@ -20,15 +20,16 @@ statistically significant only when 95% confidence intervals do not overlap.
 
 ## Benchmark Suite
 
-Seven benchmark files cover all functions:
+Seven benchmark files cover the Rust state of every aggregate function. They
+are microbenchmarks of update/combine/finalize, not end-to-end SQL queries:
 
 | Benchmark | Functions | Max Scale | Memory Limit |
 |-----------|-----------|-----------|--------------|
 | `sessionize_bench` | update, combine | **1 billion** | O(1) state, no limit |
-| `retention_bench` | update, combine | **1 billion** | O(1) state, no limit |
-| `window_funnel_bench` | finalize, combine | 100 million | 16 bytes/event |
-| `sequence_bench` | match, count, combine | 100 million | 16 bytes/event |
-| `sort_bench` | random, presorted | 100 million | 16 bytes/event + clone |
+| `retention_bench` | update, combine | 100 million | O(1) state |
+| `window_funnel_bench` | finalize, combine, `window_funnel_events` finalize | 100 million | 16 bytes/event |
+| `sequence_bench` | match, count, combine, time constraint | 100 million | 16 bytes/event |
+| `sort_bench` | reverse-ordered with jitter, presorted | 100 million | 16 bytes/event + clone |
 | `sequence_next_node_bench` | update, combine, realistic | 10 million | 32 bytes/event |
 | `sequence_match_events_bench` | update, combine | 100 million | 16 bytes/event |
 
@@ -40,8 +41,10 @@ clones the data per iteration, requiring approximately 3.2 GB total. On
 a 21 GB system, 100 million is the practical maximum for event-collecting
 benchmarks.
 
-O(1)-state functions (sessionize, retention) store no per-event data,
-enabling benchmarks up to 1 billion elements.
+O(1)-state functions (sessionize, retention) store no per-event data.
+`sessionize_update` runs up to 1 billion elements; `retention_combine` is
+currently capped at 100 million (a 1-billion run was measured once, in
+PERF.md Session 4).
 
 `sequence_next_node` uses 32-byte `NextNodeEvent` structs with `Arc<str>`
 string storage, further reducing the maximum feasible scale.

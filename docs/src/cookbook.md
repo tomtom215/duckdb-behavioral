@@ -467,8 +467,12 @@ ORDER BY users DESC;
 
 ### Last-Match Flow
 
-Using `last_match` base to find the next page after the *last* occurrence of
-the Home → Product pattern:
+With `last_match`, the anchor is the *last* event satisfying both the base
+condition and `event1` (here: the user's last Home view). The chain must then
+match consecutive events (Home, then Product immediately after), and the
+result is the page after that Product view. If the event right after the last
+Home view is not Product, the result is `NULL`; an earlier Home → Product
+occurrence is not used as a fallback:
 
 ```sql
 SELECT user_id,

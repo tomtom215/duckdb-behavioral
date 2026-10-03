@@ -85,9 +85,9 @@ ORDER BY user_id;
 1	product
 2	search
 
-# Forward, tail: anchors at the literal LAST event (ClickHouse semantics).
-# Neither user's last event satisfies is_home, so there is no anchor.
-query IT
+# Forward, tail: the chain would start at the last event, so no next event
+# can exist. Rejected, as in ClickHouse.
+statement error
 SELECT user_id, sequence_next_node(
     'forward',
     'tail',
@@ -99,8 +99,7 @@ SELECT user_id, sequence_next_node(
 GROUP BY user_id
 ORDER BY user_id;
 ----
-1	NULL
-2	NULL
+base 'tail' cannot be combined with direction 'forward'
 
 # Forward, last_match: return from the last complete match
 query IT
@@ -136,9 +135,9 @@ ORDER BY user_id;
 1	NULL
 2	search
 
-# Backward, head: anchors at the literal FIRST event (ClickHouse semantics).
-# Neither user's first event satisfies is_product, so there is no anchor.
-query IT
+# Backward, head: the chain would start at the first event, so no previous
+# event can exist. Rejected, as in ClickHouse.
+statement error
 SELECT user_id, sequence_next_node(
     'backward',
     'head',
@@ -150,8 +149,7 @@ SELECT user_id, sequence_next_node(
 GROUP BY user_id
 ORDER BY user_id;
 ----
-1	NULL
-2	NULL
+base 'head' cannot be combined with direction 'backward'
 
 # Backward, last_match
 query IT

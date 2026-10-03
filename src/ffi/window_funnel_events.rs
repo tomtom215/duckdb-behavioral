@@ -10,15 +10,14 @@
 //! the step count.
 
 use crate::window_funnel::WindowFunnelState;
-use libduckdb_sys::*;
 use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
 
-use super::window_funnel::{state_combine, update_impl};
+use super::window_funnel::{combine_impl, update_impl};
 
 /// Minimum number of boolean condition parameters for `window_funnel_events`.
-const MIN_CONDITIONS: usize = 2;
+const MIN_CONDITIONS: usize = 1;
 /// Maximum number of boolean condition parameters for `window_funnel_events`.
 const MAX_CONDITIONS: usize = 32;
 
@@ -44,77 +43,75 @@ const MAX_CONDITIONS: usize = 32;
 pub unsafe fn register_window_funnel_events(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionSetBuilder::new("window_funnel_events")
-        .returns_logical(LogicalType::list(TypeId::Timestamp))
-        // Group 1: WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder.param(TypeId::Interval).param(TypeId::Timestamp);
-            for _ in 0..n {
-                b = b.param(TypeId::Boolean);
-            }
-            b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                .init(FfiState::<WindowFunnelState>::init_callback)
-                .update(state_update)
-                .combine(state_combine)
-                .finalize(state_finalize)
-                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
-        })
-        // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder
-                .param(TypeId::Interval)
-                .param(TypeId::Varchar)
-                .param(TypeId::Timestamp);
-            for _ in 0..n {
-                b = b.param(TypeId::Boolean);
-            }
-            b.state_size(FfiState::<WindowFunnelState>::size_callback)
-                .init(FfiState::<WindowFunnelState>::init_callback)
-                .update(state_update_with_mode)
-                .combine(state_combine)
-                .finalize(state_finalize)
-                .destructor(FfiState::<WindowFunnelState>::destroy_callback)
-        });
+    let mut builder = AggregateFunctionSetBuilder::new("window_funnel_events")
+        .returns_logical(LogicalType::list(TypeId::Timestamp));
+    // The same overloads for TIMESTAMP and TIMESTAMPTZ (both int64
+    // microseconds since the epoch, read identically).
+    for ts in super::TIMESTAMP_TYPES {
+        builder = builder
+            // Group 1: WITHOUT mode parameter: (INTERVAL, TIMESTAMP, BOOL×N)
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+                let mut b = builder.param(TypeId::Interval).param(ts);
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.returns_logical(LogicalType::list(ts))
+                    .ffi_state::<WindowFunnelState>()
+                    .update(state_update)
+                    .combine(events_combine)
+                    .finalize(state_finalize)
+            })
+            // Group 2: WITH mode parameter: (INTERVAL, VARCHAR, TIMESTAMP, BOOL×N)
+            .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+                let mut b = builder
+                    .param(TypeId::Interval)
+                    .param(TypeId::Varchar)
+                    .param(ts);
+                for _ in 0..n {
+                    b = b.param(TypeId::Boolean);
+                }
+                b.returns_logical(LogicalType::list(ts))
+                    .ffi_state::<WindowFunnelState>()
+                    .update(state_update_with_mode)
+                    .combine(events_combine)
+                    .finalize(state_finalize)
+            });
+    }
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract), and every overload installs `FfiState<T>`'s size,
+    // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
+    // `Registrar::register_*` requires.
     unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
     // No mode parameter: INTERVAL(0), TIMESTAMP(1), BOOLEAN(2..N)
     unsafe {
         update_impl(info, input, states, false, "window_funnel_events");
     }
-}
+});
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, VARCHAR,
 // TIMESTAMP, BOOLEAN...) as registered. The VARCHAR at column 1 contains the mode
 // string. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update_with_mode(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, states| {
     // With mode parameter: INTERVAL(0), VARCHAR(1), TIMESTAMP(2), BOOLEAN(3..N)
     unsafe {
         update_impl(info, input, states, true, "window_funnel_events");
     }
-}
+});
+
+// SAFETY: `source` and `target` point to `count` aggregate state pointers.
+quack_rs::aggregate_combine_callback!(events_combine, |info, source, target, count| {
+    unsafe { combine_impl(info, source, target, count, "window_funnel_events") }
+});
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB LIST(TIMESTAMP) vector. Each list entry is populated with the
 // winning chain's step timestamps. Empty list when no entry condition matches.
-unsafe extern "C" fn state_finalize(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
+quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
     unsafe {
         let mut list_offset = ListVector::get_size(result) as u64;
 
@@ -146,7 +143,7 @@ unsafe extern "C" fn state_finalize(
             ListVector::set_size(result, list_offset as usize);
         }
     }
-}
+});
 
 #[cfg(test)]
 mod tests {

@@ -1,7 +1,7 @@
 # sequence_match
 
 Aggregate function that checks whether a sequence of events matches a pattern.
-Uses a mini-regex syntax over condition references, executed by an NFA engine.
+Uses a mini-regex syntax over condition references.
 
 ## Signature
 
@@ -15,7 +15,7 @@ sequence_match(pattern VARCHAR, timestamp TIMESTAMP,
 | Parameter | Type | Description |
 |---|---|---|
 | `pattern` | `VARCHAR` | Pattern string using the syntax described below |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `cond1..condN` | `BOOLEAN` | Event conditions (2 to 32) |
 
 **Returns:** `BOOLEAN` -- `true` if the event stream contains a subsequence
@@ -40,15 +40,15 @@ Patterns are composed of the following elements:
 
 | Pattern | Description |
 |---|---|
-| `(?N)` | Match an event where condition N (1-indexed) is true |
+| `(?N)` | Match an event where condition N (1-indexed, at most the number of conditions passed) is true |
 | `.` | Match exactly one event (any conditions) |
 | `.*` | Match zero or more events (any conditions) |
-| `(?t>=N)` | Time constraint: at least N seconds since previous match |
-| `(?t<=N)` | Time constraint: at most N seconds since previous match |
-| `(?t>N)` | Time constraint: more than N seconds since previous match |
-| `(?t<N)` | Time constraint: less than N seconds since previous match |
-| `(?t==N)` | Time constraint: exactly N seconds since previous match |
-| `(?t!=N)` | Time constraint: not exactly N seconds since previous match |
+| `(?t>=N)` | Time constraint: at least N seconds since the last `(?N)` or `.` event |
+| `(?t<=N)` | Time constraint: at most N seconds since the last `(?N)` or `.` event |
+| `(?t>N)` | Time constraint: more than N seconds since the last `(?N)` or `.` event |
+| `(?t<N)` | Time constraint: less than N seconds since the last `(?N)` or `.` event |
+| `(?t==N)` | Time constraint: exactly N seconds since the last `(?N)` or `.` event |
+| `(?t!=N)` | Time constraint: not exactly N seconds since the last `(?N)` or `.` event |
 
 ### Pattern Examples
 
@@ -72,14 +72,18 @@ Patterns are composed of the following elements:
 ## Behavior
 
 1. Events are sorted by timestamp.
-2. The pattern is compiled into an NFA (nondeterministic finite automaton).
-3. The NFA is executed against the event stream using lazy matching semantics
-   for `.*` (prefer advancing the pattern over consuming additional events).
-4. Returns `true` if any accepting state is reached.
+2. The pattern is compiled into a list of steps.
+3. Returns `true` if the pattern matches starting at any event. `.*` matches
+   as few events as possible (lazy), which decides *which* match
+   `sequence_count` and `sequence_match_events` report.
 
-Time constraints are evaluated relative to the timestamp of the previously
-matched condition step. The time difference is computed in seconds, matching
-ClickHouse semantics.
+Time constraints are evaluated relative to the timestamp of the event consumed
+by the last `(?N)` or `.` step, in seconds. A constraint before any such step
+has nothing to measure from and is an error. ClickHouse instead measures a
+constraint that follows `.*` from the event after the last match, so
+`(?1).*(?t<=3600)(?2)` means "`(?2)` within an hour of `(?1)`" here but not
+there; see
+[ClickHouse Compatibility](../internals/clickhouse-compatibility.md#known-semantic-differences).
 
 ### Time-Constraint Semantics
 
@@ -95,7 +99,9 @@ comparison to microsecond timestamps).
 ### Determinism
 
 Events sort by `(timestamp, conditions)` before matching, so results are
-deterministic regardless of thread count or physical row order.
+deterministic regardless of thread count or physical row order. Events that
+satisfy no condition are dropped before matching (as in ClickHouse), so `.`
+and `.*` never consume them and they do not break adjacency.
 
 ## Errors
 
@@ -106,13 +112,32 @@ message instead of silently returning `NULL`:
 invalid sequence pattern '(?1)(?': pattern error at position 6: ...
 ```
 
-A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
-conventions.
+So do a condition number above the number of conditions passed
+(`condition (?3) is out of range; 2 conditions were passed`) and a time
+constraint with no `(?N)` or `.` before it (`time constraint must follow an
+event condition`).
 
-Adversarial patterns that exhaust the NFA exploration budget (scaled as
-`8 × events × steps`) abort the query with a descriptive error rather than
-silently reporting no match. Consecutive `.*` wildcards are collapsed at
-parse time, so ordinary patterns never approach the budget.
+A pattern of more than 1024 steps is rejected (`pattern has more than 1024
+steps`); consecutive `.*` count once.
+
+A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
+conventions, as does a group with no rows or only rows whose timestamp is
+`NULL`.
+
+The `pattern` argument must be the same for every row of a group (normally a
+literal). A group with two different non-`NULL` values is an error, whatever
+the row order (`... the pattern argument must be the same for every row of a
+group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 
@@ -120,11 +145,25 @@ parse time, so ordinary patterns never approach the budget.
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
+| Finalize | O(n log n) sort; then O(n) for patterns of conditions and `.*` / adjacent conditions only (fast paths), otherwise O(s · n log n) for s pattern steps |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `sequence_match` processes **100 million events in 1.05 s**
-(95 Melem/s).
+The last recorded benchmark (PERF.md Session 15) is 100 million events in
+1.05 s for the fast-path pattern `(?1).*(?2).*(?3)`.
+
+Patterns outside the fast paths are matched in two passes: a backward pass
+marks, for each `(?N)` or `.` step, the events from which the rest of the
+pattern can still complete; a forward walk then takes the earliest such event
+at each step. This returns the same match as a lazy backtracking search
+would find first, without the search's quadratic worst case. Through v0.9.1
+the extension used that search, and a group that did not match could take
+seconds (8.3–9.1 s for `(?1).*(?t<5)(?2).*(?3)` at 32,000 events). It now
+takes 0.004 s, and 0.78–0.89 s at 10 million events in one group (DuckDB
+1.5.6, 3 runs each). Finalize uses about 8 bytes per event of working
+memory, plus one bit per event for each `(?N)` or `.` step (an 801-step
+pattern over 1 million events peaked at 148 MB, against 819 MB before the
+bit packing). Patterns are capped at 1024 steps, and an allocation that fails
+raises an `out of memory` error instead of crashing.
 
 ## See Also
 

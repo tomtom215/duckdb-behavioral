@@ -20,8 +20,8 @@ window_funnel(window INTERVAL, mode VARCHAR, timestamp TIMESTAMP,
 |---|---|---|
 | `window` | `INTERVAL` | Maximum time window from the first step |
 | `mode` | `VARCHAR` | Optional comma-separated mode string |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
-| `cond1..condN` | `BOOLEAN` | Funnel step conditions (2 to 32) |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
+| `cond1..condN` | `BOOLEAN` | Funnel step conditions (1 to 32) |
 
 **Returns:** `INTEGER` -- the number of matched funnel steps (0 to N). A return
 value of 0 means the entry condition was never satisfied.
@@ -58,16 +58,19 @@ GROUP BY user_id;
 
 ## Behavior
 
-1. Events are sorted by timestamp.
-2. For each event matching the entry condition (`cond1`), a forward scan begins.
-3. The scan attempts to match `cond2`, `cond3`, ..., `condN` in order, subject
-   to the time window constraint: each subsequent event must occur within
-   `window` of the **entry** event.
-4. The maximum step reached across all entry points is returned.
+`window_funnel` follows ClickHouse's `windowFunnel`:
 
-A single event can advance multiple funnel steps in default mode. For example,
-if an event satisfies both `cond2` and `cond3`, it advances the funnel by two
-steps in a single pass.
+1. Each event contributes one entry per condition it satisfies, and entries
+   are visited in `(timestamp, condition)` order.
+2. An entry for `cond1` starts a chain. An entry for `condK` extends a chain
+   that has reached step `K - 1`, provided it is within `window` of that
+   chain's **entry** event.
+3. The result is the highest step any chain reached.
+
+Because every satisfied condition is an entry, one event can fill several
+steps, including the entry step: an event satisfying `cond1` and `cond2`
+reaches step 2 on its own (`strict_once` and `strict_increase` prevent this).
+A gap exactly equal to `window` is inside the window.
 
 ### Example
 
@@ -89,23 +92,28 @@ Result: `2`
 
 Events sort by `(timestamp, conditions)` before the scan, so results are
 deterministic regardless of thread count, physical row order, or the order in
-which DuckDB's parallel aggregation combines partial states — including
-same-timestamp event bursts.
+which DuckDB's parallel aggregation combines partial states, including
+same-timestamp event bursts. (ClickHouse orders same-timestamp rows by arrival
+under `strict_once`; see
+[ClickHouse Compatibility](../internals/clickhouse-compatibility.md#known-semantic-differences).)
 
 ## Modes
 
-Modes are independently combinable via a comma-separated string parameter.
-Each mode adds an additional constraint on top of the default greedy scan.
+Modes combine via a comma-separated string parameter, as in ClickHouse. Mode names are
+case-insensitive, and whitespace around them is ignored.
 
 | Mode | Description |
 |---|---|
-| `strict` | If the previously-matched condition fires again, the chain breaks. Prevents backwards movement. ClickHouse: `'strict'` or `'strict_deduplication'`. |
-| `strict_deduplication` | Alias for `strict` (matches ClickHouse, where both strings map to the same behavior). |
-| `strict_order` | Events must satisfy conditions in exact sequential order. No events matching earlier conditions are allowed between matched steps. |
-| `strict_increase` | Requires strictly increasing timestamps between consecutive matched steps. Same-timestamp events cannot advance the funnel. |
-| `strict_once` | Each event can advance the funnel by at most one step, even if it satisfies multiple consecutive conditions. |
-| `allow_reentry` | If the entry condition fires again after step 1, the funnel resets from that new entry point. |
-| `timestamp_dedup` | _Extension mode._ Events with the same timestamp as the previously matched step are skipped. Not present in ClickHouse. |
+| `strict_deduplication` | A condition firing again for a step already reached stops the scan; the result is the step reached so far. `'strict'` is accepted as an alias (ClickHouse 26.9 rejects `'strict'`). |
+| `strict_order` | Once a chain has been entered, an event matching no condition, or a step arriving before its predecessor has been reached, stops the scan. A repeated entry or step does not. |
+| `strict_increase` | Each step must be strictly later than the step before it, so one event cannot fill two steps. |
+| `strict_once` | An event fills at most one step of a chain. |
+| `allow_reentry` | Requires `strict_order`. A step arriving before its predecessor is skipped instead of stopping the scan. |
+| `timestamp_dedup` | _Extension mode._ Same as `strict_increase`. |
+
+Under `strict_increase` this implementation keeps a valid chain that
+ClickHouse loses (events `c1@0, c1@1, c2@1` give 2 here, 1 in ClickHouse); see
+[ClickHouse Compatibility](../internals/clickhouse-compatibility.md#known-semantic-differences).
 
 ### Mode Combinations
 
@@ -116,7 +124,7 @@ Modes can be combined freely:
 window_funnel(INTERVAL '1 hour', 'strict_increase, strict_once',
   ts, cond1, cond2, cond3)
 
--- Strict order with reentry
+-- Strict order, skipping steps that arrive too early
 window_funnel(INTERVAL '1 hour', 'strict_order, allow_reentry',
   ts, cond1, cond2, cond3)
 ```
@@ -133,28 +141,49 @@ silently producing wrong results:
 - **Month-based window** — month intervals are ambiguous (28-31 days); use
   day/hour/minute/second units (e.g. `INTERVAL '30 days'`)
 - **Negative window** — the window must be non-negative
+- **`allow_reentry` without `strict_order`** — `window_funnel: mode
+  'allow_reentry' requires 'strict_order'`
 
-A `NULL` window or mode is skipped leniently (the row contributes no
-configuration), matching SQL aggregate conventions.
+A row whose window is `NULL` is skipped, like a row with a `NULL` timestamp.
+A `NULL` mode means no mode.
+
+The `window` and `mode` arguments must be the same for every row of a group
+(normally a literal). A group with two different non-`NULL` values is an
+error, whatever the row order (`... the window argument must be the same for
+every row of a group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 
-Events are collected during the update phase and sorted by timestamp during
-finalize. A greedy forward scan from each entry point finds the longest chain.
+Events are collected during the update phase and sorted during finalize. One
+pass over the sorted events keeps, per funnel step, the chain with the latest
+entry (and, for `strict_increase`, separately the best chain ending before the
+current timestamp). Under `strict_once`, whether a chain can use distinct
+same-timestamp events for consecutive steps is decided by bipartite matching
+(at most 32 steps), so a large same-timestamp burst stays polynomial.
 
 | Operation | Complexity |
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | O(n * k) where n = events, k = conditions |
+| Finalize | O(n log n) sort + O(n * k) scan, n = events, k = conditions |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `window_funnel` processes **100 million events in 791 ms**
-(126 Melem/s).
+The last recorded benchmark (PERF.md Session 15, the previous engine) is 100
+million events in 791 ms; it has not been re-measured for this engine.
 
 ## See Also
 
-- [`sequence_match`](./sequence-match.md) -- NFA-based pattern matching for more flexible event sequences
+- [`sequence_match`](./sequence-match.md) -- pattern matching for more flexible event sequences
 - [`sequence_count`](./sequence-count.md) -- count non-overlapping pattern occurrences
 - [`sequence_next_node`](./sequence-next-node.md) -- find what happens after a matched pattern
 - [ClickHouse Compatibility](../internals/clickhouse-compatibility.md) -- full compatibility matrix including all mode mappings

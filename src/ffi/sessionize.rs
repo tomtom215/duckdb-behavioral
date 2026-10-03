@@ -21,7 +21,9 @@
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
 use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionBuilder, AggregateFunctionInfo, FfiState};
+use quack_rs::aggregate::{
+    AggregateFunctionInfo, AggregateFunctionSetBuilder, AggregateOverloadBuilder, FfiState,
+};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
 
@@ -48,27 +50,33 @@ impl quack_rs::aggregate::AggregateState for SessionizeBoundaryState {}
 pub unsafe fn register_sessionize(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionBuilder::new("sessionize")
-        .param(TypeId::Timestamp)
-        .param(TypeId::Interval)
-        .returns(TypeId::BigInt)
-        .state_size(FfiState::<SessionizeBoundaryState>::size_callback)
-        .init(FfiState::<SessionizeBoundaryState>::init_callback)
-        .update(state_update)
-        .combine(state_combine)
-        .finalize(state_finalize)
-        .destructor(FfiState::<SessionizeBoundaryState>::destroy_callback);
-    unsafe { con.register_aggregate(builder) }
+    // One overload per timestamp type (TIMESTAMP and TIMESTAMPTZ are both
+    // int64 microseconds since the epoch, read identically).
+    let builder = super::TIMESTAMP_TYPES.into_iter().fold(
+        AggregateFunctionSetBuilder::new("sessionize").returns(TypeId::BigInt),
+        |set, ts| {
+            set.overload(
+                AggregateOverloadBuilder::new()
+                    .param(ts)
+                    .param(TypeId::Interval)
+                    .ffi_state::<SessionizeBoundaryState>()
+                    .update(state_update)
+                    .combine(state_combine)
+                    .finalize(state_finalize),
+            )
+        },
+    );
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract), and every overload installs `FfiState<T>`'s size,
+    // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
+    // `Registrar::register_*` requires.
+    unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (TIMESTAMP, INTERVAL)
 // as registered. `states` points to `row_count` aggregate state pointers, each
 // initialized by `FfiState::init_callback`.
-unsafe extern "C" fn state_update(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
+quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
     unsafe {
         let info = AggregateFunctionInfo::new(info);
         let row_count = duckdb_data_chunk_get_size(input) as usize;
@@ -118,18 +126,13 @@ unsafe extern "C" fn state_update(
             state.update(ts_reader.read_i64(i));
         }
     }
-}
+});
 
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
 // `target` is the LEFT (earlier) segment in DuckDB's segment tree, `source`
 // the RIGHT (later) one; `SessionizeBoundaryState::combine` preserves that
 // orientation (cross-boundary check, right-hand `current_row_null` wins).
-unsafe extern "C" fn state_combine(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    target: *mut duckdb_aggregate_state,
-    count: idx_t,
-) {
+quack_rs::aggregate_combine_callback!(state_combine, |_info, source, target, count| {
     unsafe {
         for i in 0..count as usize {
             let Some(src) = FfiState::<SessionizeBoundaryState>::with_state(*source.add(i)) else {
@@ -143,18 +146,12 @@ unsafe extern "C" fn state_combine(
             *tgt = tgt.combine(src);
         }
     }
-}
+});
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB BIGINT vector with room for `offset + count` elements. Empty
 // states and NULL-timestamp rows produce NULL output via the validity bitmap.
-unsafe extern "C" fn state_finalize(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
+quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
     unsafe {
         let mut writer = VectorWriter::new(result);
 
@@ -174,7 +171,7 @@ unsafe extern "C" fn state_finalize(
             }
         }
     }
-}
+});
 
 #[cfg(test)]
 mod tests {

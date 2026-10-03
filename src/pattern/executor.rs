@@ -1,49 +1,48 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
-//! NFA-based pattern executor for sequence matching.
+//! Pattern executor for sequence matching.
 //!
-//! Executes compiled patterns against sorted event streams using a
-//! non-deterministic finite automaton (NFA) with backtracking for `.*` steps.
+//! Executes compiled patterns against sorted event streams. Common shapes
+//! (`(?1)(?2)`, `(?1).*(?2)`) use linear fast paths; every other pattern goes
+//! through a feasibility-then-greedy matcher (described below) that runs in
+//! O(s · n log n) for `n` events and `s` pattern steps.
+//!
+//! # Semantics
+//!
+//! The matcher reproduces, result for result, the lazy depth-first search the
+//! extension used before (kept as a test oracle in `reference_nfa`):
+//!
+//! - A pattern is a list of event-consuming steps (`(?N)`, `.`) separated by
+//!   *gaps* of non-consuming steps (`.*`, `(?t op N)`).
+//! - `.*` skips any number of events.
+//! - A time constraint is measured from the event consumed by the last
+//!   `(?N)` or `.` (the gap's *anchor*), in whole seconds (the microsecond
+//!   gap floored). It passes at an event where the comparison holds, and may
+//!   skip events while it could still (or again) hold: `>=`, `>`, `!=`
+//!   always skip; `<=`, `<` skip only while satisfied; `==` skips while the
+//!   elapsed time is at most `N`. At the end of the events, `<=`, `<` and
+//!   `>= 0` pass vacuously.
+//! - `sequence_match`: does any start position admit a full match.
+//! - `sequence_count`: from the first position that admits a match, take the
+//!   match the lazy search finds first, resume at the position after it
+//!   (which, after a trailing gate, can be past the last consumed event), and
+//!   repeat.
+//! - `sequence_match_events`: the condition timestamps of the first full
+//!   match; if none exists, of the first-explored chain reaching the furthest
+//!   `(?N)` step.
+//!
+//! "The match the lazy search finds first" is the lexicographically smallest
+//! vector of positions. Because every gap step reaches a superset of
+//! positions from an earlier position (for the same anchor), that vector's
+//! consumed positions are exactly those a greedy walk picks when it always
+//! takes the earliest position from which the rest of the pattern can still
+//! complete. The matcher computes that "can still complete" set with one
+//! backward pass per consuming step and then walks forward greedily.
 
 use crate::common::event::Event;
 use crate::common::timestamp::MICROS_PER_SECOND;
 use crate::pattern::parser::{CompiledPattern, PatternError, PatternStep, TimeOp};
-
-/// Maximum number of active NFA states before aborting execution.
-/// Prevents pathological patterns (e.g., `.*.*.*.*`) from consuming
-/// unbounded memory.
-/// Floor for the NFA exploration budget. The effective per-start budget
-/// scales with input size (see [`nfa_budget`]); this floor covers tiny
-/// inputs with adversarial patterns.
-const MIN_NFA_BUDGET: usize = 10_000;
-
-/// Per-start NFA exploration budget: `8 * events * steps`, floored at
-/// [`MIN_NFA_BUDGET`].
-///
-/// Lazy exploration of real-world patterns visits O(events × steps) states
-/// per starting position, so legitimate inputs stay far below `8 × n × k`.
-/// Only adversarial stacks of wildcards (e.g. dozens of consecutive `.*`)
-/// can exceed it — and instead of silently reporting "no match", exhaustion
-/// surfaces as a [`PatternError`] so the query fails loudly.
-fn nfa_budget(num_events: usize, num_steps: usize) -> usize {
-    num_events
-        .saturating_mul(num_steps.max(1))
-        .saturating_mul(8)
-        .max(MIN_NFA_BUDGET)
-}
-
-/// Builds the budget-exhaustion error.
-fn budget_error(num_events: usize, num_steps: usize) -> PatternError {
-    PatternError {
-        message: format!(
-            "pattern exploration budget exceeded ({num_events} events x {num_steps} steps): \
-             the pattern is too complex for this input — simplify repeated wildcards \
-             or reduce the group size"
-        ),
-        position: PatternError::NO_POSITION,
-    }
-}
 
 /// Result of executing a pattern against an event stream.
 #[derive(Debug, Clone)]
@@ -59,21 +58,25 @@ pub struct MatchResult {
 ///
 /// Events must be sorted by timestamp (ascending) before calling this function.
 ///
-/// For `sequence_match` semantics: returns as soon as one match is found.
-/// For `sequence_count` semantics: counts all non-overlapping matches.
+/// For `sequence_match` semantics (`count_all == false`): reports whether
+/// one match exists. For `sequence_count` semantics: counts all
+/// non-overlapping matches.
 ///
 /// # Algorithm
 ///
-/// First attempts to classify the pattern into a fast-path shape:
-///
 /// - **Adjacent conditions only** (`(?1)(?2)(?3)`): O(n) scan with a sliding
-///   window of `k` events. No NFA overhead.
+///   window of `k` events.
 /// - **Wildcard-separated conditions** (`(?1).*(?2).*(?3)`): O(n) single-pass
-///   linear scan with a step counter. No NFA overhead.
-/// - **Complex patterns**: Falls back to full NFA with backtracking.
+///   linear scan with a step counter.
+/// - **Everything else** (time constraints, `.`, mixed shapes): the
+///   feasibility-then-greedy matcher, O(s · n log n) for `s` steps (see the
+///   module docs).
 ///
-/// The fast paths produce identical results to the NFA but eliminate per-position
-/// stack management, function call overhead, and backtracking state.
+/// # Errors
+///
+/// Returns a [`PatternError`] if the general matcher cannot allocate its
+/// working memory (about one bit per event per `(?N)`/`.` step plus 8 bytes
+/// per event); the fast paths need none.
 pub fn execute_pattern(
     pattern: &CompiledPattern,
     events: &[Event],
@@ -86,71 +89,111 @@ pub fn execute_pattern(
         });
     }
 
-    // Try fast paths for common pattern shapes before falling back to NFA.
     match classify_pattern(pattern) {
-        PatternShape::AdjacentConditions(ref conds) => {
-            return Ok(fast_adjacent(events, conds, count_all));
-        }
-        PatternShape::WildcardSeparated(ref conds) => {
-            return Ok(fast_wildcard(events, conds, count_all));
-        }
-        PatternShape::Complex => {} // Fall through to NFA
+        PatternShape::AdjacentConditions => Ok(with_conditions(pattern, |conds| {
+            fast_adjacent(events, conds, count_all)
+        })),
+        PatternShape::WildcardSeparated => Ok(with_conditions(pattern, |conds| {
+            fast_wildcard(events, conds, count_all)
+        })),
+        PatternShape::Complex => Matcher::new(pattern, events).execute(count_all),
     }
+}
 
-    execute_pattern_nfa(pattern, events, count_all)
+/// Executes a compiled pattern and returns matched condition timestamps.
+///
+/// Returns the timestamps of the `(?N)` condition steps (not `.`, `.*`, or
+/// time constraints) of the first full match. If the pattern never matches,
+/// returns those of the first chain reaching the furthest `(?N)` step
+/// (`ClickHouse`'s "longest chain"), or an empty vector when no `(?N)` step
+/// is ever reached. Events must be sorted by timestamp (ascending).
+///
+/// # Errors
+///
+/// Returns a [`PatternError`] if the general matcher cannot allocate its
+/// working memory.
+pub fn execute_pattern_events(
+    pattern: &CompiledPattern,
+    events: &[Event],
+) -> Result<Vec<i64>, PatternError> {
+    if events.is_empty() || pattern.steps.is_empty() {
+        return Ok(Vec::new());
+    }
+    if classify_pattern(pattern) == PatternShape::WildcardSeparated {
+        return Ok(with_conditions(pattern, |conds| {
+            fast_wildcard_events(events, conds)
+        }));
+    }
+    Matcher::new(pattern, events).execute_events()
 }
 
 /// Pattern shape classification for fast-path dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PatternShape {
     /// All steps are `Condition` — adjacent matching required.
-    AdjacentConditions(Vec<usize>),
+    AdjacentConditions,
     /// Conditions separated by `.*` — greedy forward scan.
-    WildcardSeparated(Vec<usize>),
-    /// Requires full NFA (time constraints, `.`, mixed shapes).
+    WildcardSeparated,
+    /// Requires the general matcher (time constraints, `.`, mixed shapes).
     Complex,
 }
 
-/// Classifies a compiled pattern into a fast-path shape.
+/// Classifies a compiled pattern into a fast-path shape, without allocating
+/// (it runs once per group).
 ///
 /// Returns `AdjacentConditions` if all steps are `Condition` (no wildcards).
-/// Returns `WildcardSeparated` if the pattern alternates `Condition` and
-/// `AnyEvents` steps (e.g., `(?1).*(?2).*(?3)`).
-/// Returns `Complex` for patterns with time constraints, `.` (`OneEvent`),
-/// or mixed structures.
+/// Returns `WildcardSeparated` if the pattern mixes `Condition` and
+/// `AnyEvents` steps with no two conditions adjacent (e.g.,
+/// `(?1).*(?2).*(?3)`). Returns `Complex` for patterns with time
+/// constraints, `.` (`OneEvent`), or other structures.
 fn classify_pattern(pattern: &CompiledPattern) -> PatternShape {
-    let mut conditions = Vec::new();
+    let mut has_condition = false;
     let mut has_any_events = false;
-    let mut has_only_conditions = true;
-
     for step in &pattern.steps {
         match step {
-            PatternStep::Condition(idx) => conditions.push(*idx),
-            PatternStep::AnyEvents => {
-                has_any_events = true;
-                has_only_conditions = false;
-            }
+            PatternStep::Condition(_) => has_condition = true,
+            PatternStep::AnyEvents => has_any_events = true,
             PatternStep::OneEvent | PatternStep::TimeConstraint(_, _) => {
                 return PatternShape::Complex;
             }
         }
     }
-
-    if conditions.is_empty() {
+    if !has_condition {
         return PatternShape::Complex;
     }
-
-    if has_only_conditions {
-        return PatternShape::AdjacentConditions(conditions);
+    if !has_any_events {
+        return PatternShape::AdjacentConditions;
     }
-
-    // Has AnyEvents — check if it's the standard wildcard-separated form.
-    // Accept any mix of Condition and AnyEvents (consecutive AnyEvents is
-    // just .*.* which matches any number of events, same as .*).
-    if has_any_events {
-        return PatternShape::WildcardSeparated(conditions);
+    // Only valid when no two conditions are adjacent: `(?1)(?2).*(?3)`
+    // requires `(?2)` on the event right after `(?1)`, which the
+    // step-counter scan cannot express.
+    let adjacent_conditions = pattern.steps.windows(2).any(|w| {
+        matches!(w[0], PatternStep::Condition(_)) && matches!(w[1], PatternStep::Condition(_))
+    });
+    if adjacent_conditions {
+        PatternShape::Complex
+    } else {
+        PatternShape::WildcardSeparated
     }
+}
 
-    PatternShape::Complex
+/// Calls `f` with the pattern's condition indices in order, from a stack
+/// buffer when there are at most 32 (no per-group allocation).
+fn with_conditions<R>(pattern: &CompiledPattern, f: impl FnOnce(&[usize]) -> R) -> R {
+    let conditions = pattern.steps.iter().filter_map(|step| match step {
+        PatternStep::Condition(idx) => Some(*idx),
+        _ => None,
+    });
+    let mut buffer = [0usize; 32];
+    let mut len = 0;
+    for idx in conditions.clone() {
+        if len == buffer.len() {
+            return f(&conditions.collect::<Vec<_>>());
+        }
+        buffer[len] = idx;
+        len += 1;
+    }
+    f(&buffer[..len])
 }
 
 /// Fast path for adjacent-condition patterns like `(?1)(?2)(?3)`.
@@ -227,418 +270,616 @@ fn fast_wildcard(events: &[Event], conditions: &[usize], count_all: bool) -> Mat
     }
 }
 
-/// Evaluates a time-constraint gate, mirroring `ClickHouse`'s semantics
-/// (see the `TimeConstraint` arms): returns `(advance_pattern, skip_event)`.
+/// Event-collecting fast path for wildcard-separated patterns.
 ///
-/// Events are sorted, so the true elapsed time is non-negative and (even
-/// spanning ±infinity timestamps) fits in u64; `wrapping_sub` reinterpreted
-/// as u64 IS that gap. Dividing in u64 keeps the i64 conversion exact, and
-/// flooring to whole seconds generalizes `ClickHouse`'s whole-second
-/// `DateTime` comparisons to microsecond timestamps.
-fn time_gate(
-    op: TimeOp,
-    threshold_seconds: i64,
-    last_match_ts: Option<i64>,
-    event_ts: i64,
-) -> (bool, bool) {
-    let Some(prev_ts) = last_match_ts else {
-        // No previous match timestamp; vacuously satisfied.
-        return (true, false);
-    };
-    let elapsed_us = event_ts.wrapping_sub(prev_ts) as u64;
-    let elapsed_seconds = (elapsed_us / MICROS_PER_SECOND as u64) as i64;
-    let satisfied = op.evaluate(elapsed_seconds, threshold_seconds);
-    // Elapsed time is non-decreasing over later events, so skipping is only
-    // useful while the gate can still (or again) hold: always for >=, >, != ;
-    // only while still satisfied for <=, < ; until the threshold is passed
-    // for ==.
-    let skip = match op {
-        TimeOp::Gte | TimeOp::Gt | TimeOp::Ne => true,
-        TimeOp::Lte | TimeOp::Lt => satisfied,
-        TimeOp::Eq => elapsed_seconds <= threshold_seconds,
-    };
-    (satisfied, skip)
-}
-
-/// Full NFA-based pattern execution for complex patterns.
-///
-/// Used when the pattern contains time constraints, `.` (`OneEvent`),
-/// or other structures that cannot be handled by the fast paths.
-fn execute_pattern_nfa(
-    pattern: &CompiledPattern,
-    events: &[Event],
-    count_all: bool,
-) -> Result<MatchResult, PatternError> {
-    let mut total_matches = 0;
-    let mut search_start = 0;
-    let budget = nfa_budget(events.len(), pattern.steps.len());
-    // Pre-allocate the NFA state stack once and reuse across all starting
-    // positions. This eliminates per-position heap allocation: instead of
-    // O(N) alloc/free pairs, we do O(1) total allocations. The Vec is
-    // cleared (retaining capacity) at the start of each try_match_from call.
-    let mut states = Vec::with_capacity(pattern.steps.len() * 2);
-
-    while search_start < events.len() {
-        if let Some(match_end) = try_match_from(pattern, events, search_start, budget, &mut states)?
-        {
-            total_matches += 1;
-            if !count_all {
-                return Ok(MatchResult {
-                    matched: true,
-                    count: 1,
-                });
-            }
-            // For non-overlapping count, advance past this match
-            search_start = match_end + 1;
-        } else {
-            search_start += 1;
-        }
-    }
-
-    Ok(MatchResult {
-        matched: total_matches > 0,
-        count: total_matches,
-    })
-}
-
-/// Tries to match the full pattern starting from the given event index.
-///
-/// Returns `Some(end_index)` if a full match is found (the index of the last
-/// matched event), or `None` if no match is possible from this starting position.
-///
-/// The `states` Vec is pre-allocated by the caller and reused across calls
-/// to avoid per-position heap allocation (see `execute_pattern` for rationale).
-fn try_match_from(
-    pattern: &CompiledPattern,
-    events: &[Event],
-    start: usize,
-    budget: usize,
-    states: &mut Vec<NfaState>,
-) -> Result<Option<usize>, PatternError> {
-    states.clear();
-    states.push(NfaState {
-        event_idx: start,
-        step_idx: 0,
-        last_match_ts: None,
-    });
-
-    let mut iterations = 0;
-
-    while let Some(state) = states.pop() {
-        iterations += 1;
-        if iterations > budget {
-            // Adversarial pattern shapes (stacked wildcards) can explode the
-            // search space; fail loudly instead of reporting a false "no match".
-            return Err(budget_error(events.len(), pattern.steps.len()));
-        }
-
-        // Successfully matched all steps
-        if state.step_idx >= pattern.steps.len() {
-            // Return the index of the last consumed event (one before current)
-            return Ok(Some(if state.event_idx > 0 {
-                state.event_idx - 1
-            } else {
-                0
-            }));
-        }
-
-        // No more events to consume
-        if state.event_idx >= events.len() {
-            // ClickHouse treats trailing `.*`, `(?t<=N)`, `(?t<N)` and
-            // `(?t>=0)` as matching the empty remainder.
-            match &pattern.steps[state.step_idx] {
-                PatternStep::AnyEvents => {
-                    // .* can match zero events, advance to next step
-                    states.push(NfaState {
-                        step_idx: state.step_idx + 1,
-                        ..state
-                    });
-                }
-                PatternStep::TimeConstraint(op, threshold) => {
-                    let vacuous_at_end = matches!(op, TimeOp::Lte | TimeOp::Lt)
-                        || (matches!(op, TimeOp::Gte) && *threshold == 0);
-                    if vacuous_at_end {
-                        states.push(NfaState {
-                            step_idx: state.step_idx + 1,
-                            ..state
-                        });
-                    }
-                }
-                _ => continue,
-            }
-            continue;
-        }
-
-        let event = &events[state.event_idx];
-
-        match &pattern.steps[state.step_idx] {
-            PatternStep::Condition(cond_idx) => {
-                if event.condition(*cond_idx) {
-                    // Condition matched, advance both event and step
-                    states.push(NfaState {
-                        event_idx: state.event_idx + 1,
-                        step_idx: state.step_idx + 1,
-                        last_match_ts: Some(event.timestamp_us),
-                    });
-                }
-                // If condition doesn't match, this state dies (no push)
-            }
-            PatternStep::AnyEvents => {
-                // .* can consume this event and stay in the same step
-                // Pushed FIRST so it sits lower in the LIFO stack
-                states.push(NfaState {
-                    event_idx: state.event_idx + 1,
-                    ..state
-                });
-                // .* can match zero events (skip to next step without consuming)
-                // Pushed LAST so it's popped FIRST — prioritizes advancing the pattern
-                // over consuming more events (lazy matching)
-                states.push(NfaState {
-                    step_idx: state.step_idx + 1,
-                    ..state
-                });
-            }
-            PatternStep::OneEvent => {
-                // . matches exactly one event
-                states.push(NfaState {
-                    event_idx: state.event_idx + 1,
-                    step_idx: state.step_idx + 1,
-                    last_match_ts: Some(event.timestamp_us),
-                });
-            }
-            PatternStep::TimeConstraint(op, threshold_seconds) => {
-                // ClickHouse semantics (verified against
-                // AggregateFunctionSequenceMatch.cpp): the constraint gates
-                // the next pattern step without consuming the event, and
-                // non-matching events may be skipped — the gate is re-tested
-                // against later events whenever it could still be satisfied.
-                // Anchored at the last consumed event (`last_match_ts`).
-                let (advance_pattern, skip_event) = time_gate(
-                    *op,
-                    *threshold_seconds,
-                    state.last_match_ts,
-                    event.timestamp_us,
-                );
-                // Lazy order: advancing the pattern is explored first
-                // (pushed last), mirroring `.*`.
-                if skip_event {
-                    states.push(NfaState {
-                        event_idx: state.event_idx + 1,
-                        ..state
-                    });
-                }
-                if advance_pattern {
-                    states.push(NfaState {
-                        step_idx: state.step_idx + 1,
-                        ..state
-                    });
-                }
+/// The earliest event for each condition in turn is the chain the lazy
+/// search finds first: any chain can be moved to these positions. When the
+/// scan runs out of events, the same greedy prefix is the first-explored
+/// longest partial chain. O(n) time, stops at the first full match.
+fn fast_wildcard_events(events: &[Event], conditions: &[usize]) -> Vec<i64> {
+    let mut timestamps = Vec::with_capacity(conditions.len());
+    for event in events {
+        if event.condition(conditions[timestamps.len()]) {
+            timestamps.push(event.timestamp_us);
+            if timestamps.len() == conditions.len() {
+                break;
             }
         }
     }
-
-    Ok(None)
+    timestamps
 }
 
-/// Executes a compiled pattern and returns matched condition timestamps.
-///
-/// Returns timestamps for `(?N)` condition steps only (not `.`, `.*`, or
-/// time constraints). Returns `Some(vec![ts1, ts2, ...])` if the pattern
-/// matches, `None` if no match is found. Events must be sorted by
-/// timestamp (ascending) before calling.
-pub fn execute_pattern_events(
-    pattern: &CompiledPattern,
-    events: &[Event],
-) -> Result<Vec<i64>, PatternError> {
-    if events.is_empty() || pattern.steps.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    try_match_from_with_timestamps(pattern, events, 0, events.len())
-}
-
-/// Tries to match the full pattern starting from position range `[start, end)`,
-/// collecting timestamps for each `(?N)` condition step.
-fn try_match_from_with_timestamps(
-    pattern: &CompiledPattern,
-    events: &[Event],
-    search_start: usize,
-    search_end: usize,
-) -> Result<Vec<i64>, PatternError> {
-    let budget = nfa_budget(events.len(), pattern.steps.len());
-    let mut best_partial = Vec::new();
-    for start in search_start..search_end {
-        if let Some(timestamps) =
-            try_match_collecting(pattern, events, start, budget, &mut best_partial)?
-        {
-            // A complete match: every complete match has the same length, so
-            // the first one found (in lazy exploration order, ascending
-            // starts) is the result — mirroring ClickHouse.
-            return Ok(timestamps);
-        }
-    }
-    // No complete match: ClickHouse's sequenceMatchEvents returns the
-    // timestamps of the longest chain matched anywhere (empty when no
-    // condition ever fired).
-    Ok(best_partial)
-}
-
-/// Tries to match from a specific start position, collecting condition timestamps.
-fn try_match_collecting(
-    pattern: &CompiledPattern,
-    events: &[Event],
-    start: usize,
-    budget: usize,
-    best_partial: &mut Vec<i64>,
-) -> Result<Option<Vec<i64>>, PatternError> {
-    // Count how many Condition steps are in the pattern
-    let num_conditions = pattern
-        .steps
-        .iter()
-        .filter(|s| matches!(s, PatternStep::Condition(_)))
-        .count();
-
-    let mut states: Vec<NfaStateWithTimestamps> = vec![NfaStateWithTimestamps {
-        event_idx: start,
-        step_idx: 0,
-        last_match_ts: None,
-        collected: Vec::with_capacity(num_conditions),
-    }];
-
-    let mut iterations = 0;
-
-    while let Some(state) = states.pop() {
-        iterations += 1;
-        if iterations > budget {
-            // Fail loudly instead of reporting a false "no match" (see
-            // try_match_from).
-            return Err(budget_error(events.len(), pattern.steps.len()));
-        }
-
-        // ClickHouse's sequenceMatchEvents returns the timestamps of the
-        // LONGEST chain matched when the full pattern never matches; track
-        // the best partial across the whole exploration.
-        if state.collected.len() > best_partial.len() {
-            best_partial.clone_from(&state.collected);
-        }
-
-        // Successfully matched all steps
-        if state.step_idx >= pattern.steps.len() {
-            return Ok(Some(state.collected));
-        }
-
-        // No more events to consume. ClickHouse treats trailing `.*`,
-        // `(?t<=N)`, `(?t<N)` and `(?t>=0)` as matching the empty remainder.
-        if state.event_idx >= events.len() {
-            match &pattern.steps[state.step_idx] {
-                PatternStep::AnyEvents => {
-                    states.push(NfaStateWithTimestamps {
-                        step_idx: state.step_idx + 1,
-                        ..state
-                    });
-                }
-                PatternStep::TimeConstraint(op, threshold) => {
-                    let vacuous_at_end = matches!(op, TimeOp::Lte | TimeOp::Lt)
-                        || (matches!(op, TimeOp::Gte) && *threshold == 0);
-                    if vacuous_at_end {
-                        states.push(NfaStateWithTimestamps {
-                            step_idx: state.step_idx + 1,
-                            ..state
-                        });
-                    }
-                }
-                _ => continue,
-            }
-            continue;
-        }
-
-        let event = &events[state.event_idx];
-
-        match &pattern.steps[state.step_idx] {
-            PatternStep::Condition(cond_idx) => {
-                if event.condition(*cond_idx) {
-                    let mut new_collected = state.collected.clone();
-                    new_collected.push(event.timestamp_us);
-                    states.push(NfaStateWithTimestamps {
-                        event_idx: state.event_idx + 1,
-                        step_idx: state.step_idx + 1,
-                        last_match_ts: Some(event.timestamp_us),
-                        collected: new_collected,
-                    });
-                }
-            }
-            PatternStep::AnyEvents => {
-                // Consume event (stay in same step) — pushed first (lower priority)
-                states.push(NfaStateWithTimestamps {
-                    event_idx: state.event_idx + 1,
-                    ..state.clone()
-                });
-                // Advance step (lazy) — pushed last (higher priority)
-                states.push(NfaStateWithTimestamps {
-                    step_idx: state.step_idx + 1,
-                    ..state
-                });
-            }
-            PatternStep::OneEvent => {
-                states.push(NfaStateWithTimestamps {
-                    event_idx: state.event_idx + 1,
-                    step_idx: state.step_idx + 1,
-                    last_match_ts: Some(event.timestamp_us),
-                    collected: state.collected,
-                });
-            }
-            PatternStep::TimeConstraint(op, threshold_seconds) => {
-                // ClickHouse gap-skip semantics — see time_gate.
-                let (advance_pattern, skip_event) = time_gate(
-                    *op,
-                    *threshold_seconds,
-                    state.last_match_ts,
-                    event.timestamp_us,
-                );
-                if skip_event {
-                    states.push(NfaStateWithTimestamps {
-                        event_idx: state.event_idx + 1,
-                        ..state.clone()
-                    });
-                }
-                if advance_pattern {
-                    states.push(NfaStateWithTimestamps {
-                        step_idx: state.step_idx + 1,
-                        ..state
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-/// NFA state that also collects matched condition timestamps.
-#[derive(Debug, Clone)]
-struct NfaStateWithTimestamps {
-    /// Current position in the event stream.
-    event_idx: usize,
-    /// Current position in the pattern steps.
-    step_idx: usize,
-    /// Timestamp of the last matched event (for time constraints).
-    last_match_ts: Option<i64>,
-    /// Collected timestamps for each matched `(?N)` condition step.
-    collected: Vec<i64>,
-}
-
-/// State of a single NFA thread.
-///
-/// At 24 bytes with `Copy` semantics, NFA states are stack-allocated
-/// and avoid heap cloning overhead during backtracking exploration.
+/// A non-consuming step inside a gap.
 #[derive(Debug, Clone, Copy)]
-struct NfaState {
-    /// Current position in the event stream.
-    event_idx: usize,
-    /// Current position in the pattern steps.
-    step_idx: usize,
-    /// Timestamp of the last matched event (for time constraints).
-    last_match_ts: Option<i64>,
+enum GapStep {
+    /// `.*`
+    AnyEvents,
+    /// `(?t op N)`
+    Gate(TimeOp, i64),
+}
+
+/// A pattern split into event-consuming steps and the gaps after them.
+struct Plan {
+    /// One entry per `(?N)` (`Some(N - 1)`) or `.` (`None`), in order.
+    consumers: Vec<Option<usize>>,
+    /// `gaps[k]` holds the non-consuming steps after consumer `k`; the last
+    /// entry is the tail after the final consumer. Steps before the first
+    /// consumer can only be `.*` (the parser rejects a leading time
+    /// constraint), which does not change any result: the start loop already
+    /// tries every position.
+    gaps: Vec<Vec<GapStep>>,
+}
+
+impl Plan {
+    fn new(pattern: &CompiledPattern) -> Self {
+        let mut consumers = Vec::new();
+        let mut gaps = Vec::new();
+        let mut current = Vec::new();
+        for step in &pattern.steps {
+            let consumer = match *step {
+                PatternStep::Condition(idx) => Some(idx),
+                PatternStep::OneEvent => None,
+                PatternStep::AnyEvents => {
+                    current.push(GapStep::AnyEvents);
+                    continue;
+                }
+                PatternStep::TimeConstraint(op, threshold) => {
+                    current.push(GapStep::Gate(op, threshold));
+                    continue;
+                }
+            };
+            if consumers.is_empty() {
+                debug_assert!(
+                    current.iter().all(|s| matches!(s, GapStep::AnyEvents)),
+                    "the parser rejects a time constraint before the first consuming step"
+                );
+                current.clear();
+            } else {
+                gaps.push(std::mem::take(&mut current));
+            }
+            consumers.push(consumer);
+        }
+        gaps.push(current);
+        Self { consumers, gaps }
+    }
+}
+
+/// Up to two half-open position ranges, in ascending order. Empty ranges
+/// have `lo >= hi`.
+type Ranges = [(usize, usize); 2];
+
+/// Feasibility-then-greedy matcher over one sorted event slice.
+///
+/// Positions are event indices; `n` denotes the number of events, and a
+/// gap's *anchor* is the event its preceding consumer consumed.
+struct Matcher<'a> {
+    events: &'a [Event],
+    plan: Plan,
+}
+
+impl<'a> Matcher<'a> {
+    fn new(pattern: &CompiledPattern, events: &'a [Event]) -> Self {
+        Self {
+            events,
+            plan: Plan::new(pattern),
+        }
+    }
+
+    const fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Whether consumer `k` can consume event `b`.
+    fn consumes(&self, k: usize, b: usize) -> bool {
+        self.plan.consumers[k].is_none_or(|cond| self.events[b].condition(cond))
+    }
+
+    /// Whole seconds from event `anchor` to event `p` (`p > anchor`).
+    ///
+    /// Events are sorted, so the true gap is non-negative and (even spanning
+    /// ±infinity timestamps) fits in u64; `wrapping_sub` reinterpreted as
+    /// u64 IS that gap, and dividing in u64 keeps the i64 conversion exact.
+    fn elapsed(&self, anchor: usize, p: usize) -> i64 {
+        let gap_us = self.events[p]
+            .timestamp_us
+            .wrapping_sub(self.events[anchor].timestamp_us) as u64;
+        (gap_us / MICROS_PER_SECOND as u64) as i64
+    }
+
+    /// First position in `[lo, n)` whose elapsed time from `anchor` fails `pred`
+    /// (`n` if none), given that `pred` holds on a prefix of it (elapsed
+    /// time is non-decreasing in position).
+    ///
+    /// Gallops from `lo` before binary searching, so the cost is logarithmic
+    /// in the distance to the answer rather than in the remaining events.
+    fn first_failing(&self, anchor: usize, lo: usize, pred: impl Fn(i64) -> bool) -> usize {
+        let len = self.len();
+        let anchor_us = self.events[anchor].timestamp_us;
+        let holds = |e: &Event| {
+            let gap_us = e.timestamp_us.wrapping_sub(anchor_us) as u64;
+            pred((gap_us / MICROS_PER_SECOND as u64) as i64)
+        };
+        if lo >= len || !holds(&self.events[lo]) {
+            return lo;
+        }
+        // `pred` holds at `known`; the answer is in (known, bound].
+        let mut known = lo;
+        let mut step = 1;
+        let bound = loop {
+            let probe = known.saturating_add(step);
+            if probe >= len {
+                break len;
+            }
+            if !holds(&self.events[probe]) {
+                break probe;
+            }
+            known = probe;
+            step *= 2;
+        };
+        known + 1 + self.events[known + 1..bound].partition_point(holds)
+    }
+
+    /// Positions in `[p, n)` where the gate passes after skipping from `p`.
+    fn gate_ranges(&self, op: TimeOp, threshold: i64, anchor: usize, p: usize) -> Ranges {
+        let len = self.len();
+        let none = (len, len);
+        if p >= len {
+            return [none, none];
+        }
+        match op {
+            // Satisfied on a prefix; skipping stops at the first violation.
+            TimeOp::Lt | TimeOp::Lte => [
+                (
+                    p,
+                    self.first_failing(anchor, p, |e| op.evaluate(e, threshold)),
+                ),
+                none,
+            ],
+            // Satisfied on a suffix; skipping never stops.
+            TimeOp::Gt | TimeOp::Gte => [
+                (
+                    self.first_failing(anchor, p, |e| !op.evaluate(e, threshold)),
+                    len,
+                ),
+                none,
+            ],
+            // Skipping stops once elapsed exceeds the threshold.
+            TimeOp::Eq => [
+                (
+                    self.first_failing(anchor, p, |e| e < threshold),
+                    self.first_failing(anchor, p, |e| e <= threshold),
+                ),
+                none,
+            ],
+            TimeOp::Ne => [
+                (p, self.first_failing(anchor, p, |e| e < threshold)),
+                (self.first_failing(anchor, p, |e| e <= threshold), len),
+            ],
+        }
+    }
+
+    /// Earliest position below `n` where the gate passes, starting at `p`.
+    fn gate_earliest(&self, op: TimeOp, threshold: i64, anchor: usize, p: usize) -> Option<usize> {
+        let len = self.len();
+        if p >= len {
+            return None;
+        }
+        let found = match op {
+            TimeOp::Lt | TimeOp::Lte => p,
+            TimeOp::Gt | TimeOp::Gte => {
+                self.first_failing(anchor, p, |e| !op.evaluate(e, threshold))
+            }
+            TimeOp::Eq => self.first_failing(anchor, p, |e| e < threshold),
+            TimeOp::Ne if self.elapsed(anchor, p) != threshold => p,
+            TimeOp::Ne => self.first_failing(anchor, p, |e| e <= threshold),
+        };
+        (found < len && op.evaluate(self.elapsed(anchor, found), threshold)).then_some(found)
+    }
+
+    /// The earliest position at which consumer `k + 1` can consume an event
+    /// when consumer `k` consumed event `b`, among positions where
+    /// `first_true(i)` (the smallest acceptable position `>= i`, or `n`)
+    /// accepts. Agrees with the earliest acceptable position in
+    /// [`Self::candidates`], without computing the ranges' upper ends.
+    fn first_candidate(
+        &self,
+        k: usize,
+        b: usize,
+        first_true: impl Fn(usize) -> usize,
+    ) -> Option<usize> {
+        let len = self.len();
+        let mut p = b + 1;
+        if p >= len {
+            return None;
+        }
+        let Some((last, init)) = self.plan.gaps[k].split_last() else {
+            return (first_true(p) == p).then_some(p);
+        };
+        for step in init {
+            if let GapStep::Gate(op, threshold) = *step {
+                p = self.gate_earliest(op, threshold, b, p)?;
+            }
+        }
+        let found = match *last {
+            GapStep::AnyEvents => first_true(p),
+            GapStep::Gate(op, threshold) => match op {
+                // Passes on a prefix of [p, n): the first acceptable
+                // position is in range iff it passes.
+                TimeOp::Lt | TimeOp::Lte => first_true(p),
+                // Passes on a suffix.
+                TimeOp::Gt | TimeOp::Gte => {
+                    first_true(self.first_failing(b, p, |e| !op.evaluate(e, threshold)))
+                }
+                // Passes on the run with elapsed == threshold.
+                TimeOp::Eq => first_true(self.first_failing(b, p, |e| e < threshold)),
+                // Passes everywhere except the run with elapsed == threshold.
+                TimeOp::Ne => {
+                    let found = first_true(p);
+                    if found < len && self.elapsed(b, found) == threshold {
+                        first_true(self.first_failing(b, found, |e| e <= threshold))
+                    } else {
+                        found
+                    }
+                }
+            },
+        };
+        let passes = |found: usize| match *last {
+            GapStep::AnyEvents => true,
+            GapStep::Gate(op, threshold) => op.evaluate(self.elapsed(b, found), threshold),
+        };
+        (found < len && passes(found)).then_some(found)
+    }
+
+    /// Positions where consumer `k + 1` may consume an event when consumer
+    /// `k` consumed event `b`.
+    ///
+    /// Only positions below `n` matter here (a consumer needs an event), and
+    /// below `n` each gap step reaches a superset of positions from an
+    /// earlier position. So every step but the last contributes only its
+    /// earliest position, and the last step's full range is the answer.
+    fn candidates(&self, k: usize, b: usize) -> Ranges {
+        let len = self.len();
+        let none = (len, len);
+        let mut p = b + 1;
+        if p >= len {
+            return [none, none];
+        }
+        let Some((last, init)) = self.plan.gaps[k].split_last() else {
+            return [(p, p + 1), none];
+        };
+        for step in init {
+            if let GapStep::Gate(op, threshold) = *step {
+                match self.gate_earliest(op, threshold, b, p) {
+                    Some(found) => p = found,
+                    None => return [none, none],
+                }
+            }
+        }
+        match *last {
+            GapStep::AnyEvents => [(p, len), none],
+            GapStep::Gate(op, threshold) => self.gate_ranges(op, threshold, b, p),
+        }
+    }
+
+    /// Where a full match ends when the last consumer consumed event `b`:
+    /// the earliest position the tail can reach, which is `n` when the tail
+    /// can only finish at the end of the events (e.g. `.*(?t<5)` after the
+    /// last gap event is too late). `None` if the tail cannot finish.
+    fn tail_end(&self, b: usize) -> Option<usize> {
+        let len = self.len();
+        // Earliest reachable position below n, and whether n is reachable.
+        let mut earliest = (b + 1 < len).then_some(b + 1);
+        let mut at_end = b + 1 >= len;
+        for step in self.plan.gaps.last().expect("tail gap") {
+            match *step {
+                GapStep::AnyEvents => at_end |= earliest.is_some(),
+                GapStep::Gate(op, threshold) => {
+                    let vacuous_at_end = matches!(op, TimeOp::Lte | TimeOp::Lt)
+                        || (op == TimeOp::Gte && threshold == 0);
+                    // From a position below n the gate skips to the end
+                    // only if it can skip every remaining event.
+                    let skips_to_end = || match op {
+                        TimeOp::Lte | TimeOp::Lt => {
+                            op.evaluate(self.elapsed(b, len - 1), threshold)
+                        }
+                        _ => true,
+                    };
+                    at_end = vacuous_at_end && (at_end || (earliest.is_some() && skips_to_end()));
+                    earliest = earliest.and_then(|p| self.gate_earliest(op, threshold, b, p));
+                }
+            }
+        }
+        earliest.or_else(|| at_end.then_some(len))
+    }
+
+    /// The error for a working-memory allocation that failed.
+    fn out_of_memory(&self) -> PatternError {
+        PatternError {
+            message: format!(
+                "out of memory matching a pattern of {} steps against {} events in one group",
+                self.plan.consumers.len() + self.plan.gaps.iter().map(Vec::len).sum::<usize>(),
+                self.len()
+            ),
+            position: PatternError::NO_POSITION,
+        }
+    }
+
+    /// Allocates `len` copies of `value`, reporting failure instead of
+    /// aborting the process.
+    fn try_vec<T: Clone>(&self, len: usize, value: T) -> Result<Vec<T>, PatternError> {
+        let mut v = Vec::new();
+        v.try_reserve_exact(len).map_err(|_| self.out_of_memory())?;
+        v.resize(len, value);
+        Ok(v)
+    }
+
+    /// An all-clear bit set over the event positions.
+    fn try_bits(&self) -> Result<Bits, PatternError> {
+        Ok(Bits(self.try_vec(self.len().div_ceil(64), 0u64)?))
+    }
+
+    /// `feasible[k]` holds `b` when consumer `k` can consume event `b` and
+    /// consumers `k + 1 ..= last` can still follow (plus the tail, if
+    /// `with_tail`). One bit per event per consumer, plus one transient
+    /// `usize` per event.
+    fn feasibility(&self, last: usize, with_tail: bool) -> Result<Vec<Bits>, PatternError> {
+        let len = self.len();
+        let mut levels = Vec::new();
+        levels
+            .try_reserve_exact(last + 1)
+            .map_err(|_| self.out_of_memory())?;
+        // An empty tail always finishes (at the next position).
+        let check_tail = with_tail && !self.plan.gaps.last().expect("tail gap").is_empty();
+        let mut top = self.try_bits()?;
+        for b in 0..len {
+            if self.consumes(last, b) && (!check_tail || self.tail_end(b).is_some()) {
+                top.set(b);
+            }
+        }
+        levels.push(top);
+        // next_true[i]: smallest feasible position >= i in the level above.
+        let mut next_true = self.try_vec(len + 1, len)?;
+        for k in (0..last).rev() {
+            let above = levels.last().expect("level k + 1");
+            for i in (0..len).rev() {
+                next_true[i] = if above.get(i) { i } else { next_true[i + 1] };
+            }
+            let mut level = self.try_bits()?;
+            for b in 0..len {
+                if self.consumes(k, b) && self.first_candidate(k, b, |i| next_true[i]).is_some() {
+                    level.set(b);
+                }
+            }
+            levels.push(level);
+        }
+        levels.reverse();
+        Ok(levels)
+    }
+
+    /// The greedy walk from `b0` through consumer `levels.len() - 1`: at each
+    /// step, the earliest feasible candidate. Calls `visit(k, b)` for every
+    /// consumed position and returns the last one.
+    fn walk(&self, levels: &[Bits], b0: usize, mut visit: impl FnMut(usize, usize)) -> usize {
+        let len = self.len();
+        visit(0, b0);
+        let mut b = b0;
+        for k in 0..levels.len() - 1 {
+            let level = &levels[k + 1];
+            // Forward scans: the walk only moves forward, so over a whole
+            // sequence_count the scans cover each position O(1) times.
+            b = self
+                .first_candidate(k, b, |i| level.next_set(i, len))
+                .expect("a feasible position has a feasible successor");
+            visit(k + 1, b);
+        }
+        b
+    }
+
+    fn execute(&self, count_all: bool) -> Result<MatchResult, PatternError> {
+        let len = self.len();
+        let num_consumers = self.plan.consumers.len();
+        if num_consumers == 0 {
+            // Only `.*`: an empty match at every position.
+            let count = if count_all { len } else { 1 };
+            return Ok(MatchResult {
+                matched: true,
+                count,
+            });
+        }
+        let levels = self.feasibility(num_consumers - 1, true)?;
+        let first = &levels[0];
+        let mut count = 0;
+        let mut start = 0;
+        loop {
+            let b0 = first.next_set(start, len);
+            if b0 == len {
+                break;
+            }
+            count += 1;
+            if !count_all {
+                break;
+            }
+            let last = self.walk(&levels, b0, |_, _| {});
+            // Non-overlapping: resume after the match. It consumed at least
+            // one event, so this always advances.
+            start = self.tail_end(last).expect("feasible chain has a tail");
+        }
+        Ok(MatchResult {
+            matched: count > 0,
+            count,
+        })
+    }
+
+    /// Replaces `reach` (the positions consumer `k` can consume on some
+    /// chain) with those of consumer `k + 1`.
+    ///
+    /// For an empty gap, a lone `.*` or a lone gate other than `==`, whether
+    /// `b'` is reachable depends on one representative earlier reachable
+    /// event: the gate passes at `b'` from anchor `b` exactly when its
+    /// comparison holds for the elapsed time from `b` to `b'`, and that time
+    /// shrinks as `b` moves later. So `<`/`<=` test the latest reachable `b`,
+    /// `>`/`>=` the earliest, and `!=` both (every `b` between them has an
+    /// elapsed time between theirs). That is O(n) per step; other gaps mark
+    /// every candidate range, which costs a galloping search per reachable
+    /// event.
+    fn reach_next(&self, k: usize, reach: &mut Bits, delta: &mut [i64]) {
+        let len = self.len();
+        let single_gate = match self.plan.gaps[k].as_slice() {
+            [] | [GapStep::AnyEvents] => None,
+            [GapStep::Gate(op, threshold)] if *op != TimeOp::Eq => Some((*op, *threshold)),
+            _ => return self.reach_next_by_ranges(k, reach, delta),
+        };
+        let empty_gap = self.plan.gaps[k].is_empty();
+        let mut next = Bits(std::mem::take(&mut reach.0));
+        let (mut earliest, mut latest) = (None::<usize>, None::<usize>);
+        for b in 0..len {
+            // `latest`/`earliest` cover reachable positions before `b`.
+            let reachable = match (single_gate, latest) {
+                (_, None) => false,
+                (None, Some(last)) => !empty_gap || last + 1 == b,
+                (Some((op, threshold)), Some(last)) => {
+                    let first = earliest.expect("set with latest");
+                    match op {
+                        TimeOp::Lt | TimeOp::Lte => op.evaluate(self.elapsed(last, b), threshold),
+                        TimeOp::Gt | TimeOp::Gte => op.evaluate(self.elapsed(first, b), threshold),
+                        _ => {
+                            op.evaluate(self.elapsed(last, b), threshold)
+                                || op.evaluate(self.elapsed(first, b), threshold)
+                        }
+                    }
+                }
+            };
+            // `next` reuses `reach`'s words: read bit `b` before overwriting.
+            let was_reachable = next.get(b);
+            if was_reachable {
+                earliest.get_or_insert(b);
+                latest = Some(b);
+            }
+            if reachable && self.consumes(k + 1, b) {
+                next.set(b);
+            } else {
+                next.unset(b);
+            }
+        }
+        *reach = next;
+    }
+
+    /// [`Self::reach_next`] for any gap: marks every candidate range of every
+    /// reachable position with a difference array.
+    fn reach_next_by_ranges(&self, k: usize, reach: &mut Bits, delta: &mut [i64]) {
+        let len = self.len();
+        delta.fill(0);
+        for b in (0..len).filter(|&b| reach.get(b)) {
+            for (lo, hi) in self.candidates(k, b) {
+                if lo < hi {
+                    delta[lo] += 1;
+                    delta[hi] -= 1;
+                }
+            }
+        }
+        let mut covering = 0;
+        reach.clear();
+        for (b, d) in delta.iter().take(len).enumerate() {
+            covering += d;
+            if covering > 0 && self.consumes(k + 1, b) {
+                reach.set(b);
+            }
+        }
+    }
+
+    /// The timestamps of the `(?N)` steps on the greedy walk from `b0`.
+    fn walk_timestamps(&self, levels: &[Bits], b0: usize) -> Vec<i64> {
+        let mut timestamps = Vec::new();
+        self.walk(levels, b0, |k, b| {
+            if self.plan.consumers[k].is_some() {
+                timestamps.push(self.events[b].timestamp_us);
+            }
+        });
+        timestamps
+    }
+
+    fn execute_events(&self) -> Result<Vec<i64>, PatternError> {
+        let len = self.len();
+        let num_consumers = self.plan.consumers.len();
+        if num_consumers == 0 {
+            return Ok(Vec::new());
+        }
+        let levels = self.feasibility(num_consumers - 1, true)?;
+        let b0 = levels[0].next_set(0, len);
+        if b0 < len {
+            return Ok(self.walk_timestamps(&levels, b0));
+        }
+        drop(levels);
+
+        // No full match: find the furthest consumer any chain reaches.
+        let mut reach = self.try_bits()?;
+        for b in (0..len).filter(|&b| self.consumes(0, b)) {
+            reach.set(b);
+        }
+        let mut delta = self.try_vec(len + 1, 0i64)?;
+        let mut furthest = None;
+        for k in 0..num_consumers {
+            if reach.next_set(0, len) == len {
+                break;
+            }
+            if self.plan.consumers[k].is_some() {
+                furthest = Some(k);
+            }
+            if k + 1 == num_consumers {
+                break;
+            }
+            self.reach_next(k, &mut reach, &mut delta);
+        }
+        drop((reach, delta));
+        let Some(furthest) = furthest else {
+            return Ok(Vec::new());
+        };
+        let levels = self.feasibility(furthest, false)?;
+        let b0 = levels[0].next_set(0, len);
+        debug_assert!(b0 < len, "the furthest consumer is reachable");
+        Ok(self.walk_timestamps(&levels, b0))
+    }
+}
+
+/// A fixed-size set of event positions, one bit each.
+struct Bits(Vec<u64>);
+
+impl Bits {
+    fn get(&self, i: usize) -> bool {
+        self.0[i / 64] >> (i % 64) & 1 == 1
+    }
+
+    fn set(&mut self, i: usize) {
+        self.0[i / 64] |= 1 << (i % 64);
+    }
+
+    fn unset(&mut self, i: usize) {
+        self.0[i / 64] &= !(1 << (i % 64));
+    }
+
+    fn clear(&mut self) {
+        self.0.fill(0);
+    }
+
+    /// The smallest member `>= from`, or `len` (the number of positions) if
+    /// there is none.
+    fn next_set(&self, from: usize, len: usize) -> usize {
+        if from >= len {
+            return len;
+        }
+        let mut word = from / 64;
+        let mut bits = self.0[word] & (u64::MAX << (from % 64));
+        loop {
+            if bits != 0 {
+                return (word * 64 + bits.trailing_zeros() as usize).min(len);
+            }
+            word += 1;
+            if word == self.0.len() {
+                return len;
+            }
+            bits = self.0[word];
+        }
+    }
 }
 
 #[cfg(test)]
@@ -811,9 +1052,9 @@ mod tests {
     }
 
     #[test]
-    fn test_max_nfa_states_limit() {
-        // A pathological pattern with multiple .* can cause state explosion.
-        // The executor should abort after MAX_NFA_STATES iterations and return no match.
+    fn test_stacked_wildcards_no_match() {
+        // Stacked `.*` (collapsed by the parser) over many non-matching
+        // events: no hang, no match.
         let pattern = parse_pattern("(?1).*.*.*.*(?2)").unwrap();
         // Many events that don't match (?2) force extensive backtracking
         let mut event_data: Vec<(i64, &[bool])> = Vec::new();
@@ -824,7 +1065,6 @@ mod tests {
             event_data.push((i, &conds_mid));
         }
         let events = make_events(&event_data);
-        // Should not hang; returns no match after hitting the state limit
         let result = execute_pattern(&pattern, &events, false).unwrap();
         assert!(!result.matched);
     }
@@ -952,15 +1192,59 @@ mod tests {
     }
 
     #[test]
-    fn test_time_constraint_vacuous_truth_at_pattern_start() {
-        // Kills mutant: removing the else branch for time constraints
-        // when last_match_ts is None. A time constraint at the start
-        // of a pattern has no previous match to compare against and
-        // should be vacuously true.
-        let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
-        let events = make_events(&[(100, &[true])]);
-        let result = execute_pattern(&pattern, &events, false).unwrap();
-        assert!(result.matched);
+    fn test_time_constraint_without_anchor_is_rejected() {
+        // A time constraint before any `(?N)` or `.` has nothing to measure
+        // from. It used to be treated as always true; ClickHouse 26.9.8.3
+        // answers `(?t>0)(?1)` over one c1 event with 0 where that gave true.
+        for p in ["(?t<=5)(?1)", ".*(?t<5)(?1)", "(?t<1)(?t<2)(?1)"] {
+            let err = parse_pattern(p).unwrap_err();
+            assert!(err.message.contains("must follow an event"), "{p}: {err}");
+        }
+        // After `.` the constraint is anchored at the event `.` consumed.
+        let pattern = parse_pattern(".(?t<=5)(?1)").unwrap();
+        let events = make_events(&[(100, &[false]), (100, &[true])]);
+        assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
+    }
+
+    #[test]
+    fn test_adjacent_conditions_with_wildcard_keep_adjacency() {
+        // `(?1)(?2).*(?3)` requires (?2) on the event right after (?1). The
+        // wildcard fast path used to drop that requirement. ClickHouse
+        // 26.9.8.3 returns 0 for these events; the old code returned true.
+        let pattern = parse_pattern("(?1)(?2).*(?3)").unwrap();
+        let events = make_events(&[
+            (1, &[true, false, false]),
+            (2, &[false, false, true]),
+            (3, &[false, true, false]),
+            (4, &[false, false, true]),
+        ]);
+        let result = execute_pattern(&pattern, &events, true).unwrap();
+        assert!(!result.matched);
+        assert_eq!(result.count, 0);
+        // ClickHouse counts 1 for `(?1)(?1).*` over c1,c1,c1,c2,c1 (the old
+        // code counted 2).
+        let pattern = parse_pattern("(?1)(?1).*").unwrap();
+        let events = make_events(&[
+            (0, &[true, false]),
+            (0, &[true, false]),
+            (0, &[true, false]),
+            (0, &[false, true]),
+            (1, &[true, false]),
+        ]);
+        assert_eq!(execute_pattern(&pattern, &events, true).unwrap().count, 1);
+    }
+
+    #[test]
+    fn test_count_of_pattern_matching_no_events_terminates() {
+        // `.*` matches the empty sequence; counting used to restart at the
+        // same position forever. ClickHouse 26.9.8.3 counts one match per
+        // event (2 here), advancing one event after an empty match.
+        let pattern = parse_pattern(".*").unwrap();
+        let events = make_events(&[(1, &[true, false]), (2, &[false, true])]);
+        assert_eq!(execute_pattern(&pattern, &events, true).unwrap().count, 2);
+        let pattern = parse_pattern("(?1).*").unwrap();
+        let events = make_events(&[(1, &[true]), (2, &[true]), (3, &[true])]);
+        assert_eq!(execute_pattern(&pattern, &events, true).unwrap().count, 3);
     }
 
     #[test]
@@ -1195,7 +1479,7 @@ mod tests {
 
     #[test]
     fn test_classify_time_constraint_is_complex() {
-        // Patterns with time constraints must use the NFA, not fast paths.
+        // Patterns with time constraints use the general matcher, not fast paths.
         let pattern = parse_pattern("(?1)(?t<=5)(?2)").unwrap();
         let events = make_events(&[(0, &[true, false]), (3_000_000, &[false, true])]);
         let result = execute_pattern(&pattern, &events, false).unwrap();
@@ -1204,7 +1488,7 @@ mod tests {
 
     #[test]
     fn test_classify_one_event_is_complex() {
-        // Patterns with `.` (OneEvent) must use the NFA.
+        // Patterns with `.` (OneEvent) use the general matcher.
         let pattern = parse_pattern("(?1).(?2)").unwrap();
         let events = make_events(&[
             (100, &[true, false]),
@@ -1271,7 +1555,7 @@ mod tests {
     }
 
     #[test]
-    fn test_events_nfa_state_limit() {
+    fn test_events_stacked_wildcards_and_gates() {
         // Consecutive `.*` runs are collapsed by the parser, so the classic
         // pathological shape stays on the fast path and simply reports
         // no-match.
@@ -1288,21 +1572,17 @@ mod tests {
         // No (?2) anywhere: the longest partial chain is (?1) at t=0.
         assert_eq!(result, vec![0]);
 
-        // A non-normalizable adversarial pattern (wildcards interleaved with
-        // time constraints) that exceeds the exploration budget fails LOUDLY
-        // instead of silently reporting no-match.
+        // A pattern that cannot be normalized (wildcards interleaved with
+        // time constraints) used to exhaust the backtracking search's
+        // exploration budget and abort the query. It now completes, with
+        // the same longest-partial answer.
         let adversarial =
             parse_pattern("(?1).*(?t>=0).*(?t>=0).*(?t>=0).*(?t>=0).*(?t>=0).*(?2)").unwrap();
         let mut big: Vec<Event> = vec![Event::from_bools(0, &[true, false])];
         for i in 1..3_000i64 {
             big.push(Event::new(i, 0b100));
         }
-        let err = execute_pattern_events(&adversarial, &big).unwrap_err();
-        assert!(
-            err.message.contains("exploration budget exceeded"),
-            "actual: {}",
-            err.message
-        );
+        assert_eq!(execute_pattern_events(&adversarial, &big).unwrap(), vec![0]);
     }
 
     #[test]
@@ -1351,11 +1631,11 @@ mod tests {
     }
 
     #[test]
-    fn test_events_time_constraint_vacuous_truth() {
-        // Time constraint at pattern start with no prior timestamp.
-        // Should be vacuously true for event collection too.
-        let pattern = parse_pattern("(?t<=5)(?1)").unwrap();
-        let events = make_events(&[(100, &[true])]);
+    fn test_events_time_constraint_after_one_event() {
+        // `.` anchors a following time constraint, so event collection sees
+        // the constraint measured from the `.` event.
+        let pattern = parse_pattern(".(?t<=5)(?1)").unwrap();
+        let events = make_events(&[(100, &[false]), (100, &[true])]);
         let result = execute_pattern_events(&pattern, &events).unwrap();
         assert_eq!(result, vec![100]);
     }
@@ -1378,13 +1658,14 @@ mod tests {
 }
 
 #[cfg(test)]
-mod budget_tests {
+mod large_gap_tests {
     use super::*;
     use crate::pattern::parser::parse_pattern;
 
-    /// A complex pattern (time constraint forces the NFA path) over a large
-    /// gap span must still find the match — the exploration budget must not
-    /// produce silent false negatives on legitimate inputs.
+    /// A complex pattern (the time constraint rules out the fast paths) over
+    /// a large gap span must still find the match. (The old backtracking
+    /// search once reported a false no-match here when its exploration
+    /// budget ran out.)
     #[test]
     fn test_large_gap_span_still_matches_complex_pattern() {
         let pattern = parse_pattern("(?1).*(?t>=1)(?2)").unwrap();
@@ -1397,11 +1678,8 @@ mod budget_tests {
         }
         events.push(Event::from_bools(60_000_000, &[false, true]));
 
-        let result = execute_pattern(&pattern, &events, false).expect("within budget");
-        assert!(
-            result.matched,
-            "the match exists; budget exhaustion must not hide it"
-        );
+        let result = execute_pattern(&pattern, &events, false).unwrap();
+        assert!(result.matched, "the match exists");
     }
 
     /// The events-collecting variant has the same requirement.
@@ -1416,7 +1694,7 @@ mod budget_tests {
         for i in 0..20_000i64 {
             events.push(Event::new(2_000_000 + i, 0b100));
         }
-        let timestamps = execute_pattern_events(&pattern, &events).expect("within budget");
+        let timestamps = execute_pattern_events(&pattern, &events).unwrap();
         assert_eq!(timestamps, vec![0, 1_000_000]);
     }
 }
@@ -1517,5 +1795,176 @@ mod time_semantics_tests {
         assert!(execute_pattern(&pattern, &events, false).unwrap().matched);
         let timestamps = execute_pattern_events(&pattern, &events).unwrap();
         assert_eq!(timestamps, vec![0, 5_000_000]);
+    }
+}
+
+/// Differential tests: the matcher must reproduce the original backtracking
+/// search (`reference_nfa`) result for result.
+#[cfg(test)]
+mod differential_tests {
+    use super::*;
+    use crate::pattern::parser::parse_pattern;
+    use crate::pattern::reference_nfa;
+    use proptest::prelude::*;
+
+    /// One pattern token: a consumer, `.*`, or a time constraint.
+    fn token() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => (1usize..=3).prop_map(|c| format!("(?{c})")),
+            1 => Just(".".to_string()),
+            2 => Just(".*".to_string()),
+            3 => (
+                prop::sample::select(vec![">=", "<=", ">", "<", "==", "!="]),
+                0i64..4,
+            )
+                .prop_map(|(op, n)| format!("(?t{op}{n})")),
+        ]
+    }
+
+    /// A consuming step: `(?N)` or `.`.
+    fn consumer() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => (1usize..=3).prop_map(|c| format!("(?{c})")),
+            1 => Just(".".to_string()),
+        ]
+    }
+
+    /// Valid patterns by construction: an optional leading `.*`, a consumer
+    /// (time constraints need one before them), then any tokens; plus the
+    /// consumer-free pattern `.*`.
+    fn pattern() -> impl Strategy<Value = CompiledPattern> {
+        prop_oneof![
+            20 => (any::<bool>(), consumer(), prop::collection::vec(token(), 0..7)).prop_map(
+                |(lead, first, rest)| {
+                    let lead = if lead { ".*" } else { "" };
+                    format!("{lead}{first}{}", rest.concat())
+                }
+            ),
+            1 => Just(".*".to_string()),
+        ]
+        .prop_map(|text| parse_pattern(&text).expect("valid by construction"))
+    }
+
+    /// Small sorted event sets with many timestamp ties and sub-second
+    /// offsets, so the floored-seconds gates hit their boundaries.
+    fn events() -> impl Strategy<Value = Vec<Event>> {
+        prop::collection::vec(
+            (
+                0i64..8,
+                prop::sample::select(vec![0i64, 400_000, 999_999]),
+                0u32..8,
+            ),
+            0..14,
+        )
+        .prop_map(|raw| {
+            let mut events: Vec<Event> = raw
+                .into_iter()
+                .map(|(s, us, conds)| Event::new(s * 1_000_000 + us, conds))
+                .collect();
+            events.sort_by_key(|e| e.timestamp_us);
+            events
+        })
+    }
+
+    fn reference_result(
+        pattern: &CompiledPattern,
+        events: &[Event],
+        count_all: bool,
+    ) -> Option<(bool, usize)> {
+        if events.is_empty() {
+            return Some((false, 0));
+        }
+        reference_nfa::execute_pattern_nfa(pattern, events, count_all)
+            .ok()
+            .map(|r| (r.matched, r.count))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20_000))]
+
+        #[test]
+        fn matches_reference(pattern in pattern(), events in events()) {
+            for count_all in [false, true] {
+                // The reference aborts on its exploration budget; such
+                // inputs carry no expected value.
+                let Some(expected) = reference_result(&pattern, &events, count_all) else {
+                    continue;
+                };
+                let actual = execute_pattern(&pattern, &events, count_all).unwrap();
+                prop_assert_eq!(
+                    (actual.matched, actual.count),
+                    expected,
+                    "count_all={} pattern={:?}",
+                    count_all,
+                    pattern.steps
+                );
+            }
+        }
+
+        #[test]
+        fn events_match_reference(pattern in pattern(), events in events()) {
+            if let Ok(expected) = reference_nfa::execute_pattern_events(&pattern, &events) {
+                prop_assert_eq!(execute_pattern_events(&pattern, &events).unwrap(), expected);
+            }
+        }
+    }
+
+    /// The input shape behind the quadratic slowdown: `.*` before a time
+    /// constraint, a match that never completes, and a large group. The
+    /// backtracking search re-scanned the remaining events from every start
+    /// (10.8 s at 32,000 events in a release build); this must stay fast.
+    #[test]
+    fn wildcard_then_gate_scales_linearly() {
+        let pattern = parse_pattern("(?1).*(?t<5)(?2).*(?3)").unwrap();
+        let n = 1_000_000i64;
+        // Every event satisfies (?1) and (?2); (?3) never fires.
+        let events: Vec<Event> = (0..n).map(|i| Event::new(i * 1_000, 0b011)).collect();
+        let started = std::time::Instant::now();
+        assert!(!execute_pattern(&pattern, &events, false).unwrap().matched);
+        assert_eq!(execute_pattern(&pattern, &events, true).unwrap().count, 0);
+        assert_eq!(execute_pattern_events(&pattern, &events).unwrap().len(), 2);
+        // Generous bound for unoptimized test builds; the quadratic search
+        // needs hours for this input.
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(60),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+    use crate::pattern::parser::parse_pattern;
+
+    /// An allocation the system cannot satisfy is a `PatternError`, not an
+    /// abort of the host process.
+    #[test]
+    fn failed_allocation_is_an_error() {
+        let pattern = parse_pattern("(?1).(?2)").unwrap();
+        let events = vec![Event::new(0, 0b01), Event::new(1, 0b10)];
+        let matcher = Matcher::new(&pattern, &events);
+        let err = matcher.try_vec(usize::MAX / 2, 0u64).unwrap_err();
+        assert!(err.message.contains("out of memory"), "{err}");
+        assert!(err.message.contains("3 steps against 2 events"), "{err}");
+    }
+
+    /// `Bits::next_set` across word boundaries and at the end.
+    #[test]
+    fn bits_next_set() {
+        let mut bits = Bits(vec![0; 3]);
+        for i in [0, 63, 64, 130] {
+            bits.set(i);
+        }
+        assert_eq!(bits.next_set(0, 140), 0);
+        assert_eq!(bits.next_set(1, 140), 63);
+        assert_eq!(bits.next_set(64, 140), 64);
+        assert_eq!(bits.next_set(65, 140), 130);
+        assert_eq!(bits.next_set(131, 140), 140);
+        assert_eq!(bits.next_set(140, 140), 140);
+        assert!(bits.get(130) && !bits.get(129));
+        bits.clear();
+        assert_eq!(bits.next_set(0, 140), 140);
     }
 }

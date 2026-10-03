@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn test_empty_state() {
         let state = RetentionState::new();
-        assert!(state.finalize().is_empty());
+        assert_eq!(state.finalize(), Vec::<bool>::new());
     }
 
     #[test]
@@ -201,7 +201,7 @@ mod tests {
         let a = RetentionState::new();
         let b = RetentionState::new();
         let combined = a.combine(&b);
-        assert!(combined.finalize().is_empty());
+        assert_eq!(combined.finalize(), Vec::<bool>::new());
     }
 
     #[test]

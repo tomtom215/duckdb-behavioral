@@ -4,7 +4,7 @@
 //! Recursive descent parser for sequence match pattern strings.
 //!
 //! Parses patterns like `(?1).*(?2)(?t>=3600)(?3)` into a structured AST
-//! that can be executed by the NFA engine.
+//! that the executor matches against event streams.
 
 use std::fmt;
 
@@ -62,6 +62,29 @@ pub struct CompiledPattern {
     pub steps: Vec<PatternStep>,
 }
 
+impl CompiledPattern {
+    /// The highest condition number `N` referenced by a `(?N)` step
+    /// (1-based), or `None` if the pattern has no condition step.
+    #[must_use]
+    pub fn max_condition(&self) -> Option<usize> {
+        self.steps
+            .iter()
+            .filter_map(|s| match s {
+                PatternStep::Condition(idx) => Some(idx + 1),
+                _ => None,
+            })
+            .max()
+    }
+}
+
+/// Maximum number of steps in a pattern (after collapsing `.*.*`).
+///
+/// The general matcher's working memory is one bit per event per `(?N)` or
+/// `.` step, outside `DuckDB`'s `memory_limit`, so the step count bounds it:
+/// 1024 steps over 10 million events is 1.28 GB. Real patterns are far
+/// shorter.
+pub const MAX_PATTERN_STEPS: usize = 1024;
+
 /// Error returned when pattern parsing fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -74,7 +97,8 @@ pub struct PatternError {
 
 impl PatternError {
     /// Sentinel position for errors that are not tied to a position in the
-    /// pattern string (e.g. execution-budget exhaustion).
+    /// pattern string (no current error uses it; the test-only reference
+    /// matcher's exploration-budget error did).
     pub const NO_POSITION: usize = usize::MAX;
 }
 
@@ -121,6 +145,7 @@ pub fn parse_pattern(input: &str) -> Result<CompiledPattern, PatternError> {
 }
 
 struct Parser<'a> {
+    text: &'a str,
     input: &'a [u8],
     pos: usize,
 }
@@ -128,9 +153,20 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     const fn new(input: &'a str) -> Self {
         Self {
+            text: input,
             input: input.as_bytes(),
             pos: 0,
         }
+    }
+
+    /// The character at the current position, for error messages. The
+    /// parser only steps over ASCII bytes, so `pos` is a character boundary
+    /// and a multi-byte character is reported whole (not as its first byte).
+    fn current_char(&self) -> char {
+        self.text
+            .get(self.pos..)
+            .and_then(|rest| rest.chars().next())
+            .unwrap_or(char::REPLACEMENT_CHARACTER)
     }
 
     fn parse(&mut self) -> Result<Vec<PatternStep>, PatternError> {
@@ -140,14 +176,34 @@ impl<'a> Parser<'a> {
             if self.pos >= self.input.len() {
                 break;
             }
+            let start = self.pos;
             let step = self.parse_step()?;
             // Collapse consecutive `.*` steps: `.*.*` matches exactly the
-            // same event sequences as `.*`, but each extra copy multiplies
-            // the NFA branching factor (the pathological shape behind the
-            // exploration budget). Normalizing here keeps such patterns on
-            // the fast paths.
+            // same event sequences as `.*`. Normalizing here keeps such
+            // patterns on the fast paths.
             if step == PatternStep::AnyEvents && steps.last() == Some(&PatternStep::AnyEvents) {
                 continue;
+            }
+            // A time constraint is measured from the last event consumed by
+            // a `(?N)` or `.` step; before any such step it has nothing to
+            // measure from. (ClickHouse measures it from whichever event its
+            // implicit leading `.*` happens to be at.)
+            if matches!(step, PatternStep::TimeConstraint(..))
+                && !steps
+                    .iter()
+                    .any(|s| matches!(s, PatternStep::Condition(_) | PatternStep::OneEvent))
+            {
+                return Err(PatternError {
+                    message: "time constraint must follow an event condition `(?N)` or `.`"
+                        .to_string(),
+                    position: start,
+                });
+            }
+            if steps.len() == MAX_PATTERN_STEPS {
+                return Err(PatternError {
+                    message: format!("pattern has more than {MAX_PATTERN_STEPS} steps"),
+                    position: start,
+                });
             }
             steps.push(step);
         }
@@ -158,8 +214,8 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(b'(') => self.parse_group(),
             Some(b'.') => self.parse_dot(),
-            Some(c) => Err(PatternError {
-                message: format!("unexpected character '{}'", char::from(c)),
+            Some(_) => Err(PatternError {
+                message: format!("unexpected character '{}'", self.current_char()),
                 position: self.pos,
             }),
             None => Err(PatternError {
@@ -176,8 +232,11 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(b't') => self.parse_time_constraint(),
             Some(c) if c.is_ascii_digit() => self.parse_condition(),
-            Some(c) => Err(PatternError {
-                message: format!("expected digit or 't' after '(?', got '{}'", char::from(c)),
+            Some(_) => Err(PatternError {
+                message: format!(
+                    "expected digit or 't' after '(?', got '{}'",
+                    self.current_char()
+                ),
                 position: self.pos,
             }),
             None => Err(PatternError {
@@ -320,11 +379,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(())
             }
-            Some(c) => Err(PatternError {
+            Some(_) => Err(PatternError {
                 message: format!(
                     "expected '{}', got '{}'",
                     char::from(expected),
-                    char::from(c)
+                    self.current_char()
                 ),
                 position: self.pos,
             }),
@@ -610,5 +669,66 @@ mod overflow_tests {
             err.message
         );
         assert_eq!(err.position, 9, "position points at the number");
+    }
+}
+
+#[cfg(test)]
+mod step_limit_tests {
+    use super::*;
+
+    #[test]
+    fn pattern_at_the_step_limit_parses() {
+        let pattern = "(?1)".repeat(MAX_PATTERN_STEPS);
+        assert_eq!(
+            parse_pattern(&pattern).unwrap().steps.len(),
+            MAX_PATTERN_STEPS
+        );
+    }
+
+    #[test]
+    fn pattern_over_the_step_limit_is_rejected() {
+        let pattern = "(?1)".repeat(MAX_PATTERN_STEPS + 1);
+        let err = parse_pattern(&pattern).unwrap_err();
+        assert!(err.message.contains("more than 1024 steps"), "{err}");
+        assert_eq!(err.position, 4 * MAX_PATTERN_STEPS);
+    }
+
+    #[test]
+    fn collapsed_wildcards_do_not_count_toward_the_limit() {
+        let pattern = format!("{}(?1)", ".*".repeat(5 * MAX_PATTERN_STEPS));
+        assert_eq!(parse_pattern(&pattern).unwrap().steps.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod max_condition_tests {
+    use super::*;
+
+    /// `max_condition` is the highest 1-based condition referenced, which
+    /// the FFI checks against the number of condition columns.
+    #[test]
+    fn max_condition_is_highest_referenced_condition() {
+        let max = |p: &str| parse_pattern(p).unwrap().max_condition();
+        assert_eq!(max("(?1)"), Some(1));
+        assert_eq!(max("(?3).*(?1)"), Some(3));
+        assert_eq!(max("(?2)(?t<5)(?7)."), Some(7));
+        assert_eq!(max(".*"), None);
+        assert_eq!(max("."), None);
+    }
+}
+
+#[cfg(test)]
+mod error_text_tests {
+    use super::*;
+
+    /// A multi-byte character is named whole in the error, not as the Latin-1
+    /// reading of its first byte (`'é'` used to print as `'Ã'`).
+    #[test]
+    fn non_ascii_character_is_reported_whole() {
+        let err = parse_pattern("(?1)é(?2)").unwrap_err();
+        assert!(err.message.contains("'é'"), "{err}");
+        assert_eq!(err.position, 4);
+        let err = parse_pattern("(?\u{ff11})").unwrap_err();
+        assert!(err.message.contains("'\u{ff11}'"), "{err}");
     }
 }

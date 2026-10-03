@@ -260,15 +260,22 @@ impl SequenceNextNodeState {
         self.next_node_value(base_idx, direction)
     }
 
-    /// Sorts events by `(timestamp, value)` ascending with presorted detection.
+    /// Sorts events by `(timestamp, value, base_condition, conditions)`
+    /// ascending, with presorted detection.
     ///
-    /// The value tie-break mirrors `ClickHouse`'s comparator (`event_time`
-    /// primary, node comparison secondary) and makes results deterministic
-    /// when parallel combines deliver same-timestamp events in arbitrary
-    /// order. `None` values order before all strings (`Option` ordering).
+    /// `ClickHouse` stable-sorts by `(timestamp, value)` and leaves events
+    /// equal on both in arrival order, so its result can change with row
+    /// order and thread count. Breaking those ties by the conditions makes
+    /// the order total, so the result never depends on arrival order. `None`
+    /// values order before all strings (`Option` ordering).
     fn sort_events(&mut self) {
-        fn key(e: &NextNodeEvent) -> (i64, Option<&str>) {
-            (e.timestamp_us, e.value.as_deref())
+        fn key(e: &NextNodeEvent) -> (i64, Option<&str>, bool, u32) {
+            (
+                e.timestamp_us,
+                e.value.as_deref(),
+                e.base_condition,
+                e.conditions,
+            )
         }
         if self.events.windows(2).all(|w| key(&w[0]) <= key(&w[1])) {
             return;
@@ -350,6 +357,28 @@ impl Default for SequenceNextNodeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ties_on_timestamp_and_value_do_not_depend_on_arrival_order() {
+        // Events tying on (timestamp, value) but differing in whether they
+        // match event1. ClickHouse keeps such ties in arrival order (its
+        // result for these rows is 'a' or NULL depending on row order), and
+        // the old (timestamp, value) key did the same. The total sort key
+        // orders the event1 match after the non-match whatever the arrival
+        // order, so the head anchor never satisfies event1: NULL both ways.
+        let run = |first_matches: bool| {
+            let mut state = SequenceNextNodeState::new();
+            state.set_direction(Direction::Forward);
+            state.set_base(Base::Head);
+            state.num_steps = 1;
+            state.update(make_event(0, "a", true, &[first_matches]));
+            state.update(make_event(0, "a", true, &[!first_matches]));
+            state.update(make_event(1_000_000, "z", true, &[false]));
+            state.finalize()
+        };
+        assert_eq!(run(true), None);
+        assert_eq!(run(false), None);
+    }
 
     fn make_event(ts: i64, value: &str, base_cond: bool, conds: &[bool]) -> NextNodeEvent {
         let mut bitmask: u32 = 0;
@@ -1425,6 +1454,97 @@ mod tests {
         state.update(make_event(3, "C", true, &[true]));
         state.update(make_event(4, "D", false, &[false]));
         assert_eq!(state.finalize(), None);
+    }
+}
+
+/// Tests written for mutants cargo-mutants found surviving: each pins a
+/// behaviour that one operator change would alter.
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+
+    fn event(ts: i64, value: &str, base: bool, conditions: u32) -> NextNodeEvent {
+        NextNodeEvent::new(ts, Some(Arc::from(value)), base, conditions)
+    }
+
+    fn state(
+        direction: Direction,
+        base: Base,
+        steps: usize,
+        events: Vec<NextNodeEvent>,
+    ) -> SequenceNextNodeState {
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(direction);
+        state.base = Some(base);
+        state.num_steps = steps;
+        for e in events {
+            state.update(e);
+        }
+        state
+    }
+
+    /// `first_match` anchors on the first event satisfying the base
+    /// condition and `event1`, skipping one that satisfies only the base.
+    #[test]
+    fn first_match_needs_event1() {
+        let mut s = state(
+            Direction::Forward,
+            Base::FirstMatch,
+            1,
+            vec![
+                event(0, "A", true, 0),
+                event(1, "B", true, 1),
+                event(2, "C", false, 0),
+            ],
+        );
+        assert_eq!(s.finalize().as_deref(), Some("C"));
+    }
+
+    /// `last_match` anchors on the last event satisfying both the base
+    /// condition and `event1` (B), not on one satisfying either (C or D).
+    #[test]
+    fn last_match_needs_base_and_event1() {
+        let mut s = state(
+            Direction::Backward,
+            Base::LastMatch,
+            1,
+            vec![
+                event(0, "A", false, 0),
+                event(1, "B", true, 1),
+                event(2, "C", true, 0),
+                event(3, "D", false, 1),
+            ],
+        );
+        assert_eq!(s.finalize().as_deref(), Some("A"));
+    }
+
+    /// A backward chain fails when an earlier step does not hold.
+    #[test]
+    fn backward_chain_checks_every_step() {
+        let mut s = state(
+            Direction::Backward,
+            Base::Tail,
+            2,
+            vec![
+                event(0, "A", false, 0),
+                event(1, "B", false, 0),
+                event(2, "C", true, 1),
+            ],
+        );
+        assert_eq!(s.finalize(), None);
+    }
+
+    /// Combining with a fresh state keeps the step count.
+    #[test]
+    fn combine_with_fresh_state_keeps_num_steps() {
+        let s = state(
+            Direction::Forward,
+            Base::Head,
+            1,
+            vec![event(0, "A", true, 1), event(1, "B", false, 0)],
+        );
+        let mut combined = s.combine(&SequenceNextNodeState::new());
+        assert_eq!(combined.finalize().as_deref(), Some("B"));
     }
 }
 

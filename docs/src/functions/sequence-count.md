@@ -15,7 +15,7 @@ sequence_count(pattern VARCHAR, timestamp TIMESTAMP,
 | Parameter | Type | Description |
 |---|---|---|
 | `pattern` | `VARCHAR` | Pattern string (same syntax as `sequence_match`) |
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `cond1..condN` | `BOOLEAN` | Event conditions (2 to 32) |
 
 **Returns:** `BIGINT` -- the number of non-overlapping matches of the pattern
@@ -37,11 +37,15 @@ GROUP BY user_id;
 ## Behavior
 
 1. Events are sorted by timestamp.
-2. The pattern is compiled and executed using the NFA engine.
-3. Each time the pattern matches, the count increments and the NFA restarts
-   from the event following the last matched event.
+2. The pattern is compiled and matched with the same engine as
+   [`sequence_match`](./sequence-match.md).
+3. Each time the pattern matches, the count increments and the search resumes
+   where the match ended: after the last matched event or, when the pattern
+   ends with a time constraint, at the event that satisfied it.
 4. Matches are non-overlapping: once a set of events is consumed by a match,
-   those events cannot participate in another match.
+   those events cannot participate in another match. A match that consumes no
+   events (for example `.*`, or `(?t<=6).*`) still advances one event, as in
+   ClickHouse, so `sequence_count('.*', ...)` counts one match per event.
 
 ### Example
 
@@ -75,8 +79,26 @@ message instead of silently returning `NULL`:
 invalid sequence pattern '(?1)(?': pattern error at position 6: ...
 ```
 
+An out-of-range condition number and a time constraint with no `(?N)` or `.`
+before it are errors too (see [`sequence_match`](./sequence-match.md#errors)).
+
 A `NULL` pattern yields a `NULL` result (lenient), matching SQL aggregate
 conventions.
+
+The `pattern` argument must be the same for every row of a group (normally a
+literal). A group with two different non-`NULL` values is an error, whatever
+the row order (`... the pattern argument must be the same for every row of a
+group`). `NULL` values are ignored.
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 
@@ -84,7 +106,7 @@ conventions.
 |---|---|
 | Update | O(1) amortized (event append) |
 | Combine | O(m) where m = events in other state |
-| Finalize | O(n * s) NFA execution, where n = events, s = pattern steps |
+| Finalize | As [`sequence_match`](./sequence-match.md#implementation) |
 | Space | O(n) -- all collected events |
 
 At benchmark scale, `sequence_count` processes **100 million events in 1.18 s**

@@ -5,14 +5,19 @@
 //!
 //! # Architecture
 //!
-//! All modules except [`sessionize`] use the `quack-rs` v0.14 SDK for
-//! registration, state management, and vector I/O:
+//! Every module uses the `quack-rs` v0.18.0 SDK for registration, state
+//! management, and vector I/O:
 //!
 //! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function
 //!   sets with N overloads. Supports both simple returns (`.returns(TypeId)`) and
 //!   parameterized returns (`.returns_logical(LogicalType)`) for `LIST(T)` types.
 //! - [`quack_rs::aggregate::FfiState<T>`] — `#[repr(C)]` wrapper providing safe
 //!   init/destroy lifecycle and null-checked `with_state_mut()` accessors.
+//! - `quack_rs::aggregate_update_callback!`, `aggregate_combine_callback!`, and
+//!   `aggregate_finalize_callback!` — generate every aggregate's update,
+//!   combine, and finalize callbacks with a panic guard that reports a panic as
+//!   a SQL error instead of unwinding into `DuckDB` (the release profile uses
+//!   `panic = "unwind"` so the guard is effective).
 //! - [`quack_rs::vector::VectorReader`] — safe vector reading (`read_bool()`,
 //!   `read_str()`, `read_i64()`, `read_interval()`).
 //! - [`quack_rs::vector::VectorWriter`] — safe vector writing (`write_i32()`,
@@ -23,20 +28,23 @@
 //! - [`quack_rs::types::LogicalType::list()`] — RAII construction of `LIST(T)`
 //!   types for `returns_logical()` and function registration.
 //!
-//! All aggregate functions use quack-rs builders for registration: the six
-//! variadic functions use `AggregateFunctionSetBuilder` (including `retention`
-//! and `sequence_match_events`, which use
+//! All 8 aggregate functions use quack-rs builders for registration: the seven
+//! variadic functions use `AggregateFunctionSetBuilder` (including `retention`,
+//! `window_funnel_events`, and `sequence_match_events`, which use
 //! `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return
 //! types), and [`sessionize`] uses
 //! [`quack_rs::aggregate::AggregateFunctionBuilder`] for its single fixed
-//! signature. No module in this crate registers through raw `libduckdb-sys`
-//! calls anymore.
+//! signature. [`version`] registers the `behavioral_version()` scalar through
+//! quack-rs's scalar builder. No module in this crate registers through raw
+//! `libduckdb-sys` calls.
 //!
 //! # Entry Point
 //!
 //! Registration uses the [`quack_rs::entry_point_v2!`] macro, which provides a
 //! [`Connection`] implementing the [`Registrar`](quack_rs::connection::Registrar) trait — a version-agnostic API
-//! for registering extension components across `DuckDB` 1.4.x and 1.5.x.
+//! for registering extension components. The extension uses only the stable
+//! `DuckDB` C API (stamped C API version v1.2.0, ABI type `C_STRUCT`), so one
+//! binary loads into `DuckDB` 1.3.2 and later releases.
 
 pub mod retention;
 pub mod sequence;
@@ -48,6 +56,14 @@ pub mod window_funnel;
 pub mod window_funnel_events;
 
 use quack_rs::connection::Connection;
+use quack_rs::types::TypeId;
+
+/// The timestamp types every function accepts. `TIMESTAMPTZ` is an absolute
+/// instant stored, like `TIMESTAMP`, as int64 microseconds since the Unix
+/// epoch (UTC), so both are read the same way; accepting it directly avoids
+/// the `::TIMESTAMP` cast, which converts to local time and can reorder
+/// events across a daylight-saving change.
+pub const TIMESTAMP_TYPES: [TypeId; 2] = [TypeId::Timestamp, TypeId::TimestampTz];
 use quack_rs::error::ExtensionError;
 
 /// Registers all behavioral analytics functions using a [`Connection`] handle.
@@ -79,4 +95,44 @@ pub unsafe fn register_all(con: &Connection) -> Result<(), ExtensionError> {
     }
 
     Ok(())
+}
+
+/// The raw 16-byte `duckdb_string_t` slots of a `VARCHAR` column, for a
+/// cheap "same string as the previous row" check on configuration arguments
+/// that are normally constant.
+///
+/// Equal slots imply equal strings: a slot holds the length and either the
+/// whole string inline (at most 12 bytes) or a 4-byte prefix plus a pointer
+/// to the bytes, so equal slots have equal lengths and equal bytes (or point
+/// at the same bytes). Unequal slots prove nothing, so callers fall back to
+/// comparing the strings.
+pub struct RawStringSlots(*const [u8; 16]);
+
+impl RawStringSlots {
+    /// # Safety
+    ///
+    /// `chunk` must be a valid data chunk whose column `col` is a `VARCHAR`
+    /// vector, alive for as long as the returned value is used.
+    pub unsafe fn new(chunk: libduckdb_sys::duckdb_data_chunk, col: usize) -> Self {
+        // SAFETY: the caller guarantees `chunk` is valid and `col` is a
+        // VARCHAR column; `duckdb_vector_get_data` returns that vector's
+        // array of 16-byte `duckdb_string_t` slots, one per row.
+        unsafe {
+            let vector = libduckdb_sys::duckdb_data_chunk_get_vector(chunk, col as u64);
+            Self(libduckdb_sys::duckdb_vector_get_data(vector).cast::<[u8; 16]>())
+        }
+    }
+
+    /// The slot of row `i`.
+    ///
+    /// # Safety
+    ///
+    /// `i` must be below the chunk's row count. (A NULL row's slot may hold
+    /// stale bytes, which is harmless for an equality pre-check: it is only
+    /// read, never dereferenced.)
+    pub unsafe fn get(&self, i: usize) -> [u8; 16] {
+        // SAFETY: the vector holds one slot per row and `i` is in bounds
+        // (caller contract); `[u8; 16]` has alignment 1.
+        unsafe { *self.0.add(i) }
+    }
 }

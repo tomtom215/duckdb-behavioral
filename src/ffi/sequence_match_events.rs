@@ -11,14 +11,11 @@
 //! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
 //! for LIST output.
 
-use crate::common::event::Event;
-use crate::pattern::parser::parse_pattern;
+use super::sequence::{combine_impl, update_impl};
 use crate::sequence::SequenceState;
-use libduckdb_sys::*;
 use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::{LogicalType, TypeId};
 use quack_rs::vector::complex::ListVector;
-use quack_rs::vector::VectorReader;
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
@@ -46,107 +43,46 @@ const MAX_CONDITIONS: usize = 32;
 pub unsafe fn register_sequence_match_events(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
-    let builder = AggregateFunctionSetBuilder::new("sequence_match_events")
-        .returns_logical(LogicalType::list(TypeId::Timestamp))
-        .overloads(MIN_CONDITIONS..=MAX_CONDITIONS, |n, builder| {
-            let mut b = builder.param(TypeId::Varchar).param(TypeId::Timestamp);
+    let mut builder = AggregateFunctionSetBuilder::new("sequence_match_events")
+        .returns_logical(LogicalType::list(TypeId::Timestamp));
+    // The same overloads for TIMESTAMP and TIMESTAMPTZ (both int64
+    // microseconds since the epoch, read identically).
+    for ts in super::TIMESTAMP_TYPES {
+        builder = builder.overloads(MIN_CONDITIONS..=MAX_CONDITIONS, move |n, builder| {
+            let mut b = builder.param(TypeId::Varchar).param(ts);
             for _ in 0..n {
                 b = b.param(TypeId::Boolean);
             }
-            b.state_size(FfiState::<SequenceState>::size_callback)
-                .init(FfiState::<SequenceState>::init_callback)
+            b.returns_logical(LogicalType::list(ts))
+                .ffi_state::<SequenceState>()
                 .update(state_update)
                 .combine(state_combine)
                 .finalize(state_finalize)
-                .destructor(FfiState::<SequenceState>::destroy_callback)
         });
+    }
+    // SAFETY: `con` is the connection the entry point registers on (this
+    // function's contract), and every overload installs `FfiState<T>`'s size,
+    // init and destroy callbacks together via `ffi_state::<T>()`, the pairing
+    // `Registrar::register_*` requires.
     unsafe { con.register_aggregate_set(builder) }
 }
 
 // SAFETY: `input` is a valid DuckDB data chunk with columns (VARCHAR, TIMESTAMP,
 // BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
-unsafe extern "C" fn state_update(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-) {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let row_count = duckdb_data_chunk_get_size(input) as usize;
-        let col_count = duckdb_data_chunk_get_column_count(input) as usize;
-
-        let pattern_reader = VectorReader::new(input, 0);
-        let ts_reader = VectorReader::new(input, 1);
-        let cond_readers: Vec<VectorReader> = (2..col_count)
-            .map(|c| VectorReader::new(input, c))
-            .collect();
-
-        for i in 0..row_count {
-            let Some(state) = FfiState::<SequenceState>::with_state_mut(*states.add(i)) else {
-                continue;
-            };
-
-            // Validated eagerly: a malformed pattern aborts the query with the
-            // parser's position-annotated message instead of silently
-            // returning an empty list at finalize.
-            if state.pattern_str.is_none() && pattern_reader.is_valid(i) {
-                let s = pattern_reader.read_str(i);
-                state.set_pattern(s);
-                if let Err(e) = parse_pattern(s) {
-                    info.set_error(&format!("invalid sequence pattern '{s}': {e}"));
-                    return;
-                }
-            }
-
-            if !ts_reader.is_valid(i) {
-                continue;
-            }
-
-            let timestamp = ts_reader.read_i64(i);
-
-            let mut bitmask: u32 = 0;
-            for (c, reader) in cond_readers.iter().enumerate() {
-                if reader.is_valid(i) && reader.read_bool(i) {
-                    bitmask |= 1 << c;
-                }
-            }
-
-            state.update(Event::new(timestamp, bitmask));
-        }
-    }
-}
+quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
+    unsafe { update_impl(info, input, states, "sequence_match_events") }
+});
 
 // SAFETY: `source` and `target` point to `count` aggregate state pointers.
-unsafe extern "C" fn state_combine(
-    _info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    target: *mut duckdb_aggregate_state,
-    count: idx_t,
-) {
-    unsafe {
-        for i in 0..count as usize {
-            let Some(src) = FfiState::<SequenceState>::with_state(*source.add(i)) else {
-                continue;
-            };
-            let Some(tgt) = FfiState::<SequenceState>::with_state_mut(*target.add(i)) else {
-                continue;
-            };
-
-            tgt.combine_in_place(src);
-        }
-    }
-}
+quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
+    unsafe { combine_impl(info, source, target, count, "sequence_match_events") }
+});
 
 // SAFETY: `source` points to `count` aggregate state pointers. `result` is a
 // valid DuckDB LIST(TIMESTAMP) vector. Each list entry is populated with the
-// matched condition timestamps. Empty list on no match or pattern error.
-unsafe extern "C" fn state_finalize(
-    info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    result: duckdb_vector,
-    count: idx_t,
-    offset: idx_t,
-) {
+// matched condition timestamps. Empty list on no match or a NULL pattern; any
+// other error aborts the query.
+quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
     unsafe {
         let info = AggregateFunctionInfo::new(info);
         let mut list_offset = ListVector::get_size(result) as u64;
@@ -162,8 +98,8 @@ unsafe extern "C" fn state_finalize(
 
             let timestamps = match state.finalize_events() {
                 Ok(ts) => ts,
-                // A NULL pattern finalizes as an empty list; real execution
-                // errors (e.g. exploration budget exhaustion) abort the query.
+                // A NULL pattern finalizes as an empty list; any other error
+                // (an invalid pattern) aborts the query.
                 Err(_) if state.pattern_str.is_none() => Vec::new(),
                 Err(e) => {
                     info.set_error(&format!("sequence_match_events: {e}"));
@@ -188,11 +124,12 @@ unsafe extern "C" fn state_finalize(
             ListVector::set_size(result, list_offset as usize);
         }
     }
-}
+});
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::event::Event;
     use quack_rs::testing::AggregateTestHarness;
 
     #[test]
@@ -207,7 +144,7 @@ mod tests {
             },
         );
         let events = state.finalize_events().unwrap();
-        assert!(events.is_empty());
+        assert_eq!(events, Vec::<i64>::new());
     }
 
     #[test]

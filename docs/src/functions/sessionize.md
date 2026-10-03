@@ -13,14 +13,20 @@ sessionize(timestamp TIMESTAMP, gap INTERVAL) -> BIGINT
 
 | Parameter | Type | Description |
 |---|---|---|
-| `timestamp` | `TIMESTAMP` | Event timestamp |
+| `timestamp` | `TIMESTAMP` or `TIMESTAMPTZ` | Event timestamp (see [Timestamp types](#timestamp-types)) |
 | `gap` | `INTERVAL` | Maximum allowed inactivity gap between events in the same session |
 
 **Returns:** `BIGINT` -- the session ID (1-indexed, monotonically increasing within each partition).
 
 ## Usage
 
-`sessionize` is used as a window function with `OVER (PARTITION BY ... ORDER BY ...)`.
+`sessionize` is an aggregate designed to be used as a window function with
+`OVER (PARTITION BY ... ORDER BY timestamp)`. Order the window by the
+timestamp, ascending, and keep the default frame (or any frame ending at
+`CURRENT ROW`). Do not use `OVER ()` or a `BETWEEN UNBOUNDED PRECEDING AND
+UNBOUNDED FOLLOWING` frame: DuckDB crashes on those for every C API aggregate
+([FAQ](../faq.md#which-query-shapes-crash-duckdb)). Without `OVER`, it returns
+the number of sessions in the group.
 
 ```sql
 SELECT user_id, event_time,
@@ -37,6 +43,10 @@ FROM events;
 - If the gap exceeds the threshold, the session ID increments.
 - A gap exactly equal to the threshold does **not** start a new session; the gap
   must strictly exceed the threshold.
+- The threshold may differ per row: each row is compared with its own gap.
+- Gaps touching DuckDB's `±infinity` timestamps are computed exactly.
+- With a descending `ORDER BY`, gaps are never positive and every row starts
+  a new session; order ascending.
 
 ### Example
 
@@ -60,8 +70,22 @@ silently sessionizing with a zero threshold:
   day/hour/minute/second units (e.g. `INTERVAL '30 minutes'`)
 - **Negative gap** — the gap must be non-negative
 
-A `NULL` timestamp produces a `NULL` session ID for that row; a `NULL` gap
-skips the row leniently.
+With a frame ending at the current row (the default), a `NULL` timestamp
+produces a `NULL` session ID for that row. The rule follows the frame's last
+row, so with a frame that ends elsewhere (`... AND 1 FOLLOWING`) it applies to
+that row instead. A row whose gap is `NULL` is left out of the session chain
+and receives the current session ID (`NULL` if no earlier row counted).
+
+
+### Timestamp types
+
+`TIMESTAMP` and `TIMESTAMPTZ` are both accepted and read as microseconds since
+the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
+session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
+local time, which can reorder events around a daylight-saving change.
+`TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
+`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
+microsecond apart become ties.
 
 ## Implementation
 

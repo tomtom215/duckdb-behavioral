@@ -3,5 +3,6 @@
 
 //! Common types and utilities shared across behavioral analytics functions.
 
+pub mod config;
 pub mod event;
 pub mod timestamp;

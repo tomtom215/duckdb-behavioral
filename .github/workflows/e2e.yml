@@ -22,7 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
-  DUCKDB_VERSION: "v1.5.5"
+  DUCKDB_VERSION: "v1.5.6"
 
 jobs:
   e2e-test:
@@ -341,9 +341,49 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # The extension is stamped for the stable C API (`C_STRUCT`, C API v1.2.0), so
+  # one binary must load and answer correctly on every DuckDB release with that
+  # C API. This job loads the Linux artifact built above into several releases
+  # and asserts the query output, not just the absence of an error.
+  compat:
+    name: Compat (DuckDB ${{ matrix.duckdb }})
+    needs: e2e-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        duckdb: ["v1.3.2", "v1.4.4", "v1.5.0", "v1.5.6"]
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: e2e-logs-linux_amd64
+          path: artifact
+
+      - name: Load into DuckDB ${{ matrix.duckdb }} and check results
+        run: |
+          curl -sSLf "https://github.com/duckdb/duckdb/releases/download/${{ matrix.duckdb }}/duckdb_cli-linux-amd64.zip" -o duckdb.zip
+          unzip -q duckdb.zip
+          EXT="$(find artifact -name behavioral.duckdb_extension | head -1)"
+          test -n "$EXT"
+          ACTUAL="$(./duckdb -unsigned -csv -noheader -c "
+            LOAD '$EXT';
+            SELECT window_funnel(INTERVAL '1 hour', ts, e = 'a', e = 'b', e = 'c'),
+                   sequence_match('(?1).*(?2)', ts, e = 'a', e = 'c'),
+                   sequence_count('(?1).*(?2)', ts, e = 'a', e = 'c'),
+                   retention(e = 'a', e = 'b'),
+                   sequence_next_node('forward', 'head', ts, e, e = 'a', e = 'a')
+            FROM (VALUES (TIMESTAMP '2024-01-01 00:00', 'a'),
+                         (TIMESTAMP '2024-01-01 00:10', 'b'),
+                         (TIMESTAMP '2024-01-01 00:20', 'c')) t(ts, e);")"
+          EXPECTED='3,true,1,"[true, true]",b'
+          echo "actual:   $ACTUAL"
+          echo "expected: $EXPECTED"
+          test "$ACTUAL" = "$EXPECTED"
+
   e2e-summary:
     name: E2E Summary
-    needs: e2e-test
+    needs: [e2e-test, compat]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -357,12 +397,12 @@ jobs:
             echo "|----------|--------|"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          RESULT="${{ needs.e2e-test.result }}"
+          RESULT="${{ needs.e2e-test.result == 'success' && needs.compat.result || needs.e2e-test.result }}"
           case "$RESULT" in
             success)
               echo "| All platforms | ✅ passed |" >> "$GITHUB_STEP_SUMMARY"
               echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "✅ **All E2E tests passed.** Extension loads, all 7 functions execute correctly, 100K load test succeeded." >> "$GITHUB_STEP_SUMMARY"
+              echo "✅ **All E2E tests passed.** Extension loads, all 8 aggregate functions execute, 100K load test succeeded, and the stable-ABI binary loads into every DuckDB release in the compat matrix." >> "$GITHUB_STEP_SUMMARY"
               ;;
             *)
               echo "| One or more platforms | ❌ $RESULT |" >> "$GITHUB_STEP_SUMMARY"

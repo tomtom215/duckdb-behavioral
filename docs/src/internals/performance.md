@@ -5,18 +5,24 @@ All performance claims in this project are backed by measured data from
 95% confidence intervals, validated across three or more consecutive runs.
 Improvements are accepted only when confidence intervals do not overlap.
 
+The benchmarks are microbenchmarks of the Rust aggregate state (update,
+combine, finalize), not end-to-end SQL queries through DuckDB.
+
 ## Current Baseline
 
 Measured on the development machine. Absolute numbers vary by hardware; relative
-improvements and algorithmic scaling are hardware-independent.
+improvements and algorithmic scaling are hardware-independent. These are the
+PERF.md Session 15 headline numbers, recorded before v0.8.0 and not
+re-measured since (PERF.md Session 18 measured the cost of the v0.8.0
+correctness changes on selected benchmarks).
 
 ### Headline Numbers
 
-| Function | Scale | Wall Clock | Throughput |
+| Benchmark | Scale | Wall Clock | Throughput |
 |---|---|---|---|
-| `sessionize` | 1 billion | 1.20 s | 830 Melem/s |
-| `retention` (combine) | 100 million | 274 ms | 365 Melem/s |
-| `window_funnel` | 100 million | 791 ms | 126 Melem/s |
+| `sessionize_update` | 1 billion | 1.20 s | 830 Melem/s |
+| `retention_combine` | 100 million | 274 ms | 365 Melem/s |
+| `window_funnel_finalize` | 100 million | 791 ms | 126 Melem/s |
 | `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
 | `sequence_count` | 100 million | 1.18 s | 85 Melem/s |
 | `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
@@ -49,7 +55,8 @@ s = pattern steps.
 
 ## Optimization History
 
-Fifteen engineering sessions have produced the current performance profile. Each
+`PERF.md` records the optimization sessions (numbered from Session 1 to
+Session 18) that produced the current performance profile. Each
 optimization below was measured independently with before/after Criterion data
 and non-overlapping confidence intervals (except where noted as negative results).
 
@@ -85,13 +92,14 @@ matching (advance pattern first) reduced complexity to O(n * pattern_len).
 
 | Function | Scale | Before | After | Speedup |
 |---|---|---|---|---|
-| `sequence_match` | 100 events | 750 ns | 454 ns | 1.76x |
-| `sequence_match` | 1,000,000 events | 4.43 s | 2.31 ms | 1,961x |
+| `sequence_match` | 100 events | 750 ns | 427 ns | 1.76x |
+| `sequence_match` | 1,000,000 events | 4.43 s | 2.23 ms | 1,961x |
 
 ### Billion-Row Benchmarks
 
 Expanded benchmarks to 100M for event-collecting functions and 1B for O(1)-state
-functions. Validated that all functions scale as documented with no hidden
+functions (PERF.md Session 4; the `retention_combine` benchmark has since been
+capped at 100M, so only `sessionize_update` still runs at 1B). Validated that all functions scale as documented with no hidden
 bottlenecks at extreme scale.
 
 | Function | Scale | Wall Clock | Throughput |
@@ -111,9 +119,8 @@ three new `window_funnel` modes (`strict_increase`, `strict_once`,
 
 ### Presorted Detection + 32-Condition Support
 
-Added an O(n) `is_sorted` check before sorting. When events arrive in timestamp
-order (the common case for `ORDER BY` queries), the O(n log n) sort is skipped
-entirely. The O(n) overhead for unsorted input is negligible.
+Added an O(n) `is_sorted` check before sorting. When events already arrive in
+timestamp order, the O(n log n) sort is skipped entirely. The O(n) overhead for unsorted input is negligible.
 
 Also expanded condition support from `u8` (8 conditions) to `u32` (32
 conditions). This was a zero-cost change: the `Event` struct remains 16 bytes
@@ -121,8 +128,9 @@ due to alignment padding from the `i64` field.
 
 ### Negative Results
 
-Three optimization hypotheses were tested and all produced negative results.
-These are documented to prevent redundant investigation:
+Session 7 measured two optimization hypotheses that produced negative results
+and ruled out a third without implementing it. These are documented to prevent
+redundant investigation:
 
 - **LSD Radix Sort**: 8-bit radix, 8 passes. Measured 4.3x slower at 100M
   elements. The scatter pattern has poor cache locality for 16-byte structs.
@@ -156,7 +164,7 @@ struct size from 40 to 32 bytes and enabling O(1) clone via reference counting.
 
 | Function | Scale | Improvement |
 |---|---|---|
-| `sequence_next_node` update+finalize | all scales | 2.1x-5.8x |
+| `sequence_next_node` update+finalize | all scales | 1.8x-5.8x |
 | `sequence_next_node` combine | all scales | 2.8x-6.4x |
 
 A string pool attempt (`PooledEvent` with `Copy` semantics, 24 bytes) was
@@ -170,7 +178,7 @@ Also added a realistic cardinality benchmark using a pool of 100 distinct
 
 ### E2E Validation + Custom C Entry Point
 
-Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time (now 470) missed:
+Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time (now 547) missed:
 
 1. **SEGFAULT on extension load**: `extract_raw_connection` used incorrect
    pointer arithmetic. Replaced with a custom C entry point
@@ -187,7 +195,7 @@ Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time
    time.
 
 No performance optimization targets. 11 E2E tests added against real DuckDB
-v1.5.5 CLI.
+v1.4.4 CLI.
 
 ### NFA Fast Paths
 
@@ -207,7 +215,7 @@ Two Criterion-validated optimizations for the NFA pattern executor:
 |---|---|---|
 | `sequence_count` | 100-1M events | 33-47% (NFA reusable stack) |
 | `sequence_count` | 100-1M events | 39-40% additional (fast-path linear scan) |
-| `sequence_count` | 100-1M events | 56-61% combined improvement |
+| `sequence_count` | 1K-1M events | 56-60% combined improvement |
 
 A first-condition pre-check was tested and produced negative results (0-8%
 regression). The NFA already handles non-matching starts efficiently (~5ns per
@@ -218,21 +226,23 @@ check), so the extra branch in the hot loop costs more than it saves. Reverted.
 | Benchmark | Function | Input Sizes |
 |---|---|---|
 | `sessionize_update` | `sessionize` | 100 to 1 billion |
-| `sessionize_combine` | `sessionize` | 100 to 1 million |
+| `sessionize_combine` | `sessionize` | 100 to 100 million |
 | `retention_update` | `retention` | 4, 8, 16, 32 conditions |
-| `retention_combine` | `retention` | 100 to 1 billion |
+| `retention_combine` | `retention` | 100 to 100 million |
 | `window_funnel_finalize` | `window_funnel` | 100 to 100 million |
 | `window_funnel_combine` | `window_funnel` | 100 to 1 million |
+| `window_funnel_events_finalize` | `window_funnel_events` | 10,000 to 100 million |
 | `sequence_match` | `sequence_match` | 100 to 100 million |
 | `sequence_count` | `sequence_count` | 100 to 100 million |
 | `sequence_combine` | `sequence_*` | 100 to 1 million |
+| `sequence_match_time_constraint` | `sequence_match` | 100,000 and 1 million |
 | `sequence_match_events` | `sequence_match_events` | 100 to 100 million |
 | `sequence_match_events_combine` | `sequence_match_events` | 100 to 1 million |
-| `sort_events` | (isolated) | 100 to 100 million |
+| `sort_events` | (isolated; reverse-ordered timestamps with jitter) | 100 to 100 million |
 | `sort_events_presorted` | (isolated) | 100 to 100 million |
 | `sequence_next_node` | `sequence_next_node` | 100 to 10 million |
 | `sequence_next_node_combine` | `sequence_next_node` | 100 to 1 million |
-| `sequence_next_node_realistic` | `sequence_next_node` | 1,000 to 1 million |
+| `sequence_next_node_realistic` | `sequence_next_node` | 100 to 10 million |
 
 ## Reproduction
 
@@ -255,8 +265,8 @@ the data.
 ## Methodology
 
 - **Framework**: Criterion.rs 0.8, 100 samples per benchmark, 95% CI
-- **Large-scale benchmarks**: 10 samples with 60-second measurement time for
-  100M and 1B element counts
+- **Large-scale benchmarks**: reduced sample counts and longer measurement
+  times for 100M and 1B element counts
 - **Validation**: Every claim requires three consecutive runs with non-overlapping
   confidence intervals
 - **Negative results**: Documented with the same rigor as positive results,

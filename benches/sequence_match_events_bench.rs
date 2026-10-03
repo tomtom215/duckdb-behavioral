@@ -5,7 +5,7 @@
 //!
 //! Measures update + finalize throughput at multiple input sizes.
 //! Uses `finalize_events()` which returns `Vec<i64>` of matched
-//! condition timestamps via the timestamp-collecting NFA variant.
+//! condition timestamps (pattern `(?1).*(?2).*(?3)`, the linear fast path).
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
 use behavioral::common::event::Event;

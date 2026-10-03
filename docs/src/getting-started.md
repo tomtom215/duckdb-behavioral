@@ -30,29 +30,27 @@ platform where Rust and DuckDB are available.
 **Prerequisites:**
 
 - Rust 1.87 or later (`rustup` recommended)
-- A C compiler (gcc, clang, or MSVC -- needed for DuckDB system bindings)
-- DuckDB CLI v1.5.5 (for running queries)
+- A C toolchain/linker (gcc or clang) for linking the `cdylib`
+- Python 3 and `make` (for `make configure release`, which stamps the metadata footer)
+- DuckDB CLI v1.3.2 or later (for running queries; CI checks v1.3.2, v1.4.4, v1.5.0 and v1.5.6)
 
 **Build steps:**
 
 ```bash
-# Clone the repository
-git clone https://github.com/tomtom215/duckdb-behavioral.git
+# Clone the repository (with the extension-ci-tools submodule)
+git clone --recurse-submodules https://github.com/tomtom215/duckdb-behavioral.git
 cd duckdb-behavioral
 
-# Build in release mode (required for loading into DuckDB)
-cargo build --release
+# Build in release mode and append the DuckDB metadata footer
+make configure release
 ```
 
-The loadable extension will be produced at:
+This produces `build/release/behavioral.duckdb_extension`, ready to `LOAD`.
 
-- **Linux**: `target/release/libbehavioral.so`
-- **macOS**: `target/release/libbehavioral.dylib`
-
-**Preparing the extension for loading:**
-
-DuckDB loadable extensions require metadata appended to the binary. The
-repository includes the necessary tooling:
+`cargo build --release` alone produces `target/release/libbehavioral.so`
+(`.dylib` on macOS), which DuckDB refuses to load: it only accepts files ending
+in `.duckdb_extension` that carry the metadata footer. To stamp the footer by
+hand instead of using `make`:
 
 ```bash
 # Initialize the submodule (first time only)
@@ -64,12 +62,18 @@ cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.5 -ev v0.9.1 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
   -o /tmp/behavioral.duckdb_extension
 ```
 
 > **Platform note:** Replace `linux_amd64` with your platform identifier
 > (`linux_arm64`, `osx_amd64`, `osx_arm64`) and `.so` with `.dylib` on macOS.
+>
+> **Version note:** `-dv v1.2.0` is the DuckDB *C API* version, not a DuckDB
+> release. The extension uses only the stable C API, so the default ABI type
+> (`C_STRUCT`) applies and one build loads into any DuckDB release whose C API
+> is v1.2.0 or newer. Do not pass `--abi-type C_STRUCT_UNSTABLE`: that pins the
+> binary to the single release named by `-dv`.
 
 ---
 
@@ -103,13 +107,15 @@ duckdb -unsigned
 Then inside the DuckDB prompt:
 
 ```sql
+LOAD 'build/release/behavioral.duckdb_extension';  -- from `make configure release`
+-- or, if you stamped the footer by hand:
 LOAD '/tmp/behavioral.duckdb_extension';
 ```
 
 #### One-liner
 
 ```bash
-duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT 'behavioral loaded';"
+duckdb -unsigned -c "LOAD 'build/release/behavioral.duckdb_extension'; SELECT behavioral_version();"
 ```
 
 #### From a DuckDB Client Library
@@ -121,9 +127,10 @@ conn = duckdb.connect(config={"allow_unsigned_extensions": "true"})
 conn.execute("LOAD '/tmp/behavioral.duckdb_extension'")
 ```
 
-Once loaded, all eight functions are available in the current session:
-`sessionize`, `retention`, `window_funnel`, `sequence_match`,
-`sequence_count`, `sequence_match_events`, and `sequence_next_node`.
+Once loaded, all eight aggregate functions are available in the current
+session: `sessionize`, `retention`, `window_funnel`, `window_funnel_events`,
+`sequence_match`, `sequence_count`, `sequence_match_events`, and
+`sequence_next_node`, plus the `behavioral_version()` scalar.
 
 ---
 
@@ -132,9 +139,11 @@ Once loaded, all eight functions are available in the current session:
 Run these minimal queries to confirm each function category is working:
 
 ```sql
--- Sessionize: should return session ID 1
-SELECT sessionize(TIMESTAMP '2024-01-01 10:00:00', INTERVAL '30 minutes')
-  OVER () as session_id;
+-- Sessionize: should return session IDs 1, 1, 2 (the 50-minute gap starts a new session)
+SELECT ts, sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) AS session_id
+FROM (VALUES (TIMESTAMP '2024-01-01 10:00:00'),
+             (TIMESTAMP '2024-01-01 10:10:00'),
+             (TIMESTAMP '2024-01-01 11:00:00')) AS t(ts);
 
 -- Retention: should return [true, false]
 SELECT retention(true, false);
@@ -142,12 +151,16 @@ SELECT retention(true, false);
 -- Window funnel: should return 1
 SELECT window_funnel(INTERVAL '1 hour', TIMESTAMP '2024-01-01', true, false);
 
--- Sequence match: should return true
-SELECT sequence_match('(?1).*(?2)', TIMESTAMP '2024-01-01', true, true);
-
--- Sequence count: should return 1
-SELECT sequence_count('(?1).*(?2)', TIMESTAMP '2024-01-01', true, true);
+-- Sequence match / count over two events: should return true and 1
+SELECT sequence_match('(?1).*(?2)', ts, a, b) AS matched,
+       sequence_count('(?1).*(?2)', ts, a, b) AS cnt
+FROM (VALUES (TIMESTAMP '2024-01-01 10:00:00', true, false),
+             (TIMESTAMP '2024-01-01 10:05:00', false, true)) AS t(ts, a, b);
 ```
+
+A single event cannot fill two pattern steps, so
+`sequence_match('(?1).*(?2)', TIMESTAMP '2024-01-01', true, true)` returns
+`false` (and `sequence_count` returns `0`).
 
 You can also verify all functions registered correctly by querying DuckDB's
 function catalog:
@@ -215,7 +228,9 @@ ORDER BY user_id, event_time;
 
 **What to expect:** User 1 has a single session (all events within 30 minutes).
 User 2 has two sessions (the 3h 40m gap between 10:20 and 14:00 starts a new
-session). User 3 has three sessions (gaps between 12:00 and the next day).
+session). User 3 has two sessions: the three events on Jan 15 are 30 minutes
+apart, which does not exceed the threshold, and the overnight gap before
+Jan 16 09:00 starts session 2.
 
 ### Step 3: Analyze the Conversion Funnel
 
@@ -278,9 +293,21 @@ GROUP BY user_id
 ORDER BY user_id;
 ```
 
-**What to expect:** User 1 goes to Cart (add_to_cart on the Product page).
-The function returns the page value of the event immediately following the
-matched Home -> Product sequence.
+**What to expect:**
+
+| user_id | next_page_after_product |
+|---|---|
+| 1 | Product |
+| 2 | Product |
+| 3 | NULL |
+
+The function returns the `page` value of the event immediately following the
+matched Home -> Product sequence. For users 1 and 2 that is the add_to_cart
+event, which happened on the Product page. With `'first_match'`, the anchor is
+the first event satisfying the base condition and `event1` (the first Home
+view); the chain must match consecutive events. User 3's first Home view is
+followed by Blog, so the chain fails, and it is not retried at the later Home
+view: the result is NULL.
 
 ---
 
@@ -290,19 +317,19 @@ matched Home -> Product sequence.
 
 **"file was built for DuckDB C API version '...' but we can only load extensions built for DuckDB C API '...'"**
 
-The extension is stamped with the DuckDB release version it was built against
-(`v1.5.5`). You must use a DuckDB CLI version that matches. Check your version
-with:
+The extension declares the minimum DuckDB C API version it needs (`v1.2.0`);
+your DuckDB is older than that. Check your version with:
 
 ```bash
 duckdb --version
 ```
 
-If you see a different version, either install DuckDB v1.5.5 or rebuild the
-extension against your DuckDB version (this requires updating the
-`libduckdb-sys` dependency in `Cargo.toml`).
+**"The file was built specifically for DuckDB version '...'"**
 
-**"Extension ... is not signed!"**
+The binary was stamped `C_STRUCT_UNSTABLE`, which pins it to one DuckDB
+release. Re-append the metadata as shown above, without `--abi-type`.
+
+**"... could not be loaded because its signature is either missing or invalid and unsigned extensions are disabled by configuration."**
 
 This only applies to locally-built extensions. If you installed via
 `INSTALL behavioral FROM community`, the extension is already signed and
@@ -324,17 +351,20 @@ SET allow_unsigned_extensions = true;
 conn = duckdb.connect(config={"allow_unsigned_extensions": "true"})
 ```
 
-**"IO Error: Cannot open file"**
+**"IO Error: Extension ... not found."**
 
 The path to the extension must be an absolute path or a path relative to the
 DuckDB working directory. Verify the file exists:
 
 ```bash
-ls -la /tmp/behavioral.duckdb_extension
+ls -la build/release/behavioral.duckdb_extension
 ```
 
-If you skipped the metadata step, the file may exist but fail to load. Make
-sure you ran `append_extension_metadata.py` after copying the built library.
+**"DuckDB extensions are files ending with '.duckdb_extension', loading different files is not possible"**
+
+You pointed `LOAD` at the raw `libbehavioral.so`/`.dylib`. Load the stamped
+`build/release/behavioral.duckdb_extension` from `make configure release`, or
+copy the library and run `append_extension_metadata.py` as shown above.
 
 **Platform mismatch**
 
@@ -356,9 +386,9 @@ WHERE function_name LIKE 'session%'
    OR function_name LIKE 'sequence%';
 ```
 
-All eight functions should appear. If some are missing, this may indicate a
-version mismatch between the extension and DuckDB. Rebuild the extension from
-source against the DuckDB version you are running.
+All eight aggregate functions should appear. If some are missing, check that
+you loaded the current build (`SELECT behavioral_version();`) and that your
+DuckDB is v1.3.2 or newer.
 
 ### Query errors
 
@@ -372,10 +402,12 @@ Common causes:
 - **Using INTEGER instead of INTERVAL:** The window/gap parameter for
   `sessionize` and `window_funnel` must be a DuckDB `INTERVAL`, not an integer.
   Use `INTERVAL '1 hour'`, not `3600`.
-- **Fewer than 2 boolean conditions:** All condition-based functions require at
-  least 2 boolean parameters.
-- **More than 32 boolean conditions:** The maximum is 32, matching ClickHouse's
-  limit.
+- **Too few boolean conditions:** `retention`, `sequence_match`,
+  `sequence_count`, and `sequence_match_events` require at least 2;
+  `window_funnel` and `window_funnel_events` at least 1; `sequence_next_node`
+  a base condition plus at least 1 event condition.
+- **More than 32 conditions:** The maximum is 32 (for `sequence_next_node`,
+  32 event conditions after the base condition).
 
 **"NULL results when expecting values"**
 
@@ -391,23 +423,28 @@ Common causes:
 Install a C compiler. On Ubuntu/Debian: `sudo apt install build-essential`.
 On macOS: `xcode-select --install`.
 
-**"failed to run custom build command for libduckdb-sys"**
+**Test build fails to link against libduckdb**
 
-The `libduckdb-sys` crate needs a C compiler and CMake to build DuckDB from
-source (for the test suite). Install CMake: `sudo apt install cmake` (Linux)
-or `brew install cmake` (macOS).
+The `duckdb` dev-dependency is built without the `bundled` feature, so a bare
+`cargo test` has no DuckDB library to link. Set `DUCKDB_DOWNLOAD_LIB=1` to have
+`libduckdb-sys` download a prebuilt libduckdb (cached in
+`target/duckdb-download/`), or point `DUCKDB_LIB_DIR` (plus `LD_LIBRARY_PATH`
+on Linux) at an existing one. Neither is needed for `cargo build --release`.
 
 ---
 
 ## Running Tests
 
-The extension includes 486 unit tests and 1 doc-test:
+The extension includes 547 unit tests, 28 in-process integration tests
+(`tests/extension_load.rs`), and 1 doc-test:
 
 ```bash
-cargo test
+DUCKDB_DOWNLOAD_LIB=1 cargo test
 ```
 
-All tests run in under one second. Zero clippy warnings are enforced:
+The integration tests build the release `cdylib`, stamp it, and `LOAD` it into
+an in-memory DuckDB, so a cold run takes about 20 seconds. Zero clippy
+warnings are enforced:
 
 ```bash
 cargo clippy --all-targets
@@ -415,8 +452,9 @@ cargo clippy --all-targets
 
 ## Running Benchmarks
 
-Criterion.rs benchmarks cover all functions at scales from 100 to 1 billion
-elements:
+Criterion.rs benchmarks cover the Rust state of every aggregate function, at
+scales from 100 elements up to 1 billion (`sessionize_update`), 100 million
+(most others), or 10 million (`sequence_next_node`):
 
 ```bash
 # Run all benchmarks
@@ -437,14 +475,17 @@ previous runs by Criterion.
 src/
   lib.rs                  # Entry point via quack_rs::entry_point_v2! macro
   common/
+    mod.rs
     event.rs              # Shared Event type (16-byte bitmask)
     timestamp.rs          # Interval-to-microseconds conversion
   pattern/
+    mod.rs
     parser.rs             # Recursive descent pattern parser
-    executor.rs           # NFA-based pattern matcher with fast paths
+    executor.rs           # Pattern matcher: fast paths + feasibility/greedy matcher
+    reference_nfa.rs      # Test-only: original backtracking search (oracle)
   sessionize.rs           # Session boundary tracking
   retention.rs            # Bitmask-based cohort retention
-  window_funnel.rs        # Greedy forward scan with mode flags
+  window_funnel.rs        # Port of ClickHouse windowFunnel, mode flags
   sequence.rs             # Pattern matching state management
   sequence_next_node.rs   # Next event value after pattern match
   ffi/
@@ -452,9 +493,11 @@ src/
     sessionize.rs         # Sessionize FFI callbacks
     retention.rs          # Retention FFI callbacks
     window_funnel.rs      # Window funnel FFI callbacks
+    window_funnel_events.rs   # Window funnel events FFI callbacks
     sequence.rs           # Sequence match/count FFI callbacks
     sequence_match_events.rs  # Sequence match events FFI callbacks
     sequence_next_node.rs     # Sequence next node FFI callbacks
+    version.rs            # behavioral_version() scalar
 ```
 
 For a detailed discussion of the architecture, see

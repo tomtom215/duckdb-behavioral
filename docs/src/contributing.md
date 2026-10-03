@@ -7,13 +7,14 @@ Guidelines for contributing to `duckdb-behavioral`.
 ### Prerequisites
 
 - Rust 1.87+ (the project's MSRV)
-- A C compiler (for DuckDB system bindings)
-- DuckDB CLI v1.5.5 (for E2E testing)
+- A C toolchain/linker (gcc or clang)
+- Python 3 and `make` (for `make configure release`)
+- DuckDB CLI v1.3.2 or later for E2E testing (CI checks v1.3.2, v1.4.4, v1.5.0, v1.5.6)
 
 ### Building
 
 ```bash
-git clone https://github.com/tomtom215/duckdb-behavioral.git
+git clone --recurse-submodules https://github.com/tomtom215/duckdb-behavioral.git
 cd duckdb-behavioral
 cargo build
 ```
@@ -21,9 +22,12 @@ cargo build
 ### Running Tests
 
 ```bash
-# Unit tests (470 tests + 1 doc-test, runs in <1 second).
-# DUCKDB_DOWNLOAD_LIB=1 links a prebuilt libduckdb instead of compiling DuckDB from source.
-cargo test
+# 547 unit tests + 28 in-process integration tests + 1 doc-test.
+# DUCKDB_DOWNLOAD_LIB=1 links a prebuilt libduckdb (the `duckdb` dev-dependency
+# has no `bundled` feature, so a bare `cargo test` fails to link). The unit
+# tests take about 2 s; the integration tests build and LOAD the release
+# cdylib, 20-35 s when it must be rebuilt.
+DUCKDB_DOWNLOAD_LIB=1 cargo test
 
 # Clippy (zero warnings required)
 cargo clippy --all-targets
@@ -47,12 +51,15 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
 - **Pure Rust core**: Business logic in top-level modules (`sessionize.rs`,
   `retention.rs`, etc.) with zero FFI dependencies.
 - **FFI bridge via quack-rs SDK**: DuckDB C API registration confined to
-  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.15.0
+  `src/ffi/`, using [quack-rs](https://crates.io/crates/quack-rs) v0.18.0
   for safe builders (including `returns_logical(LogicalType)` for
   `LIST(T)` returns), state management (`FfiState<T>`), vector I/O
   (`VectorReader`/`VectorWriter`), LIST output (`ListVector`), and type
-  construction (`LogicalType::list()`). Every `unsafe` block has a `// SAFETY:`
-  comment.
+  construction (`LogicalType::list()`). The aggregate update, combine, and
+  finalize callbacks are generated with quack-rs's
+  `aggregate_{update,combine,finalize}_callback!` macros, which turn a panic
+  into a SQL error (the release profile keeps `panic = "unwind"` for this).
+  Every callback's `unsafe` block has a `// SAFETY:` comment.
 - **All public items documented**: Functions, structs, and modules must have
   doc comments.
 
@@ -65,6 +72,8 @@ configuration and allowed exceptions (FFI callbacks, analytics math casts).
    - Use `AggregateFunctionSetBuilder::new("name").overloads(...)` for registration
      (automatically handles function-set-name per overload).
    - Use `FfiState::<NewFunctionState>::size_callback`/`init_callback`/`destroy_callback`.
+   - Write update/combine/finalize with `quack_rs::aggregate_update_callback!`,
+     `aggregate_combine_callback!`, and `aggregate_finalize_callback!`.
    - Use `VectorReader` for input (`read_bool`, `read_str`, `read_i64`, `read_interval`).
    - Use `VectorWriter` for output (`write_i32`, `write_bool`, `write_varchar`, `set_null`).
    - For `LIST(T)` output, use `.returns_logical(LogicalType::list(TypeId::...))` on the
@@ -96,19 +105,26 @@ boundary, DuckDB's data chunk format, state lifecycle management, and the
 extension loading mechanism. Both levels are mandatory.
 
 ```bash
-# Build release
-cargo build --release
+# Build release and stamp the metadata footer
+# (-> build/release/behavioral.duckdb_extension)
+make configure release
+duckdb -unsigned -c "LOAD 'build/release/behavioral.duckdb_extension'; SELECT ..."
 
-# Copy and append metadata
+# Or by hand: copy and append metadata (stable C API v1.2.0, default ABI type C_STRUCT)
+cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.5.5 -ev v0.9.1 --abi-type C_STRUCT_UNSTABLE \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
   -o /tmp/behavioral.duckdb_extension
-
-# Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
+
+# SQL logic tests in test/sql/
+make test_release
 ```
+
+DuckDB loads only `.duckdb_extension` files with the metadata footer; it
+refuses the raw `libbehavioral.so`/`.dylib`.
 
 ## Benchmark Protocol
 
@@ -143,7 +159,7 @@ cargo bench -- sequence_match_events
 
 1. Create a feature branch from `main`.
 2. Make changes following the code style and testing expectations above.
-3. Ensure all checks pass: `cargo test`, `cargo clippy --all-targets`,
+3. Ensure all checks pass: `DUCKDB_DOWNLOAD_LIB=1 cargo test`, `cargo clippy --all-targets`,
    `cargo fmt -- --check`.
 4. If performance-related, include Criterion benchmark data with confidence
    intervals.

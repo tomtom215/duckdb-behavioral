@@ -12,8 +12,10 @@ understand the depth and rigor of this project.
 `duckdb-behavioral` is a loadable extension for [DuckDB](https://duckdb.org/)
 that implements the complete set of behavioral analytics functions found in
 [ClickHouse](https://clickhouse.com/). The extension is written entirely in
-Rust, compiles to a shared library (`.so` / `.dylib`), and integrates with
-DuckDB via the C extension API.
+Rust, compiles to a shared library (`.so` / `.dylib`) that is stamped with
+DuckDB's metadata footer as a `.duckdb_extension` file, and integrates with
+DuckDB via the stable C extension API (C API v1.2.0, loadable into DuckDB
+1.3.2 and later).
 
 The project spans several distinct engineering disciplines:
 
@@ -21,9 +23,9 @@ The project spans several distinct engineering disciplines:
 |---|---|
 | **Systems programming** | Rust FFI, raw C API callbacks, memory-safe aggregate state management, `unsafe` code confinement |
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
-| **Algorithm design** | NFA-based pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
+| **Algorithm design** | Feasibility-then-greedy pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 486 unit tests, 16 in-process integration tests (real extension load), 76 E2E SQL queries across 8 test files, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate), zero clippy warnings under pedantic lints |
+| **Software quality** | 547 unit tests, 28 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -57,6 +59,7 @@ graph TB
         FQ[sequence.rs]
         FE[sequence_match_events.rs]
         FN[sequence_next_node.rs]
+        FV[version.rs]
     end
 
     subgraph "Business Logic — Pure Safe Rust"
@@ -77,7 +80,7 @@ graph TB
 
     DDB -->|LOAD extension| EP
     EP --> REG
-    REG --> FS & FR & FW & FWE & FQ & FE & FN
+    REG --> FS & FR & FW & FWE & FQ & FE & FN & FV
     SEG -->|init/update/combine/finalize| FS & FR & FW & FWE & FQ & FE & FN
     FS --> SS
     FR --> SR
@@ -102,6 +105,7 @@ graph TB
     style FQ fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FE fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style FN fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
+    style FV fill:#e0e0e0,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style SS fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style SR fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style SW fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -115,31 +119,37 @@ graph TB
 
 - **Business logic** (`src/*.rs`, `src/common/`, `src/pattern/`): Pure safe
   Rust. No FFI types, no `unsafe` blocks. All algorithmic work -- pattern
-  parsing, NFA execution, funnel search, retention bitmask logic -- lives here.
-  This layer is independently testable via `cargo test` with no DuckDB
-  dependency.
+  parsing, pattern matching, funnel search, retention bitmask logic -- lives here.
+  Its unit tests exercise Rust structs directly, without a DuckDB
+  connection.
 
-- **FFI bridge** (`src/ffi/`): Contains all `unsafe` code. Each function has a
-  dedicated FFI module implementing the five DuckDB aggregate callbacks
-  (`state_size`, `init`, `update`, `combine`, `finalize`). Every `unsafe` block
-  has a `// SAFETY:` comment documenting the invariants it relies on.
+- **FFI bridge** (`src/ffi/`, 9 files): Contains all `unsafe` code. Each
+  aggregate has an FFI module wiring the DuckDB aggregate callbacks
+  (`state_size`, `init`, `update`, `combine`, `finalize`, `destroy`); `version.rs`
+  registers the `behavioral_version()` scalar. The update, combine, and
+  finalize callbacks are generated with quack-rs's
+  `aggregate_{update,combine,finalize}_callback!` macros, which catch a panic
+  and report it as a SQL error (the release profile uses `panic = "unwind"` so
+  this guard works). Every callback's `unsafe` block has a `// SAFETY:` comment
+  documenting the invariants it relies on.
 
 - **Entry point** (`src/lib.rs`): Uses the `quack_rs::entry_point_v2!` macro
   with the `Connection`/`Registrar` trait pattern. Functions are registered via
-  `con.register_aggregate_set(builder)`. This replaces ~80 lines of hand-rolled
+  `con.register_aggregate_set(builder)` (variadic aggregates) and
+  `con.register_aggregate(builder)` (`sessionize`). This replaces ~80 lines of hand-rolled
   unsafe code and eliminates struct layout fragility across DuckDB versions.
 
 ### Why This Matters
 
 This architecture enables:
 
-- **Independent unit testing**: Business logic tests run in < 1 second with no
-  DuckDB instance. All 486 tests exercise Rust structs directly.
+- **Independent unit testing**: The 547 unit tests exercise Rust structs
+  directly and run in about two seconds, without loading the extension.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
   is decoupled from the database.
 - **Auditable unsafe scope**: The `unsafe` boundary is confined to `src/ffi/`
-  (8 function modules). Reviewers can audit the safety-critical code without
+  (9 files: `mod.rs`, 7 aggregate modules, `version.rs`). Reviewers can audit the safety-critical code without
   reading the entire codebase.
 
 ---
@@ -152,9 +162,9 @@ This architecture enables:
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a', 'clusterBkg': '#f5f5f5', 'clusterBorder': '#333333'}}}%%
 graph TB
     subgraph "Complementary Test Levels"
-        L3["Mutation Testing<br/>88.4% kill rate (130/147)<br/>cargo-mutants"]
-        L2["E2E Tests (76 queries, 8 test files)<br/>Real DuckDB CLI, SQL execution<br/>Extension load, registration, results"]
-        L1["Unit Tests (486)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (29 proptest), mutation-guided (51)"]
+        L3["Mutation Testing<br/>93.9% detected (570/607, 0.10.0 audit)<br/>cargo-mutants"]
+        L2["Integration + E2E<br/>28 in-process LOAD tests<br/>8 sqllogictest files on the DuckDB CLI"]
+        L1["Unit Tests (547)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (33 proptest), mutation-guided (67)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -164,7 +174,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (486 tests)**
+**Level 1: Unit Tests (547 tests)**
 
 Organized by category within each module:
 
@@ -174,38 +184,47 @@ Organized by category within each module:
   at type boundaries (`u32::MAX`, `i64::MIN`)
 - **Combine correctness** -- empty-into-empty, empty-into-populated,
   populated-into-empty, associativity verification, configuration propagation
-- **Property-based tests (29 proptest)** -- algebraic properties required by
+- **Property-based tests (33 proptest)** -- algebraic properties required by
   DuckDB's segment tree: combine associativity, commutativity, identity element,
-  idempotency, monotonicity
-- **Mutation-testing-guided tests (51)** -- tests written specifically to kill
-  mutants that survived initial test suites
+  idempotency, monotonicity; plus two differential tests that check the
+  sequence matcher against the original backtracking search on random
+  patterns and event sets
+- **Mutation-testing-guided tests (67)** -- tests written specifically to kill
+  mutants that survived earlier test suites (51 from the v0.4.x run, 16 from
+  the 0.10.0 run)
 
-**Level 2: E2E Tests (59 SQL queries across 7 test files)**
+**Level 2: E2E Tests (8 sqllogictest files: 44 `query` + 34 `statement` directives)**
 
-Integration tests against a real DuckDB CLI instance that validate the complete
+SQL logic tests in `test/sql/*.test`, run against a real DuckDB CLI instance, that validate the complete
 chain: extension loading, function registration, SQL execution, and result
 correctness. These tests caught three critical bugs that the entire unit suite
 missed:
 
 1. A segmentation fault on extension load (incorrect pointer arithmetic)
-2. Six of seven functions silently failing to register (missing API call)
+2. Six of the seven functions that existed then silently failing to register
+   (missing API call)
 3. `window_funnel` returning incorrect results (combine not propagating
    configuration)
 
-As of quack-rs 0.14.0, this same load → register → execute chain also runs
-**in-process inside `cargo test`** (`tests/extension_load.rs`, 7 tests). It
+This same load → register → execute chain also runs **in-process inside
+`cargo test`** (`tests/extension_load.rs`, 28 tests; run with
+`DUCKDB_DOWNLOAD_LIB=1 cargo test`). It
 builds the real release `cdylib`, appends the DuckDB metadata footer, and
 `LOAD`s it via `quack_rs::testing::InMemoryDb::open_unsigned()` — so the entire
 class of FFI-registration bugs above is now caught by the regular test suite,
 not only by the CLI-based E2E job in CI.
 
-**Level 3: Mutation Testing (88.4% kill rate)**
+**Level 3: Mutation Testing (93.9% detected, 0.10.0 audit)**
 
 `cargo-mutants` systematically replaces operators, removes branches, and
-changes return values across the codebase. Of 147 generated mutants, 130
-were caught by the test suite. The 17 survivors are documented and represent
-code paths where mutations produce semantically equivalent behavior (e.g.,
-OR vs XOR on non-overlapping bitmasks).
+changes return values across the codebase. The 0.10.0 audit of the 9
+non-FFI modules detected 570 of 607 viable mutants (547 caught, 23 timed
+out); v0.4.x had caught 130 of 147. Tests were then written for the
+surviving mutants that change behaviour, and `window_funnel.rs`,
+`sequence_next_node.rs` and `pattern/parser.rs` were re-run: 320 of 342
+viable detected. The 22 remaining survivors were reviewed by hand as
+equivalent (e.g. OR vs XOR on non-overlapping bit fields, the hash function
+of a cache, a function never called for one path type).
 
 ### Key Insight
 
@@ -220,7 +239,8 @@ tests by definition cannot exercise.
 
 ### Methodology
 
-Every performance claim in this project is backed by:
+Every performance claim in this project is a Criterion microbenchmark of the
+Rust aggregate state (not an end-to-end SQL query), backed by:
 
 - **Criterion.rs benchmarks** with 95% confidence intervals
 - **Multiple runs** (minimum 3) to establish baselines
@@ -232,13 +252,15 @@ Every performance claim in this project is backed by:
 
 | Function Class | Max Benchmark Scale | Constraint |
 |---|---|---|
-| O(1) state (sessionize, retention) | **1 billion elements** | Compute-bound; no per-event memory |
+| O(1) state (`sessionize_update`) | **1 billion elements** | Compute-bound; no per-event memory |
+| O(1) state (`retention_combine`) | **100 million states** | Current bench caps at 100M (1B was measured once, in PERF.md Session 4) |
 | Event-collecting (window_funnel, sequence_*) | **100 million elements** | 1.6 GB working set at 16 bytes/event |
 | String-carrying (sequence_next_node) | **10 million elements** | 32 bytes/event with `Arc<str>` allocation |
 
 ### Optimization History
 
-Fifteen rounds of measured optimization, each following a documented protocol:
+Optimization sessions recorded in `PERF.md` (Sessions 1 through 18, with
+before/after measurements), each following a documented protocol:
 
 1. Establish baseline with 3 Criterion runs
 2. Implement one optimization per commit
@@ -253,8 +275,8 @@ Selected highlights:
 | Event bitmask (Vec\<bool\> to u32) | 5--13x | All event functions |
 | In-place combine (O(N^2) to O(N)) | Up to **2,436x** | Combine operations at 10K states |
 | NFA lazy matching (greedy to lazy) | **1,961x** | sequence_match at 1M events |
-| Arc\<str\> (String to reference counted) | 2.1--5.8x | sequence_next_node |
-| NFA fast paths (linear scan) | 39--61% | sequence_count |
+| Arc\<str\> (String to reference counted) | 1.8--5.8x | sequence_next_node |
+| NFA fast paths (linear scan) | 39--40% alone; 56--60% combined with NFA stack reuse | sequence_count, 1K--1M events |
 
 Five attempted optimizations were negative results:
 
@@ -310,8 +332,9 @@ aggregations cannot express efficiently:
 These problems are inherently large-scale. A mid-sized SaaS application
 generates millions of events per day. An e-commerce platform during a sale
 event can produce hundreds of millions of events per hour. The ability to
-process one billion sessionize events in 1.20 seconds on a single core means
-these analyses can run as interactive queries rather than batch jobs.
+update a `sessionize` state with one billion events in 1.20 seconds on a
+single core (a Criterion microbenchmark of the Rust state, not a SQL query)
+suggests these analyses can run as interactive queries rather than batch jobs.
 
 ---
 
@@ -321,11 +344,13 @@ these analyses can run as interactive queries rather than batch jobs.
 
 DuckDB's Rust crate does not provide high-level aggregate function
 registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
-SDK (v0.15.0) which wraps the raw C API with safe builders
+SDK (v0.18.0) which wraps the raw C API with safe builders
 (including `returns_logical(LogicalType)` for `LIST(T)` return types),
-state management, vector I/O, and LIST output helpers. All 7 aggregate
-functions use quack-rs builders for registration: the six variadic functions
-via `AggregateFunctionSetBuilder`, and `sessionize` via
+state management, vector I/O, LIST output helpers, and the
+`aggregate_{update,combine,finalize}_callback!` macros that turn a panic into
+a SQL error. All 8 aggregate functions use quack-rs builders for
+registration: the seven variadic functions via `AggregateFunctionSetBuilder`,
+and `sessionize` via
 `AggregateFunctionBuilder` (a single fixed signature — DuckDB windows any
 aggregate, so no window-specific registration exists).
 Each aggregate implements five callback functions:
@@ -365,15 +390,20 @@ finalize    -- Produces the final result from the accumulated state
 ```
 
 Because `duckdb_aggregate_function_set_varargs` does not exist, each function
-that accepts a variable number of boolean conditions (retention, window_funnel,
-sequence_match, sequence_count, sequence_match_events, sequence_next_node,
-window_funnel_events, behavioral_version)
-must register **31 overloads** (2--32 parameters) via a function set.
+that accepts a variable number of boolean conditions registers one overload
+per arity via a function set:
 
-### NFA Pattern Engine
+| Function | Conditions | Overloads |
+|---|---|---|
+| `retention`, `sequence_match`, `sequence_count`, `sequence_match_events` | 2--32 | 31 each |
+| `window_funnel`, `window_funnel_events` | 1--32, with and without a mode `VARCHAR` | 64 each |
+| `sequence_next_node` | base condition + 1--32 event conditions | 32 |
 
-The sequence functions use a custom NFA (Nondeterministic Finite Automaton)
-pattern engine:
+`sessionize` and the `behavioral_version()` scalar have a single signature.
+
+### Pattern Engine
+
+The sequence functions use a custom pattern engine:
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a'}}}%%
@@ -383,7 +413,7 @@ flowchart LR
     STEPS --> CLASS{Classify}
     CLASS -->|"All adjacent"| FAST1["O(n) Sliding<br/>Window"]
     CLASS -->|"Wildcard-separated"| FAST2["O(n) Linear<br/>Scan"]
-    CLASS -->|"Time constraints<br/>or mixed"| NFA["NFA<br/>Backtracking"]
+    CLASS -->|"Time constraints<br/>or mixed"| NFA["Feasibility pass +<br/>greedy walk"]
 
     style SQL fill:#e8e8e8,stroke:#333333,stroke-width:2px,color:#1a1a1a
     style PARSE fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -396,11 +426,18 @@ flowchart LR
 
 - A **recursive descent parser** that compiles pattern strings (e.g.,
   `(?1).*(?t<=3600)(?2)`) into an intermediate representation of typed steps
-- An **NFA executor** that evaluates the pattern against a sorted event stream
-  using lazy backtracking with optional time constraints
+- A **general matcher** for every other shape: one backward pass per
+  event-consuming step marks the positions from which the rest of the pattern
+  can still complete, then a forward walk takes the earliest such position at
+  each step. It returns exactly the match a lazy (`.*` matches as little as
+  possible) backtracking search finds first, in O(s · n log n) for `n` events
+  and `s` pattern steps. The extension used that backtracking search through
+  v0.9.1; it was replaced for being quadratic per group on patterns with
+  `.*` or skipping time constraints. It is kept as a test-only oracle, and
+  differential property tests check that the two agree.
 - **Fast-path classifiers** that detect common pattern shapes (adjacent
   conditions, wildcard-separated conditions) and dispatch to specialized O(n)
-  linear scans, avoiding the full NFA for the majority of real-world patterns
+  linear scans
 
 ### Combine Semantics in DuckDB's Segment Tree
 
@@ -417,17 +454,18 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 486 |
+| Unit tests | 547 |
 | Doc-tests | 1 |
-| E2E SQL queries | 76 (across 8 test files) |
+| In-process integration tests | 21 (`tests/extension_load.rs`) |
+| SQL logic tests | 8 files: 44 `query` + 34 `statement` directives |
 | Property-based tests | 29 (proptest) |
-| Mutation-guided tests | 51 |
-| Mutation kill rate | 88.4% (130/147) |
+| Mutation-guided tests | 67 |
+| Mutation kill rate | 93.9% detected (570/607 viable, 0.10.0 audit of the non-FFI modules) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
-| Unsafe block count | Confined to `src/ffi/` (8 function modules) |
+| Unsafe code | Confined to `src/ffi/` (9 files) |
 | MSRV | Rust 1.87 |
 | Criterion benchmark files | 7 |
-| Max benchmark scale | 1 billion elements |
+| Max benchmark scale | 1 billion elements (`sessionize_update`) |
 | CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Documented negative results | 5 (radix sort, branchless, string pool, compiled pattern, first-condition pre-check) |
 | ClickHouse parity | Complete (all 6 ClickHouse behavioral functions, all modes, 32 conditions) + 2 extension-only functions |
@@ -439,8 +477,8 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Layer | Technology | Purpose |
 |---|---|---|
 | Language | Rust (stable, MSRV 1.87) | Memory safety, zero-cost abstractions, `unsafe` confinement |
-| Database | DuckDB 1.5.5 | Analytical SQL engine, segment tree windowing |
-| FFI | libduckdb-sys (C API) | Raw aggregate function registration |
+| Database | DuckDB 1.5.6 (stable C API; loads into 1.3.2+) | Analytical SQL engine, segment tree windowing |
+| FFI | quack-rs 0.18.0 over libduckdb-sys 1.10506.0 (C API) | Aggregate registration, callback macros, vector I/O |
 | Benchmarking | Criterion.rs | Statistical benchmarking with confidence intervals |
 | Property testing | proptest | Algebraic property verification |
 | Mutation testing | cargo-mutants | Test suite effectiveness measurement |

@@ -27,9 +27,9 @@
 //! 1. Build the release `cdylib` (`cargo build --release --lib`), once.
 //! 2. Append the `DuckDB` extension metadata footer to the raw shared library,
 //!    producing a `.duckdb_extension` (mirrors `append_extension_metadata.py`).
-//! 3. Open `InMemoryDb::open_unsigned()`, relax the metadata-mismatch check, and
-//!    `LOAD` the artifact.
-//! 4. Run SQL covering all seven functions and assert on the results — the same
+//! 3. Open `InMemoryDb::open_unsigned()` and `LOAD` the artifact with the
+//!    metadata checks left on.
+//! 4. Run SQL covering all eight aggregate functions and assert on the results — the same
 //!    expectations encoded in `test/sql/*.test`.
 
 use std::path::{Path, PathBuf};
@@ -38,19 +38,22 @@ use std::sync::OnceLock;
 
 use quack_rs::testing::InMemoryDb;
 
-/// `DuckDB` release version this extension targets (the `-dv` metadata field for
-/// the `C_STRUCT_UNSTABLE` ABI). Kept in sync with the `Makefile` /
-/// `.github/workflows/e2e.yml`.
-const DUCKDB_VERSION: &str = "v1.5.5";
+/// Minimum `DuckDB` C API version the extension declares (the `-dv` metadata
+/// field). For the stable `C_STRUCT` ABI this is the C API version quack-rs
+/// requests at load (`quack_rs::DUCKDB_API_VERSION`), not a `DuckDB` release:
+/// any `DuckDB` whose C API is at least this version loads the binary. Kept in
+/// sync with `TARGET_DUCKDB_VERSION` in the `Makefile`.
+const DUCKDB_VERSION: &str = quack_rs::DUCKDB_API_VERSION;
 /// Extension version metadata field (`-ev`); matches `Cargo.toml`'s `version`.
 const EXTENSION_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
-/// ABI type for a quack-rs / `libduckdb-sys` C-struct extension.
-const ABI_TYPE: &str = "C_STRUCT_UNSTABLE";
+/// ABI type: the stable C API struct. The extension calls only functions in
+/// the stable prefix of `duckdb_ext_api_v1`, so it is not pinned to one
+/// `DuckDB` release (`C_STRUCT_UNSTABLE` would be).
+const ABI_TYPE: &str = "C_STRUCT";
 
-/// The `DuckDB` platform triple for the host target. With
-/// `allow_extensions_metadata_mismatch=true` the value need not match the host
-/// exactly, but we still emit the correct one so the artifact is identical to
-/// what CI ships.
+/// The `DuckDB` platform string for the host target. `DuckDB` refuses to load
+/// an extension whose platform differs from its own, and the test does not
+/// relax that check.
 const fn duckdb_platform() -> &'static str {
     match (cfg!(target_os = "macos"), cfg!(target_arch = "aarch64")) {
         (true, true) => "osx_arm64",
@@ -159,11 +162,8 @@ fn extension_path() -> &'static Path {
 /// Opens a fresh in-memory `DuckDB` with the behavioral extension loaded.
 fn load_extension() -> InMemoryDb {
     let db = InMemoryDb::open_unsigned().expect("open in-memory DuckDB (unsigned)");
-    // Locally-built artifacts carry host platform / version metadata that need
-    // not match the in-process DuckDB; relax the check (mirrors the documented
-    // `InMemoryDb::open_unsigned` workflow).
-    db.execute_batch("SET allow_extensions_metadata_mismatch=true")
-        .expect("relax metadata mismatch");
+    // No `allow_extensions_metadata_mismatch`: the footer must be one the
+    // in-process DuckDB accepts as written, exactly as a user's `LOAD` would.
     let load = format!("LOAD '{}'", extension_path().display());
     db.execute_batch(&load)
         .unwrap_or_else(|e| panic!("LOAD failed for {}: {e}", extension_path().display()));
@@ -673,11 +673,7 @@ fn sequence_next_node_direction_base_matrix() {
         run("forward", "head", "is_home"),
         vec![some("product"), some("search")]
     );
-    assert_eq!(
-        run("forward", "tail", "is_home"),
-        vec![None, None],
-        "tail = literal last event"
-    );
+    // ("forward", "tail") is an error: see sequence_next_node_rejects_end_anchored_chains.
     assert_eq!(
         run("forward", "first_match", "is_home"),
         vec![some("product"), some("search")]
@@ -687,11 +683,7 @@ fn sequence_next_node_direction_base_matrix() {
         vec![some("product"), some("search")]
     );
     // backward
-    assert_eq!(
-        run("backward", "head", "is_product"),
-        vec![None, None],
-        "head = literal first event"
-    );
+    // ("backward", "head") is an error: see sequence_next_node_rejects_end_anchored_chains.
     assert_eq!(
         run("backward", "tail", "is_product"),
         vec![None, some("search")]
@@ -811,4 +803,465 @@ fn window_funnel_as_windowed_aggregate() {
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(running, vec![1, 2, 3]);
+}
+
+/// The shipped release profile keeps panic containment working: every
+/// aggregate callback runs under quack-rs's `catch_unwind` guard, which
+/// `panic = "abort"` makes inert (a panic would then kill the user's `DuckDB`
+/// process instead of failing the query). Checked with quack-rs's own
+/// validator against this crate's `[profile.release]`.
+#[test]
+fn release_profile_keeps_panic_guards_effective() {
+    let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+        .expect("read Cargo.toml");
+    let section: Vec<(&str, &str)> = manifest
+        .lines()
+        .skip_while(|l| l.trim() != "[profile.release]")
+        .skip(1)
+        .take_while(|l| !l.trim_start().starts_with('['))
+        .filter_map(|l| {
+            let l = l.split('#').next()?.trim();
+            let (k, v) = l.split_once('=')?;
+            Some((k.trim(), v.trim().trim_matches('"')))
+        })
+        .collect();
+    let get = |key: &str| {
+        section
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map_or("", |(_, v)| *v)
+    };
+    let check = quack_rs::validate::validate_release_profile(
+        get("panic"),
+        get("lto"),
+        get("opt-level"),
+        get("codegen-units"),
+    )
+    .unwrap_or_else(|e| panic!("[profile.release] rejected: {e}"));
+    assert!(check.is_fully_optimized(), "{check:?}");
+}
+
+/// A NULL window skips that row, like a NULL timestamp, for both funnel
+/// functions. It used to leave the window at its zero default, so
+/// `window_funnel(NULL, ..)` returned 1 (a 0-length funnel) instead of
+/// ignoring the row.
+#[test]
+fn null_window_skips_the_row() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE nw(ts TIMESTAMP, event VARCHAR, w INTERVAL);
+         INSERT INTO nw VALUES
+            ('2024-01-01 00:00:00', 'view',     NULL),
+            ('2024-01-01 00:05:00', 'cart',     NULL),
+            ('2024-01-01 00:10:00', 'purchase', NULL);",
+    )
+    .unwrap();
+    let funnel = |window: &str| -> i32 {
+        db.query_one(&format!(
+            "SELECT window_funnel({window}, ts, event='view', event='cart', \
+                event='purchase') FROM nw"
+        ))
+        .unwrap()
+    };
+    let events = |window: &str| -> String {
+        db.query_one(&format!(
+            "SELECT window_funnel_events({window}, ts, event='view', event='cart', \
+                event='purchase')::VARCHAR FROM nw"
+        ))
+        .unwrap()
+    };
+    // Every row has a NULL window: every row is skipped.
+    assert_eq!(funnel("w"), 0);
+    assert_eq!(funnel("NULL::INTERVAL"), 0);
+    assert_eq!(events("w"), "[]");
+
+    // Only the 'cart' row has a NULL window: it is skipped, so the funnel
+    // stops after 'view' even though 'purchase' is within the window.
+    db.execute_batch("UPDATE nw SET w = INTERVAL '1 hour' WHERE event <> 'cart';")
+        .unwrap();
+    assert_eq!(funnel("w"), 1);
+    assert_eq!(events("w"), "['2024-01-01 00:00:00']");
+}
+
+/// Sequence pattern defects found by differential testing against `ClickHouse`
+/// 26.9.8.3, checked through the loaded extension.
+#[test]
+fn sequence_pattern_clickhouse_parity_fixes() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE sp(ts TIMESTAMP, c1 BOOLEAN, c2 BOOLEAN, c3 BOOLEAN);
+         INSERT INTO sp VALUES
+            ('2020-01-01 00:00:01', true,  false, false),
+            ('2020-01-01 00:00:02', false, false, true),
+            ('2020-01-01 00:00:03', false, true,  false),
+            ('2020-01-01 00:00:04', false, false, true);",
+    )
+    .unwrap();
+    // Adjacent conditions next to `.*` keep their adjacency (ClickHouse: 0, 0).
+    let matched: bool = db
+        .query_one("SELECT sequence_match('(?1)(?2).*(?3)', ts, c1, c2, c3) FROM sp")
+        .unwrap();
+    let count: i64 = db
+        .query_one("SELECT sequence_count('(?1)(?2).*(?3)', ts, c1, c2, c3) FROM sp")
+        .unwrap();
+    assert!(!matched);
+    assert_eq!(count, 0);
+    // A pattern matching zero events terminates (ClickHouse counts 4 here).
+    let count: i64 = db
+        .query_one("SELECT sequence_count('.*', ts, c1, c2, c3) FROM sp")
+        .unwrap();
+    assert_eq!(count, 4);
+    // Out-of-range condition numbers and anchorless time constraints are errors.
+    for (sql, needle) in [
+        (
+            "SELECT sequence_match('(?1)(?4)', ts, c1, c2, c3) FROM sp",
+            "condition (?4) is out of range",
+        ),
+        (
+            "SELECT sequence_match_events('(?1)(?4)', ts, c1, c2, c3) FROM sp",
+            "condition (?4) is out of range",
+        ),
+        (
+            "SELECT sequence_count('(?t>0)(?1)', ts, c1, c2, c3) FROM sp",
+            "time constraint must follow an event condition",
+        ),
+    ] {
+        let err = db
+            .query_one::<i64>(sql)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(needle), "{sql}: {err}");
+    }
+}
+
+/// A gap that varies per row: each row starts a new session when its gap to
+/// the previous row exceeds that row's own threshold, however `DuckDB`'s
+/// segment tree splits the frame. Combine used to judge the boundary between
+/// two segments by the left segment's threshold, which changed results from
+/// 20 rows on. Checked against a lag-based reference.
+#[test]
+fn sessionize_varying_gap_matches_reference() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE vg AS SELECT i, TIMESTAMP '2024-01-01' + to_seconds(2 * i) AS ts,
+             CASE WHEN i % 2 = 1 THEN INTERVAL 100 SECOND ELSE INTERVAL 0 SECOND END AS gap
+         FROM range(200) r(i);",
+    )
+    .unwrap();
+    let mismatches: i64 = db
+        .query_one(
+            "WITH ext AS (
+                 SELECT i, sessionize(ts, gap) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS s
+                 FROM vg),
+             starts AS (
+                 SELECT i, ts, CASE WHEN ts - lag(ts) OVER (ORDER BY ts) > gap
+                                    THEN 1 ELSE 0 END AS new_session
+                 FROM vg),
+             ref AS (
+                 SELECT i, 1 + sum(new_session)
+                     OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS s
+                 FROM starts)
+             SELECT count(*) FROM ext JOIN ref USING (i) WHERE ext.s <> ref.s",
+        )
+        .unwrap();
+    assert_eq!(mismatches, 0);
+}
+
+/// `forward` + `tail` and `backward` + `head` start the chain at an end of
+/// the sequence, so no adjacent event exists. `ClickHouse` rejects both; the
+/// extension used to return NULL silently.
+#[test]
+fn sequence_next_node_rejects_end_anchored_chains() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE nn AS SELECT * FROM (VALUES
+            (TIMESTAMP '2024-01-01 00:00:00', 'a'),
+            (TIMESTAMP '2024-01-01 00:00:01', 'b')) t(ts, v);",
+    )
+    .unwrap();
+    for (direction, base) in [("forward", "tail"), ("backward", "head")] {
+        let sql = format!(
+            "SELECT sequence_next_node('{direction}', '{base}', ts, v, true, v = 'a') FROM nn"
+        );
+        let err = db
+            .query_one::<String>(&sql)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot be combined"), "{sql}: {err}");
+    }
+}
+
+/// Configuration arguments must be constant within a group. Before 0.10.0
+/// the first value a partial state saw won, so the result (and whether an
+/// invalid later value raised an error) depended on row order. Each case is
+/// run in both row orders and must fail both times.
+#[test]
+fn differing_configuration_in_one_group_is_an_error() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE cfg AS SELECT * FROM (VALUES
+            (1, TIMESTAMP '2024-01-01 00:00:00', 'a', INTERVAL 1 MINUTE, 'strict_order',
+             '(?1)(?2)', 'forward', 'first_match'),
+            (2, TIMESTAMP '2024-01-01 00:30:00', 'b', INTERVAL 1 HOUR, 'strict_once',
+             '(?2)', 'backward', 'last_match'))
+          t(i, ts, ev, win, mode, pat, dir, base);",
+    )
+    .unwrap();
+    let cases = [
+        ("window", "window_funnel(win, ts, ev = 'a', ev = 'b')"),
+        (
+            "window",
+            "len(window_funnel_events(win, ts, ev = 'a', ev = 'b'))",
+        ),
+        (
+            "mode",
+            "window_funnel(INTERVAL 1 HOUR, mode, ts, ev = 'a', ev = 'b')",
+        ),
+        (
+            "pattern",
+            "sequence_match(pat, ts, ev = 'a', ev = 'b')::INT",
+        ),
+        (
+            "pattern",
+            "sequence_count(pat, ts, ev = 'a', ev = 'b')::INT",
+        ),
+        (
+            "pattern",
+            "len(sequence_match_events(pat, ts, ev = 'a', ev = 'b'))",
+        ),
+        (
+            "direction",
+            "len(sequence_next_node(dir, 'first_match', ts, ev, true, true))",
+        ),
+        (
+            "base",
+            "len(sequence_next_node('forward', base, ts, ev, true, true))",
+        ),
+    ];
+    for (argument, call) in cases {
+        for order in ["i", "i DESC"] {
+            let sql = format!("SELECT {call} FROM (SELECT * FROM cfg ORDER BY {order})");
+            let err = db
+                .query_one::<i64>(&sql)
+                .map(|v| format!("returned {v}"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(&format!("the {argument} argument must be the same")),
+                "{sql}: {err}"
+            );
+        }
+    }
+
+    // An invalid value on a later row is an error in either order (it used
+    // to be ignored when a valid value came first).
+    for order in ["i", "i DESC"] {
+        let sql = format!(
+            "SELECT window_funnel(INTERVAL 1 HOUR, m, ts, ev = 'a', ev = 'b') FROM
+             (SELECT *, CASE i WHEN 1 THEN 'strict_order' ELSE 'bogus_mode' END AS m
+              FROM cfg ORDER BY {order})"
+        );
+        assert!(db.query_one::<i64>(&sql).is_err(), "{sql}");
+    }
+
+    // Repeated equal values, equivalent spellings and NULLs are not conflicts.
+    let same: i64 = db
+        .query_one(
+            "SELECT window_funnel(w, m, ts, ev = 'a', ev = 'b') FROM
+             (SELECT *, CASE i WHEN 1 THEN INTERVAL 1 HOUR ELSE INTERVAL 60 MINUTE END AS w,
+                        CASE i WHEN 1 THEN 'strict_order' ELSE ' STRICT_ORDER ' END AS m
+              FROM cfg)",
+        )
+        .unwrap();
+    assert_eq!(same, 2);
+    let with_null: bool = db
+        .query_one(
+            "SELECT sequence_match(CASE i WHEN 1 THEN '(?1)(?2)' END, ts, ev = 'a', ev = 'b')
+             FROM cfg",
+        )
+        .unwrap();
+    assert!(with_null);
+}
+
+/// The same conflict split across `DuckDB`'s parallel partial aggregates is
+/// caught in combine. The pattern alternates per row group (122,880 rows,
+/// `DuckDB`'s scan unit), so threads start from different patterns and their
+/// partial states disagree when combined. (With the update-time check
+/// disabled, the combine check alone raised the error in 3 of 3 runs.)
+#[test]
+fn differing_pattern_across_threads_is_an_error() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET threads = 4;
+         CREATE TABLE big AS SELECT TIMESTAMP '2024-01-01' + to_seconds(i) AS ts,
+                CASE WHEN (i // 122880) % 2 = 0 THEN '(?1)(?2)' ELSE '(?2)(?1)' END AS pat,
+                i % 2 = 0 AS a, i % 2 = 1 AS b
+         FROM range(1000000) r(i);",
+    )
+    .unwrap();
+    let err = db
+        .query_one::<bool>("SELECT sequence_match(pat, ts, a, b) FROM big")
+        .map(|v| format!("returned {v}"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("the pattern argument must be the same"),
+        "{err}"
+    );
+}
+
+/// A NULL direction means 'forward' (documented), so with base 'tail' it is
+/// the forbidden forward+tail combination. It used to return NULL.
+#[test]
+fn null_direction_with_tail_base_is_an_error() {
+    let db = load_extension();
+    let err = db
+        .query_one::<String>(
+            "SELECT sequence_next_node(NULL, 'tail', ts, v, true, true)
+             FROM (VALUES (TIMESTAMP '2024-01-01', 'a')) t(ts, v)",
+        )
+        .map(|v| format!("returned {v}"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cannot be combined"), "{err}");
+}
+
+/// Mode names are case-insensitive, like `sequence_next_node`'s direction
+/// and base.
+#[test]
+fn funnel_mode_names_are_case_insensitive() {
+    let db = load_extension();
+    let lower: i64 = db
+        .query_one(
+            "SELECT window_funnel(INTERVAL 1 HOUR, 'strict_order', ts, c1, c2)
+             FROM (VALUES (TIMESTAMP '2024-01-01 00:00', true, false),
+                          (TIMESTAMP '2024-01-01 00:01', false, false),
+                          (TIMESTAMP '2024-01-01 00:02', false, true)) t(ts, c1, c2)",
+        )
+        .unwrap();
+    let upper: i64 = db
+        .query_one(
+            "SELECT window_funnel(INTERVAL 1 HOUR, 'Strict_Order', ts, c1, c2)
+             FROM (VALUES (TIMESTAMP '2024-01-01 00:00', true, false),
+                          (TIMESTAMP '2024-01-01 00:01', false, false),
+                          (TIMESTAMP '2024-01-01 00:02', false, true)) t(ts, c1, c2)",
+        )
+        .unwrap();
+    assert_eq!((lower, upper), (1, 1));
+}
+
+/// A group's mode applies to all of its rows, including rows read before
+/// the first non-NULL mode: under `strict_order` a condition-less row breaks
+/// the chain even when it arrived with a NULL mode (earlier builds dropped
+/// such rows and returned 2).
+#[test]
+fn strict_order_sees_condition_less_rows_read_before_the_mode() {
+    let db = load_extension();
+    db.execute_batch("SET threads = 1").unwrap();
+    let steps: i64 = db
+        .query_one(
+            "SELECT window_funnel(INTERVAL 1 HOUR, m, ts, c1, c2)
+             FROM (VALUES (NULL, TIMESTAMP '2024-01-01 00:00', true, false),
+                          (NULL, TIMESTAMP '2024-01-01 00:01', false, false),
+                          ('strict_order', TIMESTAMP '2024-01-01 00:02', false, true))
+                  t(m, ts, c1, c2)",
+        )
+        .unwrap();
+    assert_eq!(steps, 1);
+}
+
+/// A group whose timestamps are all NULL has no usable rows, so the
+/// sequence functions return what they return for an empty group (NULL),
+/// not `false` / `0`.
+#[test]
+fn all_null_timestamp_group_matches_empty_group() {
+    let db = load_extension();
+    let both_null: bool = db
+        .query_one(
+            "SELECT sequence_match('(?1)', ts, c, c) IS NULL
+                    AND sequence_count('(?1)', ts, c, c) IS NULL
+             FROM (VALUES (NULL::TIMESTAMP, true), (NULL::TIMESTAMP, false)) t(ts, c)",
+        )
+        .unwrap();
+    assert!(both_null);
+}
+
+/// Every function accepts `TIMESTAMPTZ` and treats it as the instant it is:
+/// under UTC the results equal the `TIMESTAMP` versions, the `*_events`
+/// functions return `TIMESTAMPTZ[]`, and events keep their real order across
+/// a daylight-saving change (the `::TIMESTAMP` cast users needed before
+/// converts to local time and reorders them).
+#[test]
+fn timestamptz_is_accepted_everywhere() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET TimeZone = 'UTC';
+         CREATE TABLE tz AS SELECT TIMESTAMP '2024-01-01' + to_seconds(i * 7) AS ts,
+                ts::TIMESTAMPTZ AS tstz, i % 3 = 0 AS a, i % 3 = 1 AS b, (i % 5)::VARCHAR AS v
+         FROM range(200) r(i);",
+    )
+    .unwrap();
+    let same: bool = db
+        .query_one(
+            "SELECT
+               window_funnel(INTERVAL 1 MINUTE, ts, a, b)
+                 = window_funnel(INTERVAL 1 MINUTE, tstz, a, b)
+               AND window_funnel(INTERVAL 1 MINUTE, 'strict_order', ts, a, b)
+                 = window_funnel(INTERVAL 1 MINUTE, 'strict_order', tstz, a, b)
+               AND window_funnel_events(INTERVAL 1 MINUTE, ts, a, b)
+                 = window_funnel_events(INTERVAL 1 MINUTE, tstz, a, b)::TIMESTAMP[]
+               AND sequence_match('(?1)(?t<10)(?2)', ts, a, b)
+                 = sequence_match('(?1)(?t<10)(?2)', tstz, a, b)
+               AND sequence_count('(?1)(?t<10)(?2)', ts, a, b)
+                 = sequence_count('(?1)(?t<10)(?2)', tstz, a, b)
+               AND sequence_match_events('(?1).*(?2)', ts, a, b)
+                 = sequence_match_events('(?1).*(?2)', tstz, a, b)::TIMESTAMP[]
+               AND sequence_next_node('forward', 'first_match', ts, v, a, a, b)
+                 IS NOT DISTINCT FROM
+                   sequence_next_node('forward', 'first_match', tstz, v, a, a, b)
+               AND retention(a, b) = retention(a, b)
+             FROM tz",
+        )
+        .unwrap();
+    assert!(same);
+    let sessions_differ: i64 = db
+        .query_one(
+            "SELECT count(*) FROM (
+               SELECT sessionize(ts, INTERVAL 20 SECOND) OVER (ORDER BY ts) AS s1,
+                      sessionize(tstz, INTERVAL 20 SECOND) OVER (ORDER BY ts) AS s2
+               FROM tz) WHERE s1 <> s2",
+        )
+        .unwrap();
+    assert_eq!(sessions_differ, 0);
+    let types: String = db
+        .query_one(
+            "SELECT typeof(window_funnel_events(INTERVAL 1 MINUTE, tstz, a, b)) || ',' ||
+                    typeof(sequence_match_events('(?1).*(?2)', tstz, a, b))
+             FROM tz",
+        )
+        .unwrap();
+    assert_eq!(
+        types,
+        "TIMESTAMP WITH TIME ZONE[],TIMESTAMP WITH TIME ZONE[]"
+    );
+
+    // 05:30Z then 06:10Z on 2020-11-01 are 01:30 EDT then 01:10 EST: casting
+    // to local TIMESTAMP reverses them, TIMESTAMPTZ keeps them in order.
+    db.execute_batch(
+        "SET TimeZone = 'America/New_York';
+         CREATE TABLE dst AS SELECT * FROM (VALUES
+           (TIMESTAMPTZ '2020-11-01 05:30:00+00', true, false),
+           (TIMESTAMPTZ '2020-11-01 06:10:00+00', false, true)) t(ts, a, b);",
+    )
+    .unwrap();
+    let (local, instant): (bool, bool) = (
+        db.query_one("SELECT sequence_match('(?1)(?2)', ts::TIMESTAMP, a, b) FROM dst")
+            .unwrap(),
+        db.query_one("SELECT sequence_match('(?1)(?2)', ts, a, b) FROM dst")
+            .unwrap(),
+    );
+    assert!(!local, "the local-time cast reorders the events");
+    assert!(instant);
 }

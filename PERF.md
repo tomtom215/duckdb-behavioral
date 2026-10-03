@@ -26,6 +26,9 @@ reproducible via `cargo bench`.
 - [Session 8: sequenceNextNode Baseline](#session-8-sequencenextnode-baseline)
 - [Session 9: Rc\<str\> Optimization + String Pool Negative Result](#session-9-rcstr-optimization--string-pool-negative-result)
 - [Session 11: NFA Reusable Stack + Fast-Path Linear Scan](#session-11-nfa-reusable-stack--fast-path-linear-scan)
+- [Session 18 (v0.8.0): Correctness-Driven Arithmetic + Determinism — Measured Cost](#session-18-v080-correctness-driven-arithmetic--determinism--measured-cost)
+- [Session 19: Feasibility-Then-Greedy Sequence Matcher](#session-19-feasibility-then-greedy-sequence-matcher)
+- [Session 20: Per-Row Allocation and Run-Based Update](#session-20-per-row-allocation-and-run-based-update)
 - [Current Baseline](#current-baseline)
   - [Sessionize](#sessionize)
   - [Retention](#retention)
@@ -34,7 +37,7 @@ reproducible via `cargo bench`.
   - [Sort (Isolated)](#sort-isolated)
   - [Sequence Next Node](#sequence-next-node)
   - [Per-Element Cost at Scale](#per-element-cost-at-scale)
-  - [Billion-Row Headline Numbers](#billion-row-headline-numbers)
+  - [Headline Numbers](#headline-numbers)
 - [Session Improvement Protocol](#session-improvement-protocol)
   - [Before Starting Work](#before-starting-work)
   - [During Work](#during-work)
@@ -78,7 +81,7 @@ cargo bench -- sequence_match
 | `sequence_match` | `sequence_match` | update + finalize | 100 to 100M events | NFA pattern matching |
 | `sequence_count` | `sequence_count` | update + finalize | 100 to 100M events | Non-overlapping counting |
 | `sequence_combine` | `sequence_*` | combine_in_place + finalize | 100 to 1M states | In-place append + NFA cost |
-| `sort_events` | (isolated) | sort only | 100 to 100M events | pdqsort scaling (random) |
+| `sort_events` | (isolated) | sort only | 100 to 100M events | pdqsort scaling (reverse-ordered timestamps with jitter) |
 | `sort_events_presorted` | (isolated) | sort only | 100 to 100M events | pdqsort adaptive path |
 | `sequence_next_node` | `sequence_next_node` | update + finalize | 100 to 10M events | Sequential matching + Arc\<str\> clone |
 | `sequence_next_node_combine` | `sequence_next_node` | combine_in_place + finalize | 100 to 1M states | In-place append + sequential matching |
@@ -93,9 +96,9 @@ cargo bench -- sequence_match
 | `sessionize` | O(1) | O(1) | O(1) | O(1) — tracks only first/last timestamp + boundary count |
 | `retention` | O(k) | O(1) | O(k) | O(1) — single u32 bitmask, k = conditions |
 | `window_funnel` | O(1) amortized | O(m) append | O(n*k) greedy scan | O(n) — collected events |
-| `sequence_match` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
-| `sequence_count` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
-| `sequence_match_events` | O(1) amortized | O(m) append | O(n*s) NFA execution | O(n) — collected events |
+| `sequence_match` | O(1) amortized | O(m) append | O(n) fast paths; otherwise O(s · n log n) feasibility pass + greedy walk | O(n) — collected events, plus O(n·s) bytes while finalizing |
+| `sequence_count` | O(1) amortized | O(m) append | O(n) fast paths; otherwise O(s · n log n) feasibility pass + greedy walk | O(n) — collected events, plus O(n·s) bytes while finalizing |
+| `sequence_match_events` | O(1) amortized | O(m) append | O(n) wildcard-separated fast path; otherwise O(s · n log n) | O(n) — collected events, plus O(n·s) bytes while finalizing |
 | `sequence_next_node` | O(1) amortized | O(m) append | O(n*s) sequential scan | O(n) — collected events + Strings |
 
 Where n = events, m = events in other state, k = conditions (up to 32), s = pattern steps.
@@ -817,7 +820,7 @@ reference-hardware baseline below).
 | `window_funnel_finalize/100M` | 602.1 ms (166 Melem/s) | 576.7 ms (173 Melem/s) | −4.2% |
 | `sequence_match/10M` | 65.26 ms (153 Melem/s) | **62.67 ms (160 Melem/s)** | **−4.0% (faster)** |
 | `sequence_next_node/1M` | 37.44 ms (26.7 Melem/s) | 38.64 ms (25.9 Melem/s) | +3.2% |
-| `sort_events/10M` (random) | 122.2 ms (81.9 Melem/s) | 127.0 ms (78.7 Melem/s) | +4.0% |
+| `sort_events/10M` (reverse-ordered, jittered) | 122.2 ms (81.9 Melem/s) | 127.0 ms (78.7 Melem/s) | +4.0% |
 | `sort_events_presorted/10M` | 104.8 ms (95.4 Melem/s) | 103.9 ms (96.3 Melem/s) | ±0% |
 
 #### What changed and why
@@ -834,7 +837,7 @@ reference-hardware baseline below).
    682–715 Melem/s) — unsigned compare + dropped sign handling.
 
 2. **Deterministic sort key** `(timestamp, conditions)` (was timestamp-only):
-   +4.0% on fully-random 10M sorts, ±0% on the presorted common path. Buys
+   +4.0% on the reverse-ordered, jittered 10M sort benchmark, ±0% on the presorted common path. Buys
    result determinism under parallel aggregation. Accepted.
 
 3. **`sequence_next_node` ClickHouse-exact rewrite** (consecutive chains,
@@ -854,6 +857,127 @@ reference-hardware baseline below).
    correct backtracking on this shape, and the old number was fast but
    returned non-ClickHouse (adjacency-only) results. Fast-path pattern
    shapes are unaffected.
+
+### Session 19: Feasibility-Then-Greedy Sequence Matcher
+
+**Problem.** Patterns outside the two fast paths (any time constraint, `.`,
+adjacent conditions mixed with `.*`) ran a lazy backtracking search from every
+start position. When the pattern could not complete, each start re-scanned the
+rest of the group, through `.*` or a skipping gate (`>=`, `>`, `!=`, `==`), so a
+single group was quadratic and could not be cancelled. The O(n*s) entry in the
+complexity table was wrong for these patterns.
+
+**Change.** `src/pattern/executor.rs` now splits the pattern into consuming
+steps (`(?N)`, `.`) and gaps (`.*`, gates). One backward pass per consuming
+step marks the events from which the rest of the pattern can still complete,
+using a next-feasible index array and galloping searches for gate boundaries.
+A forward walk then takes the earliest feasible event at each step. Within a
+gap, every step reaches a superset of positions when it starts earlier; the
+end-of-events position of vacuous `<`/`<=` gates is the one exception, and
+`tail_end` tracks it separately. The greedy walk therefore reproduces the
+lazy search's first match, which defines `sequence_count`'s resume point and
+`sequence_match_events`' output. The old search is kept test-only in
+`src/pattern/reference_nfa.rs`. Two differential proptests (20,000 cases
+each per run; one extended 400,000-case run with groups up to 40 events)
+check the new matcher against it. Planted bugs in `tail_end`, in
+gate-composition order and in the events fast path were each caught.
+`sequence_match_events` also gained the linear wildcard-separated fast path
+that `sequence_match` already had.
+
+**SQL timings** (DuckDB 1.5.6 CLI, release builds of the parent commit and
+this change, one group, events 1 s apart alternating `c1`/`c2`, `c3` never
+true, 3 runs each):
+
+| Query | Events | Before | After |
+|---|---|---|---|
+| `sequence_count('(?1).*(?t<5)(?2).*(?3)', …)` | 32,000 | 8.3–9.1 s | 0.004 s |
+| `sequence_count('(?1)(?t>=5)(?3)', …)` | 32,000 | 1.8–2.4 s | 0.003–0.004 s |
+| `sequence_match_events('(?1).*(?t<5)(?2).*(?3)', …)` | 32,000 | 32–35 s | 0.005–0.007 s |
+| same three queries | 10,000,000 | not run | 0.78–1.29 s |
+
+**Criterion** (Criterion 0.8, 95% CI, `--baseline` against the parent commit,
+same machine: shared 4-core Intel Xeon @ 2.80 GHz, release profile):
+
+| Benchmark | Before | After |
+|---|---|---|
+| `sequence_match_events/1000000` | 3.83 ms [3.71, 3.95] | 3.66 ms [3.57, 3.74] |
+| `sequence_match_events/10000000` | 79.3 ms [78.1, 80.6] | 79.1 ms [77.8, 80.4] (no change) |
+| `sequence_match_events/100000000` | 707 ms [700, 718] | 687 ms [680, 692] |
+| `sequence_match_time_constraint/100000` | 0.891 ms [0.873, 0.914] | 1.108 ms [1.078, 1.142] |
+| `sequence_match_time_constraint/1000000` | 14.3 ms [14.0, 14.7] | 23.9 ms [23.5, 24.4]; 21.6 ms [21.2, 22.0] in an earlier run of the same code |
+
+**Accepted regression.** `sequence_match_time_constraint`
+(`(?1)(?t<=600)(?2)`, every pair matching) was the old search's best case,
+because nothing is skipped. The new matcher always makes its backward pass,
+at +51% to +67% at 1M events across the two runs. Things tried:
+- The first version binary-searched each gate's range end over the whole
+  remaining slice and was 7.8× slower. Querying only the first feasible
+  candidate (constant time for `<`, `<=`, `!=`) and galloping searches
+  brought it to +59%.
+- Skipping the tail check when the pattern has no tail gave a further ~5%
+  (non-overlapping CIs).
+- `u32` instead of `usize` for the next-feasible array gained ~8% and was
+  not adopted, because it needs a separate path for groups over 2^32 events.
+
+### Session 20: Per-Row Allocation and Run-Based Update
+
+**Problem.** With many tiny groups (2M groups of 2 rows), every group paid
+for heap allocations: its event `Vec`, its own copy of the pattern string and
+compiled pattern, and a `Vec` in `classify_pattern`. Under 4 threads these
+contended in glibc malloc (perf: `malloc`/`_int_free` and kernel page faults
+near the top), and 4 threads were barely faster than 1.
+
+**Change.**
+- Events are a `SmallVec<[Event; 2]>`: a group of up to two events never
+  allocates for them.
+- The sequence pattern string and compiled pattern are `Arc`-shared from a
+  per-chunk cache instead of copied into each state.
+- `classify_pattern` returns a fieldless enum and scans conditions through a
+  stack buffer.
+- The funnel scan's levels are a fixed `[Level; 32]` array.
+- Update works on runs of rows that share a state pointer: configuration is
+  checked per row, then the run's events are reserved once (fallibly) and
+  appended with `extend`.
+
+**SQL timings** (DuckDB 1.5.6 CLI, release builds of the parent commit
+a4cdfd5 ("head") and this change, 5 runs each alternating, min–max; results
+identical):
+
+| Query | Threads | Head | This change |
+|---|---|---|---|
+| `window_funnel(1 hour, ts, a, b)`, 2M groups of 2 rows | 4 | 0.586–0.811 s | 0.166–0.184 s |
+| same | 1 | 0.755–1.095 s | 0.524–0.612 s |
+| `sequence_match('(?1)(?2)', …)`, 2M groups of 2 rows | 4 | 1.163–1.275 s | 0.180–0.192 s |
+| same | 1 | 1.089–1.681 s | 0.518–0.575 s |
+| `window_funnel(1 hour, ts, a, b, c)`, one 10M-row group | 1 | 0.238–0.252 s | 0.256–0.280 s |
+| `sequence_match('(?1).*(?2)', …)`, one 10M-row group | 1 | 0.161–0.190 s | 0.179–0.202 s |
+| `sequence_match('(?1)(?t<=3600)(?2)', …)`, one 10M-row group | 1 | 0.241–0.265 s | 0.258–0.282 s |
+| `window_funnel(…)`, one 10M-row group | 4 | 0.565–0.601 s | 0.588–0.620 s |
+| `sequence_match('(?1).*(?2)', …)`, one 10M-row group | 4 | 0.358–0.389 s | 0.385–0.410 s |
+
+**Criterion** (Criterion 0.8, 95% CI, `--baseline` against the parent
+commit, same machine: shared 4-core Intel Xeon @ 2.80 GHz, release profile):
+
+| Benchmark | Head | This change | Change |
+|---|---|---|---|
+| `window_funnel_finalize/…/1000000` | 2.117 ms [2.077, 2.160] | 2.130 ms [2.084, 2.181] | none detected (p = 0.69) |
+| `window_funnel_combine/1000000` | 18.84 ms [18.59, 19.11] | 16.19 ms [16.04, 16.38] | −14% [−15.6, −12.5] |
+| `window_funnel_events_finalize/…/1000000` | 2.510 ms [2.439, 2.584] | 2.159 ms [2.130, 2.192] | −14% [−16.7, −11.2] |
+| `sequence_match/1000000` | 2.406 ms [2.330, 2.482] | 2.555 ms [2.494, 2.620] | +6.2% [+2.0, +10.8] |
+| `sequence_match_time_constraint/1000000` | 19.30 ms [18.93, 19.75] | 17.39 ms [17.17, 17.61] | −9.9% [−12.2, −7.8] |
+| `sequence_count/1000000` | 3.364 ms [3.276, 3.456] | 3.275 ms [3.193, 3.361] | none detected (p = 0.17) |
+| `sequence_combine/1000000` | 29.34 ms [28.91, 29.78] | 18.09 ms [17.83, 18.39] | −38% [−39.7, −37.0] |
+
+**Accepted regression.** One large group is 5–10% slower in SQL (the
+min–max ranges overlap only for the 4-thread `sequence_match` row), and
+Criterion's `sequence_match` is +6%. perf on the 10M-row funnel query puts
+most of `update_impl`'s samples on the condition-column loads and the
+interval read in the configuration pass, both of which the parent commit
+also does; the second pass over each run is the visible extra cost. The
+tiny-group speedup (1.4–6.5×) was judged worth it, because many small
+groups (per-user funnels) is the common shape.
+- Measured and not kept: the fixed level array alone, without the other
+  changes, made no measurable difference.
 
 ## Current Baseline
 
@@ -1028,9 +1152,9 @@ Cost per element at scale. Session 15 refresh numbers:
 | `window_funnel_finalize` | 100M | 791 ms | 7.91 | 126 Melem/s | Sort + O(n*k) greedy scan |
 | `sequence_match` | 100M | 1.05 s | 10.5 | 95 Melem/s | Sort + O(n) fast-path scan |
 | `sequence_count` | 100M | 1.18 s | 11.8 | 85 Melem/s | Sort + O(n) fast-path counting |
-| `sequence_match_events` | 100M | 1.07 s | 10.7 | 93 Melem/s | Sort + NFA + timestamp collection |
+| `sequence_match_events` | 100M | 1.07 s | 10.7 | 93 Melem/s | Sort + linear scan + timestamp collection (Session 15; Session 19 measured 687 ms on its own machine, see there) |
 | `sequence_next_node` | 10M | 546 ms | 54.6 | 18 Melem/s | Sort + sequential scan + Arc\<str\> alloc |
-| `sort_events` (random) | 100M | 2.079 s | 20.79 | 48 Melem/s | O(n log n) pdqsort, DRAM-bound |
+| `sort_events` (reverse-ordered, jittered) | 100M | 2.079 s | 20.79 | 48 Melem/s | O(n log n) pdqsort, DRAM-bound |
 | `sort_events` (presorted) | 100M | 1.895 s | 18.95 | 53 Melem/s | O(n) adaptive, DRAM-bound |
 
 ### Headline Numbers
@@ -1047,7 +1171,7 @@ Criterion-validated, reproducible headline numbers for portfolio presentation
 | `sequence_count` | 100 million | 1.18 s | 85 Melem/s | 11.8 |
 | `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s | 10.7 |
 | `sequence_next_node` | 10 million | 546 ms | 18 Melem/s | 54.6 |
-| `sort_events` (random) | 100 million | 2.08 s | 48 Melem/s | 20.8 |
+| `sort_events` (reverse-ordered, jittered) | 100 million | 2.08 s | 48 Melem/s | 20.8 |
 
 Note: Minor throughput differences from Session 14 reflect Criterion 0.8.2's
 updated statistical sampling and rand 0.9.2's different data generation.
