@@ -566,8 +566,11 @@ jobs:
         run: cargo install cargo-tarpaulin --locked
       - name: Generate coverage report
         # bash -eo pipefail: without it the step's status is tee's (always 0).
+        # --timeout: the extension_load integration tests build the release
+        # cdylib on first use, which under tarpaulin runs past its default
+        # 60 s no-output limit ("Timed out waiting for test response").
         shell: bash
-        run: cargo tarpaulin --out xml --out html --skip-clean 2>&1 | tee coverage-output.txt
+        run: cargo tarpaulin --timeout 600 --out xml --out html --skip-clean 2>&1 | tee coverage-output.txt
       - name: Upload to Codecov
         if: always()
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
