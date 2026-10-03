@@ -25,7 +25,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | Feasibility-then-greedy pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 545 unit tests, 28 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 88.4% kill rate measured on v0.4.x, not re-measured since), zero clippy warnings under pedantic lints |
+| **Software quality** | 547 unit tests, 28 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -143,7 +143,7 @@ graph TB
 
 This architecture enables:
 
-- **Independent unit testing**: The 545 unit tests exercise Rust structs
+- **Independent unit testing**: The 547 unit tests exercise Rust structs
   directly and run in about two seconds, without loading the extension.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
@@ -162,9 +162,9 @@ This architecture enables:
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ffffff', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#333333', 'lineColor': '#333333', 'secondaryColor': '#f5f5f5', 'tertiaryColor': '#e0e0e0', 'textColor': '#1a1a1a', 'clusterBkg': '#f5f5f5', 'clusterBorder': '#333333'}}}%%
 graph TB
     subgraph "Complementary Test Levels"
-        L3["Mutation Testing<br/>88.4% kill rate (130/147, v0.4.x)<br/>cargo-mutants"]
+        L3["Mutation Testing<br/>93.9% detected (570/607, 0.10.0 audit)<br/>cargo-mutants"]
         L2["Integration + E2E<br/>28 in-process LOAD tests<br/>8 sqllogictest files on the DuckDB CLI"]
-        L1["Unit Tests (545)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (33 proptest), mutation-guided (65)"]
+        L1["Unit Tests (547)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (33 proptest), mutation-guided (67)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -174,7 +174,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (545 tests)**
+**Level 1: Unit Tests (547 tests)**
 
 Organized by category within each module:
 
@@ -189,8 +189,8 @@ Organized by category within each module:
   idempotency, monotonicity; plus two differential tests that check the
   sequence matcher against the original backtracking search on random
   patterns and event sets
-- **Mutation-testing-guided tests (65)** -- tests written specifically to kill
-  mutants that survived earlier test suites (51 from the v0.4.x run, 14 from
+- **Mutation-testing-guided tests (67)** -- tests written specifically to kill
+  mutants that survived earlier test suites (51 from the v0.4.x run, 16 from
   the 0.10.0 run)
 
 **Level 2: E2E Tests (8 sqllogictest files: 44 `query` + 34 `statement` directives)**
@@ -214,14 +214,17 @@ builds the real release `cdylib`, appends the DuckDB metadata footer, and
 class of FFI-registration bugs above is now caught by the regular test suite,
 not only by the CLI-based E2E job in CI.
 
-**Level 3: Mutation Testing (88.4% kill rate, v0.4.x)**
+**Level 3: Mutation Testing (93.9% detected, 0.10.0 audit)**
 
 `cargo-mutants` systematically replaces operators, removes branches, and
-changes return values across the codebase. In the run on the v0.4.x
-codebase, 130 of 147 generated mutants were caught by the test suite; it has
-not been re-measured since. The 17 survivors are documented and represent
-code paths where mutations produce semantically equivalent behavior (e.g.,
-OR vs XOR on non-overlapping bitmasks).
+changes return values across the codebase. The 0.10.0 audit of the 9
+non-FFI modules detected 570 of 607 viable mutants (547 caught, 23 timed
+out); v0.4.x had caught 130 of 147. Tests were then written for the
+surviving mutants that change behaviour, and `window_funnel.rs`,
+`sequence_next_node.rs` and `pattern/parser.rs` were re-run: 320 of 342
+viable detected. The 22 remaining survivors were reviewed by hand as
+equivalent (e.g. OR vs XOR on non-overlapping bit fields, the hash function
+of a cache, a function never called for one path type).
 
 ### Key Insight
 
@@ -451,13 +454,13 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 545 |
+| Unit tests | 547 |
 | Doc-tests | 1 |
 | In-process integration tests | 21 (`tests/extension_load.rs`) |
 | SQL logic tests | 8 files: 44 `query` + 34 `statement` directives |
 | Property-based tests | 29 (proptest) |
-| Mutation-guided tests | 51 |
-| Mutation kill rate | 88.4% (130/147, measured on v0.4.x; not re-measured) |
+| Mutation-guided tests | 67 |
+| Mutation kill rate | 93.9% detected (570/607 viable, 0.10.0 audit of the non-FFI modules) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
 | Unsafe code | Confined to `src/ffi/` (9 files) |
 | MSRV | Rust 1.87 |

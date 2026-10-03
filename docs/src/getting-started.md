@@ -435,7 +435,7 @@ on Linux) at an existing one. Neither is needed for `cargo build --release`.
 
 ## Running Tests
 
-The extension includes 545 unit tests, 28 in-process integration tests
+The extension includes 547 unit tests, 28 in-process integration tests
 (`tests/extension_load.rs`), and 1 doc-test:
 
 ```bash

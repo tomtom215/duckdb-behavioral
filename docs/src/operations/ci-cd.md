@@ -16,7 +16,7 @@ source.
 |-----|---------|------|
 | **check** | Verify compilation | `cargo check --all-targets` |
 | **wasm-check** | Library compiles for DuckDB-WASM | `cargo check --target wasm32-unknown-emscripten --lib` |
-| **test** | Run 545 unit tests + 28 in-process integration tests, then the doc-test | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
+| **test** | Run 547 unit tests + 28 in-process integration tests, then the doc-test | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
 | **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
 | **fmt** | Formatting verification | `cargo fmt --check` |
 | **doc** | Documentation builds without warnings | `cargo doc --no-deps --document-private-items` with `-Dwarnings` |
@@ -141,7 +141,7 @@ mdBook v0.4.40 with custom CSS styling.
 ```bash
 # Run the same checks as CI
 cargo check --all-targets
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 545 unit + 28 integration + 1 doc-test
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 547 unit + 28 integration + 1 doc-test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --document-private-items

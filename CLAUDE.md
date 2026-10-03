@@ -155,7 +155,7 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (545 unit + 28 integration + 1 doc-test).
+# Run all tests (547 unit + 28 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -281,7 +281,7 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **545 unit tests** covering all functions, edge cases, combine associativity,
+- **547 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
@@ -302,11 +302,17 @@ Every change MUST meet these requirements:
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
   cardinality benchmarks, and throughput reporting up to 1B elements
-- **Mutation testing**: 88.4% kill rate baseline via cargo-mutants
-  (130 caught / 17 missed) measured on the v0.4.x codebase. cargo-mutants
-  27.0.0 identified ~465 candidate mutations on the v0.7.0 source (unchanged
-  from v0.5.0); v0.8.0 adds new code paths — a re-measurement is tracked as a
-  separate session
+- **Mutation testing** (cargo-mutants 27.1.0, `-- --lib`): 88.4% (130/147)
+  on v0.4.x. The 0.10.0 audit of the 9 non-FFI modules detected 570 of 607
+  viable mutants (547 caught + 23 timeouts, 93.9%; 37 missed). After the
+  `mutation_tests` modules and two `Matcher` tests, `window_funnel.rs`,
+  `sequence_next_node.rs` and `pattern/parser.rs` were re-run: 320 of 342
+  viable detected (315 caught + 5 timeouts, 93.6%). The 22 survivors were
+  reviewed one by one and judged equivalent: the funnel's hash function,
+  `NoPath::steps` (never called), cache-key and shortcut paths in the
+  `strict_once` matcher that only change sharing, and guards whose
+  alternative branch returns the same value. The other six modules have
+  only the audit figures.
 - **MSRV 1.87**: `cargo +1.87.0 check --all-targets` passes with quack-rs
   0.18.0 (which declares 1.86.0) and libduckdb-sys 1.10506.0 (1.85.1). The CI
   job must call `cargo +1.87`: `rust-toolchain.toml` pins `stable`, which
@@ -442,7 +448,8 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   matcher against the original backtracking search
   (`src/pattern/reference_nfa.rs`, test-only) result for result
 - **Mutation-testing-guided tests**: 51 tests from the v0.4.x cargo-mutants
-  analysis, plus the `mutation_tests` modules (14 tests) from the 0.10.0 run
+  analysis, plus 16 from the 0.10.0 runs (the `mutation_tests` modules and
+  two `Matcher` tests)
 - **Pattern parser**: All operators, error positions, whitespace tolerance
 - **Pattern executor**: Match/no-match, wildcards, time constraints, counting,
   event collection, fast-path classification, linear scaling on the shapes
@@ -457,7 +464,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
   multi-step patterns, combine, NULL handling, Arc\<str\> sharing
 
-Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 545 unit tests take about 2 s (the doc-test
+Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 547 unit tests take about 2 s (the doc-test
 about 1 s). The 28 in-process integration tests add 20–35 s when the release
 `cdylib` must be rebuilt (they build and `LOAD` it) and about 5 s once it is
 cached.

@@ -2868,6 +2868,38 @@ mod matcher_tests {
     use super::*;
     use proptest::prelude::*;
 
+    /// Only events that are some step's candidate count as candidates; the
+    /// others share one `extend_once` result per step.
+    #[test]
+    fn is_candidate_marks_events_with_a_candidate_step() {
+        let group = [
+            Event::new(0, 0b01),
+            Event::new(0, 0b00),
+            Event::new(0, 0b10),
+        ];
+        let matcher = Matcher::new(&group, 2);
+        assert!(matcher.is_candidate(0));
+        assert!(!matcher.is_candidate(1));
+        assert!(matcher.is_candidate(2));
+    }
+
+    /// The cache key carries the excluded event when that event is a
+    /// candidate for any step in the range, including when its steps are
+    /// exactly the range. Event 1 is the only candidate for the second step:
+    /// excluding it must not reuse the answer cached for excluding event 0,
+    /// which is a candidate for no step in the range.
+    #[test]
+    fn cache_distinguishes_excluded_event_covering_the_whole_range() {
+        let group = [
+            Event::new(0, 0b100),
+            Event::new(0, 0b011),
+            Event::new(0, 0b001),
+        ];
+        let mut matcher = Matcher::new(&group, 3);
+        assert!(matcher.distinct_events_exist(0, 2, 0));
+        assert!(!matcher.distinct_events_exist(0, 2, 1));
+    }
+
     /// Brute force: can steps `lo..hi` each get a distinct event of the
     /// group other than `exclude`?
     fn brute(group: &[Event], lo: usize, hi: usize, exclude: usize) -> bool {

@@ -421,12 +421,12 @@ and `compat` matrix; leave `TARGET_DUCKDB_VERSION` at the C API version
 
 | Metric | Value |
 |---|---|
-| Unit tests | 545 + 1 doc-test |
+| Unit tests | 547 + 1 doc-test |
 | Integration tests | 21 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
 | E2E tests | 12 workflow steps (2 platforms) + 8 SQL logic test files (against real DuckDB CLI), plus a compat job loading one binary into DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
 | Differential tests | `window_funnel`, `retention`, `sequence_*` and `sequence_next_node` fuzzed against ClickHouse 26.9.8.3 (see below) |
 | Property-based tests | 29 (proptest) |
-| Mutation testing | 88.4% kill rate (130/147, cargo-mutants), measured on v0.4.x and not re-measured since |
+| Mutation testing | cargo-mutants: 93.9% of viable mutants detected across the 9 non-FFI modules (0.10.0 audit); 22 survivors in the re-run modules reviewed as equivalent |
 | Clippy warnings | 0 (pedantic + nursery + cargo lint groups) |
 | CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
 | Benchmark files | 7 (Criterion.rs, up to 1 billion elements) |
@@ -489,7 +489,7 @@ appended; see [Getting Started](https://tomtom215.github.io/duckdb-behavioral/ge
 ## Development
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 545 unit + 28 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 547 unit + 28 integration + 1 doc-test (prebuilt libduckdb, no C++ build)
 cargo clippy --all-targets  # Zero warnings required
 cargo fmt -- --check        # Format check
 cargo bench                 # Criterion.rs benchmarks

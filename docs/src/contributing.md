@@ -22,7 +22,7 @@ cargo build
 ### Running Tests
 
 ```bash
-# 545 unit tests + 28 in-process integration tests + 1 doc-test.
+# 547 unit tests + 28 in-process integration tests + 1 doc-test.
 # DUCKDB_DOWNLOAD_LIB=1 links a prebuilt libduckdb (the `duckdb` dev-dependency
 # has no `bundled` feature, so a bare `cargo test` fails to link). The unit
 # tests take about 2 s; the integration tests build and LOAD the release
