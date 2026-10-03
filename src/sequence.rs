@@ -531,7 +531,7 @@ mod tests {
         let mut state = SequenceState::new();
         state.set_pattern("(?1)");
         let events = state.finalize_events().unwrap();
-        assert!(events.is_empty());
+        assert_eq!(events, Vec::<i64>::new());
     }
 
     #[test]

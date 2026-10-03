@@ -217,7 +217,7 @@ mod tests {
     fn test_sort_empty() {
         let mut events: Vec<Event> = vec![];
         sort_events(&mut events);
-        assert!(events.is_empty());
+        assert_eq!(events, Vec::<Event>::new());
     }
 
     #[test]

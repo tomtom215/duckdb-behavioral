@@ -2136,7 +2136,7 @@ mod finalize_events_tests {
     #[test]
     fn test_events_empty_state() {
         let mut state = WindowFunnelState::new();
-        assert!(state.finalize_events().is_empty());
+        assert_eq!(state.finalize_events(), Vec::<i64>::new());
     }
 
     #[test]
@@ -2176,7 +2176,7 @@ mod finalize_events_tests {
                 (1_000_000, &[false, false, true]),
             ],
         );
-        assert!(state.finalize_events().is_empty());
+        assert_eq!(state.finalize_events(), Vec::<i64>::new());
     }
 
     #[test]
