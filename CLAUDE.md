@@ -244,6 +244,13 @@ functions then return `TIMESTAMPTZ[]`).
   `DUCKDB_DOWNLOAD_LIB`) to force a re-run.
   Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.6 →
   crate v1.10506.x).
+  Gotcha: rust-cache cannot keep `target/duckdb-download`: before saving it
+  prunes `target/`, treating that directory as a build profile and keeping
+  only `build/`, `.fingerprint/` and `deps/`, so `cache-directories` saves an
+  empty directory. A warm cache then restores libduckdb-sys's build-script
+  output without the library (`unable to find library -lduckdb`). Each
+  `ci.yml` job that downloads it runs "Re-fetch prebuilt libduckdb if the
+  cache dropped it" after rust-cache; bumping `prefix-key` only defers this.
   Gotcha: libduckdb-sys's downloader (ureq/rustls with bundled roots) ignores
   a proxy CA. Behind a TLS-intercepting proxy, fetch
   `libduckdb-linux-amd64.zip` with curl into

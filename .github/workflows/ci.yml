@@ -62,16 +62,23 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
       - name: Run clippy
         # bash -eo pipefail: without it the step's status is tee's (always 0).
         shell: bash
@@ -106,16 +113,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
       - name: Compile check (all targets)
         id: cargo-check
         run: cargo check --all-targets
@@ -167,16 +181,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
       - name: Build documentation
         id: cargo-doc
         run: cargo doc --no-deps --document-private-items
@@ -199,16 +220,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
@@ -285,16 +313,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
@@ -345,13 +380,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.87
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
           key: msrv-1.87
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
       - name: Check MSRV compilation
         id: msrv-check
         # `+1.87` is required: rust-toolchain.toml pins `channel = "stable"`,
@@ -377,16 +423,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
       - name: Compile benchmarks (no run)
         id: bench-check
         run: cargo bench --no-run
@@ -442,16 +495,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks --locked
       - name: Check semver compatibility
@@ -485,16 +545,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # DUCKDB_DOWNLOAD_LIB caches the prebuilt libduckdb under
-          # target/duckdb-download; rust-cache prunes unknown target/ content
-          # while keeping build-script fingerprints, which strands warm-cache
-          # builds with a dangling -L path. Persist the download explicitly.
-          cache-directories: target/duckdb-download
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
           # build fingerprint without the downloaded lib under
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
+      # rust-cache prunes target/ before saving (cleanTargetDir treats
+      # target/duckdb-download as a profile dir and keeps only build/,
+      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
+      # build-script output without the libduckdb it links: `-lduckdb` not
+      # found. When the library is missing, drop that output so the build
+      # script runs again and downloads it.
+      - name: Re-fetch prebuilt libduckdb if the cache dropped it
+        shell: bash
+        run: |
+          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+          fi
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked
       - name: Generate coverage report
