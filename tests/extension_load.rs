@@ -1152,6 +1152,26 @@ fn funnel_mode_names_are_case_insensitive() {
     assert_eq!((lower, upper), (1, 1));
 }
 
+/// A group's mode applies to all of its rows, including rows read before
+/// the first non-NULL mode: under `strict_order` a condition-less row breaks
+/// the chain even when it arrived with a NULL mode (earlier builds dropped
+/// such rows and returned 2).
+#[test]
+fn strict_order_sees_condition_less_rows_read_before_the_mode() {
+    let db = load_extension();
+    db.execute_batch("SET threads = 1").unwrap();
+    let steps: i64 = db
+        .query_one(
+            "SELECT window_funnel(INTERVAL 1 HOUR, m, ts, c1, c2)
+             FROM (VALUES (NULL, TIMESTAMP '2024-01-01 00:00', true, false),
+                          (NULL, TIMESTAMP '2024-01-01 00:01', false, false),
+                          ('strict_order', TIMESTAMP '2024-01-01 00:02', false, true))
+                  t(m, ts, c1, c2)",
+        )
+        .unwrap();
+    assert_eq!(steps, 1);
+}
+
 /// A group whose timestamps are all NULL has no usable rows, so the
 /// sequence functions return what they return for an empty group (NULL),
 /// not `false` / `0`.

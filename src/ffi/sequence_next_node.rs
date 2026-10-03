@@ -218,7 +218,8 @@ quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
 
             // Grow fallibly: an allocation failure becomes a SQL error
             // instead of aborting the host process.
-            if state.events.try_reserve(1).is_err() {
+            if state.events.len() == state.events.capacity() && state.events.try_reserve(1).is_err()
+            {
                 info.set_error(&out_of_memory_message(
                     "sequence_next_node",
                     state.events.len() + 1,

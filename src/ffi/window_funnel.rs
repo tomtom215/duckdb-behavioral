@@ -171,81 +171,96 @@ pub(super) unsafe fn update_impl(
         let mode_slots = has_mode.then(|| RawStringSlots::new(input, 1));
         let mut last_mode: Option<([u8; 16], FunnelMode)> = None;
         let mut last_window: Option<((i32, i32, i64), i64)> = None;
-        for i in 0..row_count {
-            let Some(state) = FfiState::<WindowFunnelState>::with_state_mut(*states.add(i)) else {
+        // DuckDB hands consecutive rows of one group the same state, so work
+        // per run of equal state pointers: with one large group the whole
+        // chunk is one run.
+        let mut start = 0;
+        while start < row_count {
+            let state_ptr = *states.add(start);
+            let mut end = start + 1;
+            while end < row_count && *states.add(end) == state_ptr {
+                end += 1;
+            }
+            let run = start..end;
+            start = end;
+            let Some(state) = FfiState::<WindowFunnelState>::with_state_mut(state_ptr) else {
                 continue;
             };
 
-            // Skip NULL timestamps
-            if !ts_reader.is_valid(i) {
-                continue;
-            }
-
-            // NULL window: skip the row, like a NULL timestamp. Leaving the
-            // window at its zero default would silently run a 0-length funnel.
-            if !interval_reader.is_valid(i) {
-                continue;
-            }
-            let iv = interval_reader.read_interval(i);
-            let raw_window = (iv.months, iv.days, iv.micros);
-            match last_window {
-                Some((last, window_us))
-                    if last == raw_window
-                        && state.window_set
-                        && state.window_size_us == window_us => {}
-                _ => {
-                    if let Err(message) = apply_window(state, iv.months, iv.days, iv.micros, func) {
-                        info.set_error(&message);
-                        return;
-                    }
-                    last_window = Some((raw_window, state.window_size_us));
+            // 1. Configuration. Rows with a NULL timestamp or a NULL window
+            //    are skipped (a zero default window would silently run a
+            //    0-length funnel).
+            let mut any_row = false;
+            for i in run.clone() {
+                if !ts_reader.is_valid(i) || !interval_reader.is_valid(i) {
+                    continue;
                 }
-            }
-            // Every non-NULL mode is parsed: an invalid or different mode
-            // anywhere in the group is an error, whatever the row order.
-            if let Some(ref mode_reader) = mode_reader {
-                if mode_reader.is_valid(i) {
-                    // The mode is normally the same string on every row:
-                    // compare raw bytes and only validate and parse a new one.
-                    let slot = mode_slots.as_ref().map_or([0; 16], |m| m.get(i));
-                    let mode = match last_mode {
-                        Some((last, mode)) if last == slot => mode,
-                        _ => match parse_mode(mode_reader.read_str(i), func) {
-                            Ok(mode) => {
-                                last_mode = Some((slot, mode));
-                                mode
-                            }
-                            Err(message) => {
-                                info.set_error(&message);
-                                return;
-                            }
-                        },
-                    };
-                    if let Err(message) = record_mode(state, mode, func) {
-                        info.set_error(&message);
-                        return;
+                any_row = true;
+                let iv = interval_reader.read_interval(i);
+                let raw_window = (iv.months, iv.days, iv.micros);
+                match last_window {
+                    Some((last, window_us))
+                        if last == raw_window
+                            && state.window_set
+                            && state.window_size_us == window_us => {}
+                    _ => {
+                        if let Err(message) =
+                            apply_window(state, iv.months, iv.days, iv.micros, func)
+                        {
+                            info.set_error(&message);
+                            return;
+                        }
+                        last_window = Some((raw_window, state.window_size_us));
+                    }
+                }
+                // Every non-NULL mode is parsed: an invalid or different mode
+                // anywhere in the group is an error, whatever the row order.
+                if let (Some(reader), Some(slots)) = (&mode_reader, &mode_slots) {
+                    if reader.is_valid(i) {
+                        let recorded = row_mode(reader, slots, i, &mut last_mode, func)
+                            .and_then(|mode| record_mode(state, mode, func));
+                        if let Err(message) = recorded {
+                            info.set_error(&message);
+                            return;
+                        }
                     }
                 }
             }
-
-            let timestamp = ts_reader.read_i64(i);
-
-            // Pack conditions into u32 bitmask (max 32 conditions from function set)
-            let mut bitmask: u32 = 0;
-            for (c, reader) in cond_readers.iter().enumerate() {
-                if reader.is_valid(i) && reader.read_bool(i) {
-                    bitmask |= 1 << c;
-                }
+            if !any_row {
+                continue;
             }
+            state.num_conditions = num_conditions;
 
-            // Grow fallibly: an allocation failure becomes a SQL error
-            // instead of aborting the host process.
-            if state.events.len() == state.events.capacity() && state.events.try_reserve(1).is_err()
+            // 2. Events. Reserve the run once, fallibly (an allocation
+            //    failure becomes a SQL error instead of aborting the host
+            //    process); `extend` then writes into the reserved space. As in
+            //    `WindowFunnelState::update`, an event with no true condition
+            //    is kept only under `strict_order`, where it breaks a chain.
+            let needed = run.len();
+            if state.events.capacity() - state.events.len() < needed
+                && state.events.try_reserve(needed).is_err()
             {
-                info.set_error(&out_of_memory_message(func, state.events.len() + 1));
+                info.set_error(&out_of_memory_message(func, state.events.len() + needed));
                 return;
             }
-            state.update(Event::new(timestamp, bitmask), num_conditions);
+            // While a mode-taking state has not seen its mode yet (its rows
+            // so far had a NULL mode), keep such events too: the group's mode
+            // may still turn out to be `strict_order`. Finalize ignores them
+            // in the other modes.
+            let keep_empty =
+                state.mode.has(FunnelMode::STRICT_ORDER) || (has_mode && !state.mode_set);
+            state.events.extend(run.filter_map(|i| {
+                if !ts_reader.is_valid(i) || !interval_reader.is_valid(i) {
+                    return None;
+                }
+                let mut bitmask: u32 = 0;
+                for (c, reader) in cond_readers.iter().enumerate() {
+                    if reader.is_valid(i) && reader.read_bool(i) {
+                        bitmask |= 1 << c;
+                    }
+                }
+                (bitmask != 0 || keep_empty).then(|| Event::new(ts_reader.read_i64(i), bitmask))
+            }));
         }
     }
 }
@@ -286,6 +301,34 @@ fn apply_window(
              (28-31 days) and the total must fit in signed 64-bit microseconds; use \
              day/hour/minute/second units instead"
         )),
+    }
+}
+
+/// The mode of row `i`, parsing it only when its raw string slot differs
+/// from the last one parsed in this chunk (the mode is normally the same
+/// string on every row).
+///
+/// # Safety
+///
+/// `reader` and `slots` must read the chunk's `VARCHAR` mode column, and row
+/// `i` must be in bounds and non-`NULL`.
+unsafe fn row_mode(
+    reader: &VectorReader,
+    slots: &RawStringSlots,
+    i: usize,
+    last_mode: &mut Option<([u8; 16], FunnelMode)>,
+    func: &str,
+) -> Result<FunnelMode, String> {
+    // SAFETY: forwarded from this function's contract.
+    let slot = unsafe { slots.get(i) };
+    match *last_mode {
+        Some((last, mode)) if last == slot => Ok(mode),
+        _ => {
+            // SAFETY: forwarded from this function's contract.
+            let mode = parse_mode(unsafe { reader.read_str(i) }, func)?;
+            *last_mode = Some((slot, mode));
+            Ok(mode)
+        }
     }
 }
 

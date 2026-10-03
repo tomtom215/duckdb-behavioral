@@ -346,8 +346,9 @@ struct Stop;
 
 /// Mutable scan state shared by both per-timestamp-group evaluators.
 struct Scan<P> {
-    /// One entry per funnel step (`steps` long).
-    levels: Vec<Level<P>>,
+    /// One entry per possible step; only the first `steps` are used (a fixed
+    /// array: finalize runs once per group, so it should not allocate).
+    levels: [Level<P>; MAX_STEPS],
     /// Bit `i` set when `levels[i].cur` may be set (rolled at the next group).
     dirty: u32,
     /// An entry (condition 1) event has been seen.
@@ -721,8 +722,10 @@ type BuildPackedKeyHasher = std::hash::BuildHasherDefault<PackedKeyHasher>;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct WindowFunnelState {
-    /// Collected events (timestamp + conditions bitmask). Sorted in finalize.
-    pub events: Vec<Event>,
+    /// Collected events (timestamp + conditions bitmask). Sorted in
+    /// finalize. The first two live inline: with millions of tiny groups, a
+    /// heap allocation per group (freed on another thread) dominated the cost.
+    pub events: smallvec::SmallVec<[Event; 2]>,
     /// Window size in microseconds.
     pub window_size_us: i64,
     /// Number of funnel steps (conditions).
@@ -741,7 +744,7 @@ impl WindowFunnelState {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            events: Vec::new(),
+            events: smallvec::SmallVec::new_const(),
             window_size_us: 0,
             num_conditions: 0,
             mode: FunnelMode::DEFAULT,
@@ -809,11 +812,12 @@ impl WindowFunnelState {
     /// Computes the step timestamps of the chain that reached the most steps.
     ///
     /// Returns one timestamp per step reached, so the length always equals
-    /// [`finalize`](Self::finalize)'s result. Among chains reaching that many
-    /// steps, the one with the latest entry is returned (the chain the scan
-    /// keeps; on a tie, the one completed last). An event that fills several
-    /// steps contributes its timestamp once per step. Empty when no entry
-    /// condition matches.
+    /// [`finalize`](Self::finalize)'s result. When the funnel completes, the
+    /// scan stops and the first chain to complete is returned. Otherwise,
+    /// among chains reaching the most steps, the one with the latest entry is
+    /// returned (on a tie, the one completed last). An event that fills
+    /// several steps contributes its timestamp once per step. Empty when no
+    /// entry condition matches.
     #[must_use]
     pub fn finalize_events(&mut self) -> Vec<i64> {
         match self.evaluate::<StepPath>() {
@@ -843,7 +847,7 @@ impl WindowFunnelState {
 
         let mode = self.mode;
         let mut scan = Scan {
-            levels: vec![Level::EMPTY; steps],
+            levels: [Level::EMPTY; MAX_STEPS],
             dirty: 0,
             first_event: false,
             window: self.window_size_us as u64,
@@ -2680,6 +2684,172 @@ mod clickhouse_parity_tests {
         s.window_size_us = 10 * S;
         s.update(Event::new(5 * S, 0b11), 2);
         assert_eq!(s.finalize_events(), vec![5 * S, 5 * S]);
+    }
+}
+
+/// Tests written for mutants cargo-mutants found surviving: each pins a
+/// behaviour that one operator change in the scan would alter.
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+
+    const S: i64 = 1_000_000;
+
+    /// A state with a `window_s`-second window, `mode`, `n` steps and one
+    /// event per `(seconds, true conditions)` entry.
+    fn state(
+        window_s: i64,
+        mode: FunnelMode,
+        n: usize,
+        events: &[(i64, &[usize])],
+    ) -> WindowFunnelState {
+        let mut state = WindowFunnelState::new();
+        state.window_size_us = window_s * S;
+        state.mode = mode;
+        for &(ts, conds) in events {
+            let mut bools = vec![false; n];
+            for &c in conds {
+                bools[c] = true;
+            }
+            state.update(Event::from_bools(ts * S, &bools), n);
+        }
+        state
+    }
+
+    /// Two identical rows at one timestamp still enter the funnel (their
+    /// conditions are OR-ed, not XOR-ed).
+    #[test]
+    fn duplicate_rows_at_one_timestamp_enter() {
+        let mut s = state(
+            10,
+            FunnelMode::DEFAULT,
+            2,
+            &[(0, &[0]), (0, &[0]), (1, &[1])],
+        );
+        assert_eq!(s.finalize(), 2);
+    }
+
+    /// A level holding an older and a newer chain extends the newer one:
+    /// only it is still within the window at 20 s.
+    #[test]
+    fn newer_chain_at_a_level_is_extended() {
+        let mut s = state(
+            10,
+            FunnelMode::DEFAULT,
+            3,
+            &[(0, &[0]), (1, &[1]), (15, &[0]), (20, &[1, 2])],
+        );
+        assert_eq!(s.finalize(), 3);
+    }
+
+    /// Under `strict_once`, a level offered chains entered at 0 s and 5 s
+    /// keeps the later one, which step 3 at 12 s can still extend.
+    #[test]
+    fn strict_once_level_keeps_latest_entry() {
+        let mut s = state(
+            10,
+            FunnelMode::STRICT_ONCE,
+            3,
+            &[(0, &[0]), (5, &[1]), (5, &[0, 1]), (12, &[2])],
+        );
+        assert_eq!(s.finalize(), 3);
+    }
+
+    /// `strict_once` respects the window.
+    #[test]
+    fn strict_once_step_outside_window_is_not_reached() {
+        let mut s = state(10, FunnelMode::STRICT_ONCE, 2, &[(0, &[0]), (100, &[1])]);
+        assert_eq!(s.finalize(), 1);
+    }
+
+    /// Under `strict_once`, a same-timestamp group extends the chain with the
+    /// latest entry (5 s), not an earlier one (0 s) that step 4 at 12 s can
+    /// no longer reach.
+    #[test]
+    fn strict_once_extends_latest_entry_base() {
+        let mut s = state(
+            10,
+            FunnelMode::STRICT_ONCE,
+            4,
+            &[
+                (0, &[0]),
+                (1, &[1]),
+                (5, &[0]),
+                (8, &[1]),
+                (8, &[2]),
+                (8, &[2]),
+                (12, &[3]),
+            ],
+        );
+        assert_eq!(s.finalize(), 4);
+    }
+
+    /// A complete funnel stops the scan: the first chain to complete is
+    /// returned, in both evaluators.
+    #[test]
+    fn complete_funnel_returns_first_completed_chain() {
+        for mode in [FunnelMode::DEFAULT, FunnelMode::STRICT_ONCE] {
+            let mut s = state(10, mode, 2, &[(0, &[0]), (1, &[1]), (2, &[0]), (3, &[1])]);
+            assert_eq!(s.finalize_events(), vec![0, S], "{mode:?}");
+        }
+    }
+
+    /// An incomplete funnel returns the latest-entry chain among those
+    /// reaching the most steps.
+    #[test]
+    fn incomplete_funnel_returns_latest_entry_chain() {
+        let mut s = state(
+            10,
+            FunnelMode::DEFAULT,
+            3,
+            &[(0, &[0]), (1, &[1]), (2, &[0]), (3, &[1])],
+        );
+        assert_eq!(s.finalize_events(), vec![2 * S, 3 * S]);
+    }
+
+    /// Combining a fresh state into one with a window keeps the window.
+    #[test]
+    fn combine_with_fresh_state_keeps_window() {
+        let mut s = state(10, FunnelMode::DEFAULT, 2, &[(0, &[0]), (5, &[1])]);
+        s.combine_in_place(&WindowFunnelState::new());
+        assert_eq!(s.finalize(), 2);
+    }
+}
+
+#[cfg(test)]
+mod empty_event_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(5_000))]
+
+        /// Events with no true condition matter only under `strict_order`.
+        /// The FFI keeps them while a group's mode is still unknown (its
+        /// rows so far had a NULL mode), so in every other mode they must
+        /// change neither result.
+        #[test]
+        fn condition_less_events_are_inert_outside_strict_order(
+            events in prop::collection::vec((0i64..8, 0u32..8), 0..12),
+            empties in prop::collection::vec(0i64..9, 1..6),
+            mode_bits in prop::sample::subsequence(vec![0x01u8, 0x04, 0x08, 0x10], 0..=4),
+            window in 0i64..6,
+        ) {
+            let mode = mode_bits.iter().fold(FunnelMode::DEFAULT, |m, &b| m.with(FunnelMode::from_bits(b)));
+            let mut plain = WindowFunnelState::new();
+            plain.window_size_us = window;
+            plain.mode = mode;
+            for &(ts, mask) in &events {
+                plain.update(Event::new(ts, mask), 3);
+            }
+            plain.num_conditions = 3;
+            let mut with_empties = plain.clone();
+            for &ts in &empties {
+                with_empties.events.push(Event::new(ts, 0));
+            }
+            prop_assert_eq!(with_empties.clone().finalize(), plain.clone().finalize());
+            prop_assert_eq!(with_empties.finalize_events(), plain.finalize_events());
+        }
     }
 }
 

@@ -543,6 +543,7 @@ dependencies = [
  "libduckdb-sys",
  "proptest",
  "quack-rs",
+ "smallvec",
 ]
 
 [[package]]

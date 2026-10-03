@@ -22,6 +22,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 quack-rs = "=0.18.0"
 libduckdb-sys = { version = "=1.10506.0", features = ["loadable-extension"] }
+smallvec = { version = "1", features = ["const_new"] }
 
 [dev-dependencies]
 # No `bundled` feature: dev/test builds link a prebuilt libduckdb downloaded by
@@ -87,7 +88,7 @@ opt-level = 3
 lto = "thin"
 
 [lints.rust]
-unsafe_op_in_unsafe_fn = "allow"
+unsafe_op_in_unsafe_fn = "warn"
 missing_docs = "warn"
 
 [lints.clippy]

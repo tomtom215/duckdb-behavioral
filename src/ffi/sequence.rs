@@ -7,14 +7,16 @@
 //! registration, [`quack_rs::aggregate::FfiState`] for safe state management,
 //! and [`quack_rs::vector::VectorReader`] for safe vector reading.
 
+use super::RawStringSlots;
 use crate::common::config::{conflict_message, out_of_memory_message};
 use crate::common::event::Event;
-use crate::pattern::parser::parse_pattern;
+use crate::pattern::parser::{parse_pattern, CompiledPattern};
 use crate::sequence::SequenceState;
 use libduckdb_sys::*;
 use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
 use quack_rs::types::TypeId;
 use quack_rs::vector::{VectorReader, VectorWriter};
+use std::sync::Arc;
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
@@ -226,39 +228,46 @@ pub(super) unsafe fn update_impl(
         let cond_readers: Vec<VectorReader> = (2..col_count)
             .map(|c| VectorReader::new(input, c))
             .collect();
+        let pattern_slots = RawStringSlots::new(input, 0);
+        // The last distinct pattern in this chunk: its raw slot, text and
+        // compiled form.
+        let mut last_pattern: Option<([u8; 16], Arc<str>, Arc<CompiledPattern>)> = None;
 
-        for i in 0..row_count {
-            let Some(state) = FfiState::<SequenceState>::with_state_mut(*states.add(i)) else {
+        // DuckDB hands consecutive rows of one group the same state, so work
+        // per run of equal state pointers: with one large group the whole
+        // chunk is one run, and the per-row cost is just building the event.
+        let mut start = 0;
+        while start < row_count {
+            let state_ptr = *states.add(start);
+            let mut end = start + 1;
+            while end < row_count && *states.add(end) == state_ptr {
+                end += 1;
+            }
+            let run = start..end;
+            start = end;
+            let Some(state) = FfiState::<SequenceState>::with_state_mut(state_ptr) else {
                 continue;
             };
-            if !ts_reader.is_valid(i) {
-                continue;
-            }
 
-            if pattern_reader.is_valid(i) {
-                // Compare raw bytes first: the pattern is normally the same on
-                // every row, and an equal byte string needs no validation.
-                let raw = pattern_reader.read_blob(i);
-                if state
-                    .pattern_str
-                    .as_deref()
-                    .is_some_and(|existing| existing.as_bytes() == raw)
-                {
-                    // Same pattern as the state already holds.
-                } else {
+            // 1. Patterns. Rows of the run that repeat the previous row's raw
+            //    slot carry the same string, already checked for this state.
+            let mut checked_slot: Option<[u8; 16]> = None;
+            for i in run.clone() {
+                if !ts_reader.is_valid(i) || !pattern_reader.is_valid(i) {
+                    continue;
+                }
+                let slot = pattern_slots.get(i);
+                if checked_slot == Some(slot) {
+                    continue;
+                }
+                checked_slot = Some(slot);
+                // Parse each distinct value once per chunk and share it, so a
+                // state takes it without allocating.
+                if !matches!(&last_pattern, Some((cached, _, _)) if *cached == slot) {
                     let s = pattern_reader.read_str(i);
-                    match state.pattern_str.as_deref() {
-                        Some(existing) if existing == s => {}
-                        Some(existing) => {
-                            info.set_error(&conflict_message(
-                                func,
-                                "pattern",
-                                &quote_pattern(existing),
-                                &quote_pattern(s),
-                            ));
-                            return;
-                        }
-                        None => match parse_pattern(s) {
+                    match &mut last_pattern {
+                        Some((cached, text, _)) if &**text == s => *cached = slot,
+                        _ => match parse_pattern(s) {
                             Err(e) => {
                                 info.set_error(&format!(
                                     "invalid sequence pattern {}: {e}",
@@ -266,39 +275,66 @@ pub(super) unsafe fn update_impl(
                                 ));
                                 return;
                             }
-                            // As in ClickHouse, a condition number beyond those
-                            // passed is an error, not a step that never matches.
+                            // As in ClickHouse, a condition number beyond
+                            // those passed is an error, not a step that never
+                            // matches.
                             Ok(p) if p.max_condition().is_some_and(|n| n > cond_readers.len()) => {
                                 info.set_error(&format!(
                                     "invalid sequence pattern {}: condition (?{}) is out of \
-                                 range; {} conditions were passed",
+                                     range; {} conditions were passed",
                                     quote_pattern(s),
                                     p.max_condition().unwrap_or(0),
                                     cond_readers.len()
                                 ));
                                 return;
                             }
-                            Ok(p) => state.set_compiled_pattern(s, p),
+                            Ok(p) => last_pattern = Some((slot, Arc::from(s), Arc::new(p))),
                         },
+                    }
+                }
+                let (_, text, compiled) = last_pattern.as_ref().expect("set above");
+                match &state.pattern_str {
+                    None => state.set_compiled_pattern(text, compiled),
+                    Some(existing) if Arc::ptr_eq(existing, text) => {}
+                    // The same pattern from an earlier chunk: adopt this
+                    // chunk's copy so later checks compare pointers.
+                    Some(existing) if existing == text => state.replace_pattern(text, compiled),
+                    Some(existing) => {
+                        info.set_error(&conflict_message(
+                            func,
+                            "pattern",
+                            &quote_pattern(existing),
+                            &quote_pattern(text),
+                        ));
+                        return;
                     }
                 }
             }
 
-            let timestamp = ts_reader.read_i64(i);
-            let mut bitmask: u32 = 0;
-            for (c, reader) in cond_readers.iter().enumerate() {
-                if reader.is_valid(i) && reader.read_bool(i) {
-                    bitmask |= 1 << c;
-                }
-            }
-            let event = Event::new(timestamp, bitmask);
-            // Grow fallibly: an allocation failure becomes a SQL error
-            // instead of aborting the host process.
-            if event.has_any_condition() && state.events.try_reserve(1).is_err() {
-                info.set_error(&out_of_memory_message(func, state.events.len() + 1));
+            // 2. Events. Reserve the run once, fallibly (an allocation failure
+            //    becomes a SQL error instead of aborting the host process);
+            //    `extend` then writes into the reserved space.
+            let needed = run.len();
+            if state.events.capacity() - state.events.len() < needed
+                && state.events.try_reserve(needed).is_err()
+            {
+                info.set_error(&out_of_memory_message(func, state.events.len() + needed));
                 return;
             }
-            state.update(event);
+            state.events.extend(run.filter_map(|i| {
+                if !ts_reader.is_valid(i) {
+                    return None;
+                }
+                let mut bitmask: u32 = 0;
+                for (c, reader) in cond_readers.iter().enumerate() {
+                    if reader.is_valid(i) && reader.read_bool(i) {
+                        bitmask |= 1 << c;
+                    }
+                }
+                // Only events with a true condition can match a `(?N)` step
+                // (as in `SequenceState::update`).
+                (bitmask != 0).then(|| Event::new(ts_reader.read_i64(i), bitmask))
+            }));
         }
     }
 }

@@ -701,6 +701,23 @@ mod step_limit_tests {
 }
 
 #[cfg(test)]
+mod max_condition_tests {
+    use super::*;
+
+    /// `max_condition` is the highest 1-based condition referenced, which
+    /// the FFI checks against the number of condition columns.
+    #[test]
+    fn max_condition_is_highest_referenced_condition() {
+        let max = |p: &str| parse_pattern(p).unwrap().max_condition();
+        assert_eq!(max("(?1)"), Some(1));
+        assert_eq!(max("(?3).*(?1)"), Some(3));
+        assert_eq!(max("(?2)(?t<5)(?7)."), Some(7));
+        assert_eq!(max(".*"), None);
+        assert_eq!(max("."), None);
+    }
+}
+
+#[cfg(test)]
 mod error_text_tests {
     use super::*;
 

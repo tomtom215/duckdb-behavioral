@@ -28,6 +28,7 @@ reproducible via `cargo bench`.
 - [Session 11: NFA Reusable Stack + Fast-Path Linear Scan](#session-11-nfa-reusable-stack--fast-path-linear-scan)
 - [Session 18 (v0.8.0): Correctness-Driven Arithmetic + Determinism — Measured Cost](#session-18-v080-correctness-driven-arithmetic--determinism--measured-cost)
 - [Session 19: Feasibility-Then-Greedy Sequence Matcher](#session-19-feasibility-then-greedy-sequence-matcher)
+- [Session 20: Per-Row Allocation and Run-Based Update](#session-20-per-row-allocation-and-run-based-update)
 - [Current Baseline](#current-baseline)
   - [Sessionize](#sessionize)
   - [Retention](#retention)
@@ -917,6 +918,66 @@ at +51% to +67% at 1M events across the two runs. Things tried:
   (non-overlapping CIs).
 - `u32` instead of `usize` for the next-feasible array gained ~8% and was
   not adopted, because it needs a separate path for groups over 2^32 events.
+
+### Session 20: Per-Row Allocation and Run-Based Update
+
+**Problem.** With many tiny groups (2M groups of 2 rows), every group paid
+for heap allocations: its event `Vec`, its own copy of the pattern string and
+compiled pattern, and a `Vec` in `classify_pattern`. Under 4 threads these
+contended in glibc malloc (perf: `malloc`/`_int_free` and kernel page faults
+near the top), and 4 threads were barely faster than 1.
+
+**Change.**
+- Events are a `SmallVec<[Event; 2]>`: a group of up to two events never
+  allocates for them.
+- The sequence pattern string and compiled pattern are `Arc`-shared from a
+  per-chunk cache instead of copied into each state.
+- `classify_pattern` returns a fieldless enum and scans conditions through a
+  stack buffer.
+- The funnel scan's levels are a fixed `[Level; 32]` array.
+- Update works on runs of rows that share a state pointer: configuration is
+  checked per row, then the run's events are reserved once (fallibly) and
+  appended with `extend`.
+
+**SQL timings** (DuckDB 1.5.6 CLI, release builds of the parent commit
+a4cdfd5 ("head") and this change, 5 runs each alternating, min–max; results
+identical):
+
+| Query | Threads | Head | This change |
+|---|---|---|---|
+| `window_funnel(1 hour, ts, a, b)`, 2M groups of 2 rows | 4 | 0.586–0.811 s | 0.166–0.184 s |
+| same | 1 | 0.755–1.095 s | 0.524–0.612 s |
+| `sequence_match('(?1)(?2)', …)`, 2M groups of 2 rows | 4 | 1.163–1.275 s | 0.180–0.192 s |
+| same | 1 | 1.089–1.681 s | 0.518–0.575 s |
+| `window_funnel(1 hour, ts, a, b, c)`, one 10M-row group | 1 | 0.238–0.252 s | 0.256–0.280 s |
+| `sequence_match('(?1).*(?2)', …)`, one 10M-row group | 1 | 0.161–0.190 s | 0.179–0.202 s |
+| `sequence_match('(?1)(?t<=3600)(?2)', …)`, one 10M-row group | 1 | 0.241–0.265 s | 0.258–0.282 s |
+| `window_funnel(…)`, one 10M-row group | 4 | 0.565–0.601 s | 0.588–0.620 s |
+| `sequence_match('(?1).*(?2)', …)`, one 10M-row group | 4 | 0.358–0.389 s | 0.385–0.410 s |
+
+**Criterion** (Criterion 0.8, 95% CI, `--baseline` against the parent
+commit, same machine: shared 4-core Intel Xeon @ 2.80 GHz, release profile):
+
+| Benchmark | Head | This change | Change |
+|---|---|---|---|
+| `window_funnel_finalize/…/1000000` | 2.117 ms [2.077, 2.160] | 2.130 ms [2.084, 2.181] | none detected (p = 0.69) |
+| `window_funnel_combine/1000000` | 18.84 ms [18.59, 19.11] | 16.19 ms [16.04, 16.38] | −14% [−15.6, −12.5] |
+| `window_funnel_events_finalize/…/1000000` | 2.510 ms [2.439, 2.584] | 2.159 ms [2.130, 2.192] | −14% [−16.7, −11.2] |
+| `sequence_match/1000000` | 2.406 ms [2.330, 2.482] | 2.555 ms [2.494, 2.620] | +6.2% [+2.0, +10.8] |
+| `sequence_match_time_constraint/1000000` | 19.30 ms [18.93, 19.75] | 17.39 ms [17.17, 17.61] | −9.9% [−12.2, −7.8] |
+| `sequence_count/1000000` | 3.364 ms [3.276, 3.456] | 3.275 ms [3.193, 3.361] | none detected (p = 0.17) |
+| `sequence_combine/1000000` | 29.34 ms [28.91, 29.78] | 18.09 ms [17.83, 18.39] | −38% [−39.7, −37.0] |
+
+**Accepted regression.** One large group is 5–10% slower in SQL (the
+min–max ranges overlap only for the 4-thread `sequence_match` row), and
+Criterion's `sequence_match` is +6%. perf on the 10M-row funnel query puts
+most of `update_impl`'s samples on the condition-column loads and the
+interval read in the configuration pass, both of which the parent commit
+also does; the second pass over each run is the visible extra cost. The
+tiny-group speedup (1.4–6.5×) was judged worth it, because many small
+groups (per-user funnels) is the common shape.
+- Measured and not kept: the fixed level array alone, without the other
+  changes, made no measurable difference.
 
 ## Current Baseline
 

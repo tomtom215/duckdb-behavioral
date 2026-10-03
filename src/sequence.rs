@@ -28,6 +28,8 @@
 //! GROUP BY user_id
 //! ```
 
+use std::sync::Arc;
+
 use crate::common::event::{sort_events, Event};
 use crate::pattern::executor::{execute_pattern, execute_pattern_events, MatchResult};
 use crate::pattern::parser::{parse_pattern, CompiledPattern, PatternError};
@@ -39,14 +41,17 @@ use crate::pattern::parser::{parse_pattern, CompiledPattern, PatternError};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SequenceState {
-    /// Collected events (timestamp + conditions). Sorted in finalize.
-    pub events: Vec<Event>,
-    /// Pattern string (parsed on first use in finalize).
-    pub pattern_str: Option<String>,
+    /// Collected events (timestamp + conditions). Sorted in finalize. The
+    /// first two live inline: with millions of tiny groups, a heap
+    /// allocation per group (freed on another thread) dominated the cost.
+    pub events: smallvec::SmallVec<[Event; 2]>,
+    /// Pattern string. Shared (`Arc`) by every state of a query that received
+    /// it from the same chunk, so a group costs no allocation for it.
+    pub pattern_str: Option<Arc<str>>,
     /// Cached compiled pattern (set with the pattern by
     /// [`set_compiled_pattern`](Self::set_compiled_pattern), or compiled on
     /// first use in finalize).
-    compiled_pattern: Option<CompiledPattern>,
+    compiled_pattern: Option<Arc<CompiledPattern>>,
 }
 
 impl SequenceState {
@@ -54,7 +59,7 @@ impl SequenceState {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            events: Vec::new(),
+            events: smallvec::SmallVec::new_const(),
             pattern_str: None,
             compiled_pattern: None,
         }
@@ -63,17 +68,24 @@ impl SequenceState {
     /// Sets the pattern string (called once during the first update).
     pub fn set_pattern(&mut self, pattern: &str) {
         if self.pattern_str.is_none() {
-            self.pattern_str = Some(pattern.to_string());
+            self.pattern_str = Some(Arc::from(pattern));
         }
     }
 
     /// Sets the pattern string together with its already-compiled form, so
     /// finalize does not parse it again. Ignored if a pattern is already set.
-    pub fn set_compiled_pattern(&mut self, pattern: &str, compiled: CompiledPattern) {
+    pub fn set_compiled_pattern(&mut self, pattern: &Arc<str>, compiled: &Arc<CompiledPattern>) {
         if self.pattern_str.is_none() {
-            self.pattern_str = Some(pattern.to_string());
-            self.compiled_pattern = Some(compiled);
+            self.pattern_str = Some(Arc::clone(pattern));
+            self.compiled_pattern = Some(Arc::clone(compiled));
         }
+    }
+
+    /// Replaces the pattern with an equal one (same text) shared elsewhere.
+    pub(crate) fn replace_pattern(&mut self, pattern: &Arc<str>, compiled: &Arc<CompiledPattern>) {
+        debug_assert_eq!(self.pattern_str.as_deref(), Some(&**pattern));
+        self.pattern_str = Some(Arc::clone(pattern));
+        self.compiled_pattern = Some(Arc::clone(compiled));
     }
 
     /// Adds an event to the state.
@@ -92,7 +104,7 @@ impl SequenceState {
     /// `execute()` sorts them before pattern matching.
     #[must_use]
     pub fn combine(&self, other: &Self) -> Self {
-        let mut events = Vec::with_capacity(self.events.len() + other.events.len());
+        let mut events = smallvec::SmallVec::with_capacity(self.events.len() + other.events.len());
         events.extend_from_slice(&self.events);
         events.extend_from_slice(&other.events);
         Self {
@@ -129,7 +141,7 @@ impl SequenceState {
 
         if self.compiled_pattern.is_none() {
             let pattern_str = self.pattern_str.as_deref().unwrap_or("");
-            self.compiled_pattern = Some(parse_pattern(pattern_str)?);
+            self.compiled_pattern = Some(Arc::new(parse_pattern(pattern_str)?));
         }
 
         let pattern = self
@@ -170,7 +182,7 @@ impl SequenceState {
 
         if self.compiled_pattern.is_none() {
             let pattern_str = self.pattern_str.as_deref().unwrap_or("");
-            self.compiled_pattern = Some(parse_pattern(pattern_str)?);
+            self.compiled_pattern = Some(Arc::new(parse_pattern(pattern_str)?));
         }
 
         let pattern = self

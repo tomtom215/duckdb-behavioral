@@ -1457,6 +1457,97 @@ mod tests {
     }
 }
 
+/// Tests written for mutants cargo-mutants found surviving: each pins a
+/// behaviour that one operator change would alter.
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+
+    fn event(ts: i64, value: &str, base: bool, conditions: u32) -> NextNodeEvent {
+        NextNodeEvent::new(ts, Some(Arc::from(value)), base, conditions)
+    }
+
+    fn state(
+        direction: Direction,
+        base: Base,
+        steps: usize,
+        events: Vec<NextNodeEvent>,
+    ) -> SequenceNextNodeState {
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(direction);
+        state.base = Some(base);
+        state.num_steps = steps;
+        for e in events {
+            state.update(e);
+        }
+        state
+    }
+
+    /// `first_match` anchors on the first event satisfying the base
+    /// condition and `event1`, skipping one that satisfies only the base.
+    #[test]
+    fn first_match_needs_event1() {
+        let mut s = state(
+            Direction::Forward,
+            Base::FirstMatch,
+            1,
+            vec![
+                event(0, "A", true, 0),
+                event(1, "B", true, 1),
+                event(2, "C", false, 0),
+            ],
+        );
+        assert_eq!(s.finalize().as_deref(), Some("C"));
+    }
+
+    /// `last_match` anchors on the last event satisfying both the base
+    /// condition and `event1` (B), not on one satisfying either (C or D).
+    #[test]
+    fn last_match_needs_base_and_event1() {
+        let mut s = state(
+            Direction::Backward,
+            Base::LastMatch,
+            1,
+            vec![
+                event(0, "A", false, 0),
+                event(1, "B", true, 1),
+                event(2, "C", true, 0),
+                event(3, "D", false, 1),
+            ],
+        );
+        assert_eq!(s.finalize().as_deref(), Some("A"));
+    }
+
+    /// A backward chain fails when an earlier step does not hold.
+    #[test]
+    fn backward_chain_checks_every_step() {
+        let mut s = state(
+            Direction::Backward,
+            Base::Tail,
+            2,
+            vec![
+                event(0, "A", false, 0),
+                event(1, "B", false, 0),
+                event(2, "C", true, 1),
+            ],
+        );
+        assert_eq!(s.finalize(), None);
+    }
+
+    /// Combining with a fresh state keeps the step count.
+    #[test]
+    fn combine_with_fresh_state_keeps_num_steps() {
+        let s = state(
+            Direction::Forward,
+            Base::Head,
+            1,
+            vec![event(0, "A", true, 1), event(1, "B", false, 0)],
+        );
+        let mut combined = s.combine(&SequenceNextNodeState::new());
+        assert_eq!(combined.finalize().as_deref(), Some("B"));
+    }
+}
+
 #[cfg(test)]
 mod proptests {
     use super::*;

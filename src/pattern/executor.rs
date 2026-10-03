@@ -90,8 +90,12 @@ pub fn execute_pattern(
     }
 
     match classify_pattern(pattern) {
-        PatternShape::AdjacentConditions(ref conds) => Ok(fast_adjacent(events, conds, count_all)),
-        PatternShape::WildcardSeparated(ref conds) => Ok(fast_wildcard(events, conds, count_all)),
+        PatternShape::AdjacentConditions => Ok(with_conditions(pattern, |conds| {
+            fast_adjacent(events, conds, count_all)
+        })),
+        PatternShape::WildcardSeparated => Ok(with_conditions(pattern, |conds| {
+            fast_wildcard(events, conds, count_all)
+        })),
         PatternShape::Complex => Matcher::new(pattern, events).execute(count_all),
     }
 }
@@ -115,69 +119,81 @@ pub fn execute_pattern_events(
     if events.is_empty() || pattern.steps.is_empty() {
         return Ok(Vec::new());
     }
-    if let PatternShape::WildcardSeparated(ref conds) = classify_pattern(pattern) {
-        return Ok(fast_wildcard_events(events, conds));
+    if classify_pattern(pattern) == PatternShape::WildcardSeparated {
+        return Ok(with_conditions(pattern, |conds| {
+            fast_wildcard_events(events, conds)
+        }));
     }
     Matcher::new(pattern, events).execute_events()
 }
 
 /// Pattern shape classification for fast-path dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PatternShape {
     /// All steps are `Condition` — adjacent matching required.
-    AdjacentConditions(Vec<usize>),
+    AdjacentConditions,
     /// Conditions separated by `.*` — greedy forward scan.
-    WildcardSeparated(Vec<usize>),
+    WildcardSeparated,
     /// Requires the general matcher (time constraints, `.`, mixed shapes).
     Complex,
 }
 
-/// Classifies a compiled pattern into a fast-path shape.
+/// Classifies a compiled pattern into a fast-path shape, without allocating
+/// (it runs once per group).
 ///
 /// Returns `AdjacentConditions` if all steps are `Condition` (no wildcards).
-/// Returns `WildcardSeparated` if the pattern alternates `Condition` and
-/// `AnyEvents` steps (e.g., `(?1).*(?2).*(?3)`).
-/// Returns `Complex` for patterns with time constraints, `.` (`OneEvent`),
-/// or mixed structures.
+/// Returns `WildcardSeparated` if the pattern mixes `Condition` and
+/// `AnyEvents` steps with no two conditions adjacent (e.g.,
+/// `(?1).*(?2).*(?3)`). Returns `Complex` for patterns with time
+/// constraints, `.` (`OneEvent`), or other structures.
 fn classify_pattern(pattern: &CompiledPattern) -> PatternShape {
-    let mut conditions = Vec::new();
+    let mut has_condition = false;
     let mut has_any_events = false;
-    let mut has_only_conditions = true;
-
     for step in &pattern.steps {
         match step {
-            PatternStep::Condition(idx) => conditions.push(*idx),
-            PatternStep::AnyEvents => {
-                has_any_events = true;
-                has_only_conditions = false;
-            }
+            PatternStep::Condition(_) => has_condition = true,
+            PatternStep::AnyEvents => has_any_events = true,
             PatternStep::OneEvent | PatternStep::TimeConstraint(_, _) => {
                 return PatternShape::Complex;
             }
         }
     }
-
-    if conditions.is_empty() {
+    if !has_condition {
         return PatternShape::Complex;
     }
-
-    if has_only_conditions {
-        return PatternShape::AdjacentConditions(conditions);
+    if !has_any_events {
+        return PatternShape::AdjacentConditions;
     }
-
-    // Has AnyEvents — check if it's the standard wildcard-separated form.
-    // Accept any mix of Condition and AnyEvents (consecutive AnyEvents is
-    // just .*.* which matches any number of events, same as .*).
     // Only valid when no two conditions are adjacent: `(?1)(?2).*(?3)`
     // requires `(?2)` on the event right after `(?1)`, which the
     // step-counter scan cannot express.
     let adjacent_conditions = pattern.steps.windows(2).any(|w| {
         matches!(w[0], PatternStep::Condition(_)) && matches!(w[1], PatternStep::Condition(_))
     });
-    if has_any_events && !adjacent_conditions {
-        return PatternShape::WildcardSeparated(conditions);
+    if adjacent_conditions {
+        PatternShape::Complex
+    } else {
+        PatternShape::WildcardSeparated
     }
+}
 
-    PatternShape::Complex
+/// Calls `f` with the pattern's condition indices in order, from a stack
+/// buffer when there are at most 32 (no per-group allocation).
+fn with_conditions<R>(pattern: &CompiledPattern, f: impl FnOnce(&[usize]) -> R) -> R {
+    let conditions = pattern.steps.iter().filter_map(|step| match step {
+        PatternStep::Condition(idx) => Some(*idx),
+        _ => None,
+    });
+    let mut buffer = [0usize; 32];
+    let mut len = 0;
+    for idx in conditions.clone() {
+        if len == buffer.len() {
+            return f(&conditions.collect::<Vec<_>>());
+        }
+        buffer[len] = idx;
+        len += 1;
+    }
+    f(&buffer[..len])
 }
 
 /// Fast path for adjacent-condition patterns like `(?1)(?2)(?3)`.
