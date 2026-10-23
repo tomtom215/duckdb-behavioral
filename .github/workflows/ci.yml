@@ -372,12 +372,12 @@ jobs:
 
   # ── MSRV verification ────────────────────────────────────────────────
   msrv:
-    name: MSRV (1.87)
+    name: MSRV (1.88)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@1.87
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
@@ -385,7 +385,7 @@ jobs:
           # target/duckdb-download, stranding the linker with a dangling
           # `-lduckdb`. A cold key forces a fresh download that repopulates it.
           prefix-key: v1-rust
-          key: msrv-1.87
+          key: msrv-1.88
       # rust-cache prunes target/ before saving (cleanTargetDir treats
       # target/duckdb-download as a profile dir and keeps only build/,
       # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
@@ -400,17 +400,17 @@ jobs:
           fi
       - name: Check MSRV compilation
         id: msrv-check
-        # `+1.87` is required: rust-toolchain.toml pins `channel = "stable"`,
+        # `+1.88` is required: rust-toolchain.toml pins `channel = "stable"`,
         # and a toolchain file overrides the toolchain installed above, so a
         # bare `cargo check` would silently run stable instead of the MSRV.
-        run: cargo +1.87 check --all-targets
+        run: cargo +1.88 check --all-targets
       - name: Summary
         if: always()
         run: |
           if [ "${{ steps.msrv-check.outcome }}" = "success" ]; then
-            echo "### ✅ MSRV 1.87 compilation verified" >> "$GITHUB_STEP_SUMMARY"
+            echo "### ✅ MSRV 1.88 compilation verified" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### ❌ MSRV 1.87 compilation failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "### ❌ MSRV 1.88 compilation failed" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # ── Benchmark compilation ────────────────────────────────────────────

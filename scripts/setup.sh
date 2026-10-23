@@ -37,7 +37,7 @@ readonly DUCKDB_C_API_VERSION="v1.2.0"
 
 # DuckDB CLI release recommended for local E2E testing (matches the
 # libduckdb-sys pin in Cargo.toml).
-readonly DUCKDB_RELEASE_VERSION="v1.5.6"
+readonly DUCKDB_RELEASE_VERSION="v2.0.0"
 
 # Extension version, read from Cargo.toml's [package] version.
 EXT_VERSION="v$(sed -n 's/^version = "\(.*\)"$/\1/p' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../Cargo.toml" | head -1)"
@@ -122,13 +122,13 @@ install_duckdb() {
     local base="https://github.com/duckdb/duckdb/releases/download/${DUCKDB_RELEASE_VERSION}"
     local url=""
     if [[ "${os}" == "linux" && "${arch}" == "x86_64" ]]; then
-        url="${base}/duckdb_cli-linux-amd64.zip"
+        url="${base}/duckdb-cli-linux-amd64.tar.gz"
     elif [[ "${os}" == "linux" && "${arch}" == "aarch64" ]]; then
-        url="${base}/duckdb_cli-linux-aarch64.zip"
+        url="${base}/duckdb-cli-linux-arm64.tar.gz"
     elif [[ "${os}" == "darwin" && "${arch}" == "x86_64" ]]; then
-        url="${base}/duckdb_cli-osx-universal.zip"
+        url="${base}/duckdb-cli-osx-universal.tar.gz"
     elif [[ "${os}" == "darwin" && "${arch}" == "arm64" ]]; then
-        url="${base}/duckdb_cli-osx-universal.zip"
+        url="${base}/duckdb-cli-osx-universal.tar.gz"
     else
         log_err "Unsupported platform: ${os}/${arch}"
         return 1
@@ -138,16 +138,16 @@ install_duckdb() {
     tmpdir="$(mktemp -d)"
 
     if command -v curl &>/dev/null; then
-        curl -fsSL "${url}" -o "${tmpdir}/duckdb.zip"
+        curl -fsSL "${url}" -o "${tmpdir}/duckdb.tar.gz"
     elif command -v wget &>/dev/null; then
-        wget -q "${url}" -O "${tmpdir}/duckdb.zip"
+        wget -q "${url}" -O "${tmpdir}/duckdb.tar.gz"
     else
         log_err "Neither curl nor wget found. Install DuckDB manually."
         rm -rf "${tmpdir}"
         return 1
     fi
 
-    unzip -q "${tmpdir}/duckdb.zip" -d "${tmpdir}"
+    tar xzf "${tmpdir}/duckdb.tar.gz" -C "${tmpdir}"
     cp "${tmpdir}/duckdb" /tmp/duckdb
     chmod +x /tmp/duckdb
     rm -rf "${tmpdir}"

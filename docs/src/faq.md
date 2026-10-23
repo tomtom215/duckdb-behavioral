@@ -28,7 +28,7 @@ git submodule update --init --recursive   # first time only
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension   # .dylib on macOS
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.1 \
   -o /tmp/behavioral.duckdb_extension
 ```
 
@@ -538,7 +538,10 @@ this extension, is called in these shapes:
   which covers the whole partition without crashing.
 
 Verified on DuckDB 1.5.6, where all three exit with a segmentation fault
-(and on 1.3.2 and 1.4.4). The safe alternatives return the same values as
+(and on 1.3.2 and 1.4.4). On DuckDB 2.0.0 none of them crashed for any of the eight functions (100,000
+rows in one partition), and the seven event functions returned the same
+values as the plain aggregate, so the workarounds matter only for older
+releases. The safe alternatives return the same values as
 the equivalent `GROUP BY` (0 mismatches over 50 partitions of 400 rows).
 Other frames that cover the whole partition do not crash: `OVER (PARTITION
 BY u)`, `ROWS BETWEEN 100000 PRECEDING AND 100000 FOLLOWING`, and `ROWS
@@ -568,7 +571,9 @@ aggregate over all rows before it, so the event-collecting functions
 (`window_funnel`, `window_funnel_events`, the `sequence_*` functions,
 `sequence_next_node`) do work quadratic in the partition size. DuckDB also
 keeps about 2,048 of those frames in memory at once. For `window_funnel`
-over one 3-condition partition (DuckDB 1.5.6, one thread):
+over one 3-condition partition (DuckDB 1.5.6, one thread; a re-check on
+DuckDB 2.0.0 showed the same growth and the same peak memory, 1.24 GB at
+40,000 rows):
 
 | Rows in the partition | Time | Peak memory |
 |---|---|---|

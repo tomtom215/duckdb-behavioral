@@ -29,10 +29,10 @@ builds.
 
 ## Development Requirements
 
-- Rust 1.87+ (the project's MSRV)
+- Rust 1.88+ (the project's MSRV)
 - A C toolchain/linker (gcc or clang)
 - Python 3 and `make` (for `make configure release`)
-- DuckDB CLI v1.3.2 or later for E2E testing (CI checks v1.3.2, v1.4.4, v1.5.0, v1.5.6)
+- DuckDB CLI v1.3.2 or later for E2E testing (CI checks v1.3.2, v1.4.4, v1.5.0, v1.5.6, v2.0.0)
 
 ## Key Principles
 

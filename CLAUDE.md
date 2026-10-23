@@ -63,7 +63,7 @@ src/
    submodules handle DuckDB C API registration only.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
-   provide high-level aggregate function registration. We use `quack-rs` v0.18.0
+   provide high-level aggregate function registration. We use `quack-rs` v0.19.0
    ([crates.io](https://crates.io/crates/quack-rs)) which wraps the raw C API with safe builders
    (`AggregateFunctionSetBuilder`), state management (`FfiState<T>`, installed
    with `ffi_state::<T>()`), panic-guarded callbacks
@@ -183,7 +183,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.1 \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -211,7 +211,7 @@ functions then return `TIMESTAMPTZ[]`).
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs` v0.18.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
+- `quack-rs` v0.19.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
   for DuckDB loadable extensions. Provides `entry_point_v2!` macro,
   `Connection`/`Registrar` trait for version-agnostic registration,
   `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
@@ -219,17 +219,17 @@ functions then return `TIMESTAMPTZ[]`).
   `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
   and `AggregateTestHarness` for combine testing. Re-exports `libduckdb-sys`
   with `loadable-extension` feature.
-- `libduckdb-sys = "=1.10506.0"` with `loadable-extension` feature — Re-exported
+- `libduckdb-sys = "=1.20000.0"` with `loadable-extension` feature — Re-exported
   by quack-rs but pinned explicitly: the FFI modules use its raw types
   (`duckdb_function_info`, `duckdb_data_chunk`, `duckdb_aggregate_state`, …)
   in the `unsafe extern "C"` callback signatures.
   Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.6 →
-  crate v1.10506.x). The pin sets the headers the bindings are generated
+  crate v1.10506.x; v2.0.0 → v1.20000.x). The pin sets the headers the bindings are generated
   from, not the DuckDB the extension runs on: the binary uses only the
   stable C API and loads into DuckDB 1.3.2+ (see "Stable C API" below).
 
 **Dev-only** (unit tests and benchmarks):
-- `duckdb = "=1.10506.0"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
+- `duckdb = "=1.20000.0"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
   for `Connection::open_in_memory()`. Not linked into the release extension.
   Dev/test builds link a **prebuilt libduckdb** downloaded by `libduckdb-sys`
   (`DUCKDB_DOWNLOAD_LIB=1`, cached in `target/duckdb-download/`) instead of
@@ -243,7 +243,7 @@ functions then return `TIMESTAMPTZ[]`).
   build-script output; clear `target/*/build/libduckdb-sys-*` (or toggle
   `DUCKDB_DOWNLOAD_LIB`) to force a re-run.
   Note: crate versioning uses `1.MAJOR_MINOR_PATCH.x` scheme (DuckDB v1.5.6 →
-  crate v1.10506.x).
+  crate v1.10506.x; v2.0.0 → v1.20000.x).
   Gotcha: rust-cache cannot keep `target/duckdb-download`: before saving it
   prunes `target/`, treating that directory as a build profile and keeping
   only `build/`, `.fingerprint/` and `deps/`, so `cache-directories` saves an
@@ -256,7 +256,7 @@ functions then return `TIMESTAMPTZ[]`).
   `libduckdb-linux-amd64.zip` with curl into
   `target/duckdb-download/<target-triple>/<duckdb-version>/`; the build script
   skips the download when the archive exists.
-- `quack-rs` v0.18.0 with `bundled-test-prebuilt` feature — Provides
+- `quack-rs` v0.19.0 with `bundled-test-prebuilt` feature — Provides
   `testing::InMemoryDb` (incl. `open_unsigned()`) for the in-process
   extension-load integration test (`tests/extension_load.rs`). Links the same
   prebuilt libduckdb as the `duckdb` dev-dependency above (no DuckDB C++
@@ -294,7 +294,7 @@ Every change MUST meet these requirements:
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
   through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
-- **E2E tests** against real DuckDB v1.5.6 CLI: 12 workflow test steps
+- **E2E tests** against real DuckDB v2.0.0 CLI: 12 workflow test steps
   (2 platforms) plus 8 SQL logic test files with 78 directives (44 result-checked queries) covering
   all 8 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
   no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
@@ -313,9 +313,10 @@ Every change MUST meet these requirements:
   `strict_once` matcher that only change sharing, and guards whose
   alternative branch returns the same value. The other six modules have
   only the audit figures.
-- **MSRV 1.87**: `cargo +1.87.0 check --all-targets` passes with quack-rs
-  0.18.0 (which declares 1.86.0) and libduckdb-sys 1.10506.0 (1.85.1). The CI
-  job must call `cargo +1.87`: `rust-toolchain.toml` pins `stable`, which
+- **MSRV 1.88**: `cargo +1.88.0 check --all-targets` passes with quack-rs
+  0.19.0 (which declares 1.86.0) and libduckdb-sys / duckdb 1.20000.0 (1.88,
+  the crates.io `rust_version`; 1.10506.0 declared 1.85.1). The CI
+  job must call `cargo +1.88`: `rust-toolchain.toml` pins `stable`, which
   overrides the toolchain the job installs, so a bare `cargo` runs stable.
 - All public items have documentation
 - Release profile: LTO, single codegen unit, `panic = "unwind"` (required —
@@ -472,7 +473,7 @@ cached.
 **In-process integration tests** (`tests/extension_load.rs`, run by `cargo test`):
 - Build the release `cdylib`, append the DuckDB metadata footer (a Rust port of
   `append_extension_metadata.py`), and `LOAD` it via
-  `quack_rs::testing::InMemoryDb::open_unsigned()` (quack-rs 0.18.0), with
+  `quack_rs::testing::InMemoryDb::open_unsigned()` (quack-rs 0.19.0), with
   `allow_extensions_metadata_mismatch` left off so a wrong stamp fails
 - Assert all 8 functions register and return correct results through live SQL —
   catching the load/registration/wrong-result class of FFI bugs that unit tests
@@ -495,7 +496,7 @@ GitHub Actions workflows in `.github/workflows/`:
 - **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
 - **e2e.yml**: Builds extension, tests all 8 functions against real DuckDB CLI,
   and a `compat` job loads the same binary into DuckDB v1.3.2, v1.4.4, v1.5.0
-  and v1.5.6 and asserts the results
+  v1.5.6 and v2.0.0 and asserts the results
 - **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
   creates GitHub release on tag push with SemVer validation
 - **community-submission.yml**: On-demand workflow for community extension
@@ -534,7 +535,11 @@ stamped for the stable C API, v1.2.0). To build against the new headers:
 2. Update `DUCKDB_TEST_VERSION` in `Makefile`. Do **not** change
    `TARGET_DUCKDB_VERSION`: it is the C API version (`v1.2.0`), and raising it
    raises the minimum DuckDB that can load the binary
-3. Update `DUCKDB_VERSION` and the `compat` matrix in `.github/workflows/e2e.yml`
+3. Update `DUCKDB_VERSION` and the `compat` matrix in `.github/workflows/e2e.yml`.
+   DuckDB 2.0.0 renamed its CLI assets (`duckdb-cli-linux-amd64.tar.gz`,
+   `duckdb-cli-osx-universal.tar.gz`; older releases keep
+   `duckdb_cli-linux-amd64.zip`), so `e2e.yml` and `scripts/setup.sh` download
+   `.tar.gz` and the `compat` job falls back to the `.zip` name
 4. Update `DUCKDB_RELEASE_VERSION` in `scripts/setup.sh`
 4a. Re-run the stable-prefix check (Stable C API note below) in case a
    quack-rs upgrade started using a newer C API function
@@ -581,7 +586,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
   automatically.
 
 - **Stable C API (`C_STRUCT`, `-dv v1.2.0`)**: the extension dereferences only
-  stable-prefix slots of `duckdb_ext_api_v1` (76 of 546 slots, highest 306;
+  stable-prefix slots of `duckdb_ext_api_v1` (76 of 548 slots, highest 306;
   the stable prefix is 357 slots). Measured by disassembling an unstripped
   release build (`cargo build --profile profiling --lib`) and collecting the
   `__DUCKDB_*` statics that are *loaded* (every one is stored at init).
@@ -591,10 +596,17 @@ Hard-won knowledge from developing this extension. Consult before making changes
   v1.5.6 shipped. With the stable stamp, `-dv` is the C API version
   (`quack_rs::DUCKDB_API_VERSION`), set by `TARGET_DUCKDB_VERSION` in the
   `Makefile`. CI's `compat` job (`e2e.yml`) loads one binary into DuckDB
-  v1.3.2, v1.4.4, v1.5.0 and v1.5.6. Residual risk: libduckdb-sys's init
-  copies all 546 slot pointers, and an older DuckDB's struct is shorter, so
-  the copy reads past it (stack memory in DuckDB's loader); the extra values
-  are never called. CONJECTURED benign.
+  v1.3.2, v1.4.4, v1.5.0, v1.5.6 and v2.0.0. Residual risk: libduckdb-sys's init
+  copies all 548 slot pointers (`if let Some(fun) = (*p_api).<slot>` per
+  slot), and an older DuckDB's struct is shorter, so the copy reads past it;
+  the extra values are never called. VALIDATED benign in practice: under
+  valgrind (release build, 1.3.2 and 1.4.4 CLIs, a query per function) there
+  were 0 invalid reads or writes, and every reported "conditional jump
+  depends on uninitialised value" (59 on 1.3.2, 52 on 1.4.4) was inside
+  `behavioral_init_c_api` during `LOAD`; none during queries, and the same
+  CLIs without the extension, and DuckDB 2.0.0 with it, report 0. The
+  over-read itself is upstream (libduckdb-sys's init) and is not fixable
+  here.
 
 - **No interrupt check is possible**: DuckDB 1.5.6's C API has
   `duckdb_interrupt(connection)` but nothing an aggregate callback can poll,
@@ -617,10 +629,11 @@ Hard-won knowledge from developing this extension. Consult before making changes
   enforces the profile. Never write a raw `unsafe extern "C" fn` callback.
 
 - **C API aggregates crash in three query shapes (duckdb/duckdb#26109,
-  present in DuckDB 1.5.6)**: `agg(.. ORDER BY ..)`, `OVER ()`, and frames
+  present in DuckDB 1.5.6 and earlier; not reproduced on 2.0.0)**: `agg(.. ORDER BY ..)`, `OVER ()`, and frames
   written `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` (`OVER (PARTITION BY
   u)` and bounded frames covering the whole partition do not crash;
-  verified on 1.5.6). DuckDB passes a one-element state vector
+  verified on 1.5.6, where all three exit 139; on 2.0.0 none crashes for any of the 8
+  functions, and the 7 event functions match the plain aggregate). DuckDB passes a one-element state vector
   with `count > 1` because the C API cannot set `simple_update`;
   `CAPIAggregateUpdate` does not flatten it. Valgrind shows the invalid read;
   the process usually segfaults. The extension cannot detect it (reading

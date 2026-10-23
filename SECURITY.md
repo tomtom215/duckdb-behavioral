@@ -37,8 +37,8 @@ into a SQL error instead of crashing DuckDB (the release profile keeps
 
 ### Dependency Audit
 
-The extension has exactly **two** runtime dependencies (`quack-rs = "=0.18.0"`
-and `libduckdb-sys = "=1.10506.0"`, both pinned exactly). All dependencies are
+The extension has exactly **two** runtime dependencies (`quack-rs = "=0.19.0"`
+and `libduckdb-sys = "=1.20000.0"`, both pinned exactly). All dependencies are
 audited via `cargo-deny` in CI for known advisories and license compliance.
 
 ### Build Integrity

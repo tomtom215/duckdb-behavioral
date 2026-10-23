@@ -34,8 +34,8 @@ The extension has exactly **two** runtime dependencies:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `quack-rs` | `=0.18.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
-| `libduckdb-sys` | `=1.10506.0` | DuckDB C API bindings (re-exported by quack-rs; pinned explicitly because the FFI callbacks use its raw types) |
+| `quack-rs` | `=0.19.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
+| `libduckdb-sys` | `=1.20000.0` | DuckDB C API bindings (re-exported by quack-rs; pinned explicitly because the FFI callbacks use its raw types) |
 
 Both versions are **pinned exactly** to prevent silent dependency updates.
 `quack-rs` provides `entry_point_v2!`, `Connection`/`Registrar` trait,
@@ -106,7 +106,7 @@ Release artifacts include:
 sha256sum -c SHA256SUMS.txt
 
 # Verify GitHub attestation (requires gh CLI)
-gh attestation verify behavioral-v0.10.0-linux_amd64.tar.gz \
+gh attestation verify behavioral-v0.10.1-linux_amd64.tar.gz \
   --repo tomtom215/duckdb-behavioral
 ```
 

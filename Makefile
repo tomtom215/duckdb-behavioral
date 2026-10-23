@@ -20,8 +20,8 @@ TARGET_DUCKDB_VERSION=v1.2.0
 
 # DuckDB release the SQL logic tests run against (extension-ci-tools defaults to
 # the latest release on PyPI). Matches the libduckdb-sys pin in Cargo.toml
-# (=1.10506.0 -> DuckDB v1.5.6).
-DUCKDB_TEST_VERSION=1.5.6
+# (=1.20000.0 -> DuckDB v2.0.0).
+DUCKDB_TEST_VERSION=2.0.0
 
 all: configure debug
 

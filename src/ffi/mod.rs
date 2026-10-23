@@ -5,7 +5,7 @@
 //!
 //! # Architecture
 //!
-//! Every module uses the `quack-rs` v0.18.0 SDK for registration, state
+//! Every module uses the `quack-rs` v0.19.0 SDK for registration, state
 //! management, and vector I/O:
 //!
 //! - [`quack_rs::aggregate::AggregateFunctionSetBuilder`] — registers function
