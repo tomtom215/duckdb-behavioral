@@ -29,10 +29,10 @@ platform where Rust and DuckDB are available.
 
 **Prerequisites:**
 
-- Rust 1.87 or later (`rustup` recommended)
+- Rust 1.88 or later (`rustup` recommended)
 - A C toolchain/linker (gcc or clang) for linking the `cdylib`
 - Python 3 and `make` (for `make configure release`, which stamps the metadata footer)
-- DuckDB CLI v1.3.2 or later (for running queries; CI checks v1.3.2, v1.4.4, v1.5.0 and v1.5.6)
+- DuckDB CLI v1.3.2 or later (for running queries; CI checks v1.3.2, v1.4.4, v1.5.0, v1.5.6 and v2.0.0)
 
 **Build steps:**
 

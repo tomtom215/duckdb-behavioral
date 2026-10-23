@@ -20,7 +20,7 @@ source.
 | **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
 | **fmt** | Formatting verification | `cargo fmt --check` |
 | **doc** | Documentation builds without warnings | `cargo doc --no-deps --document-private-items` with `-Dwarnings` |
-| **msrv** | Minimum Supported Rust Version (1.87) | `cargo +1.87 check --all-targets` |
+| **msrv** | Minimum Supported Rust Version (1.88) | `cargo +1.88 check --all-targets` |
 | **bench-compile** | Benchmarks compile (no execution) | `cargo bench --no-run` |
 | **deny** | License, advisory, and source auditing | `cargo-deny` |
 | **semver** | Semver compatibility check | `cargo-semver-checks` |
@@ -76,7 +76,7 @@ instance.
 **Compatibility job (`compat`):** The extension is stamped for the stable C API
 (ABI type `C_STRUCT`, C API v1.2.0). The `compat` job downloads the Linux
 artifact built by the E2E job, loads it into DuckDB v1.3.2, v1.4.4, v1.5.0,
-and v1.5.6, and compares a query's output against the expected result.
+v1.5.6, and v2.0.0, and compares a query's output against the expected result.
 
 ### Release (`release.yml`)
 

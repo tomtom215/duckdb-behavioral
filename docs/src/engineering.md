@@ -344,7 +344,7 @@ suggests these analyses can run as interactive queries rather than batch jobs.
 
 DuckDB's Rust crate does not provide high-level aggregate function
 registration. This project uses the [quack-rs](https://crates.io/crates/quack-rs)
-SDK (v0.18.0) which wraps the raw C API with safe builders
+SDK (v0.19.0) which wraps the raw C API with safe builders
 (including `returns_logical(LogicalType)` for `LIST(T)` return types),
 state management, vector I/O, LIST output helpers, and the
 `aggregate_{update,combine,finalize}_callback!` macros that turn a panic into
@@ -463,7 +463,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | Mutation kill rate | 93.9% detected (570/607 viable, 0.10.0 audit of the non-FFI modules) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
 | Unsafe code | Confined to `src/ffi/` (9 files) |
-| MSRV | Rust 1.87 |
+| MSRV | Rust 1.88 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements (`sessionize_update`) |
 | CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
@@ -476,9 +476,9 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Language | Rust (stable, MSRV 1.87) | Memory safety, zero-cost abstractions, `unsafe` confinement |
-| Database | DuckDB 1.5.6 (stable C API; loads into 1.3.2+) | Analytical SQL engine, segment tree windowing |
-| FFI | quack-rs 0.18.0 over libduckdb-sys 1.10506.0 (C API) | Aggregate registration, callback macros, vector I/O |
+| Language | Rust (stable, MSRV 1.88) | Memory safety, zero-cost abstractions, `unsafe` confinement |
+| Database | DuckDB 2.0.0 (stable C API; loads into 1.3.2+) | Analytical SQL engine, segment tree windowing |
+| FFI | quack-rs 0.19.0 over libduckdb-sys 1.20000.0 (C API) | Aggregate registration, callback macros, vector I/O |
 | Benchmarking | Criterion.rs | Statistical benchmarking with confidence intervals |
 | Property testing | proptest | Algebraic property verification |
 | Mutation testing | cargo-mutants | Test suite effectiveness measurement |

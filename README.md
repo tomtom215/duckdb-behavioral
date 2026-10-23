@@ -11,7 +11,7 @@
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
   <a href="https://crates.io/crates/duckdb-behavioral"><img src="https://img.shields.io/crates/v/duckdb-behavioral.svg" alt="Crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.87-blue.svg" alt="MSRV: 1.87"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.88-blue.svg" alt="MSRV: 1.88"></a>
   <a href="https://tomtom215.github.io/duckdb-behavioral/"><img src="https://img.shields.io/badge/docs-mdBook-blue.svg" alt="Documentation"></a>
 </p>
 
@@ -423,7 +423,7 @@ and `compat` matrix; leave `TARGET_DUCKDB_VERSION` at the C API version
 |---|---|
 | Unit tests | 547 + 1 doc-test |
 | Integration tests | 21 (in-process: real extension loaded via `InMemoryDb`, all functions exercised through SQL incl. error paths, infinity timestamps, and parallel-determinism probes) |
-| E2E tests | 12 workflow steps (2 platforms) + 8 SQL logic test files (against real DuckDB CLI), plus a compat job loading one binary into DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
+| E2E tests | 12 workflow steps (2 platforms) + 8 SQL logic test files (against real DuckDB CLI), plus a compat job loading one binary into DuckDB 1.3.2, 1.4.4, 1.5.0, 1.5.6 and 2.0.0 |
 | Differential tests | `window_funnel`, `retention`, `sequence_*` and `sequence_next_node` fuzzed against ClickHouse 26.9.8.3 (see below) |
 | Property-based tests | 29 (proptest) |
 | Mutation testing | cargo-mutants: 93.9% of viable mutants detected across the 9 non-FFI modules (0.10.0 audit); 22 survivors in the re-run modules reviewed as equivalent |
@@ -474,7 +474,7 @@ page.
 
 ## Building
 
-**Prerequisites**: Rust 1.87+ (MSRV), a C compiler (for DuckDB sys bindings)
+**Prerequisites**: Rust 1.88+ (MSRV), a C compiler (for DuckDB sys bindings)
 
 ```bash
 git submodule update --init --recursive   # extension-ci-tools
@@ -525,7 +525,7 @@ for the full SemVer rules applied to SQL function signatures.
   read out of bounds and usually segfault, for every C API aggregate, not
   just this extension
   ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109);
-  present in DuckDB 1.5.6): `ORDER BY` inside the call
+  present in DuckDB 1.5.6 and earlier; not reproduced on DuckDB 2.0.0): `ORDER BY` inside the call
   (`retention(c1, c2 ORDER BY ts)`), `OVER ()`, and a frame written as
   `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`. None is needed: the
   functions sort by timestamp themselves, `OVER (PARTITION BY 1)` replaces
@@ -535,7 +535,7 @@ for the full SemVer rules applied to SQL function signatures.
 - **Running window frames are quadratic.** In a running frame
   (`OVER (ORDER BY ts)`) each row is a separate aggregate over all earlier
   rows, and DuckDB holds about 2,048 such frames at once: one 40,000-row partition took 11.1 s and 1.25 GB for
-  `window_funnel` (DuckDB 1.5.6, one thread). Keep running frames to small
+  `window_funnel` (DuckDB 1.5.6, one thread; DuckDB 2.0.0 peaks at the same 1.24 GB). Keep running frames to small
   partitions (`PARTITION BY user_id`), bound them (`ROWS 1000 PRECEDING`), or
   use `GROUP BY`. `sessionize` is the exception: its state is constant-size.
 - **No cancellation within one group.** DuckDB's C API gives an aggregate no
@@ -551,8 +551,8 @@ for the full SemVer rules applied to SQL function signatures.
 
 ## Requirements
 
-- Rust 1.87+ (MSRV)
-- DuckDB 1.3.2 or later at run time (built against 1.5.6 via `libduckdb-sys =1.10506.0`; the extension uses only the stable C API, and CI loads the same binary into 1.3.2, 1.4.4, 1.5.0 and 1.5.6)
+- Rust 1.88+ (MSRV)
+- DuckDB 1.3.2 or later at run time (built against 2.0.0 via `libduckdb-sys =1.20000.0`; the extension uses only the stable C API, and CI loads the same binary into 1.3.2, 1.4.4, 1.5.0, 1.5.6 and 2.0.0)
 - Python 3.x (for extension metadata tooling)
 
 ## License

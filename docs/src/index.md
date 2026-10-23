@@ -7,7 +7,7 @@
 <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests"></a>
 <a href="https://github.com/tomtom215/duckdb-behavioral/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-<a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.87-blue.svg" alt="MSRV: 1.87"></a>
+<a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.88-blue.svg" alt="MSRV: 1.88"></a>
 </div>
 
 # duckdb-behavioral
@@ -258,7 +258,7 @@ For a comprehensive technical overview, see the
 | **Testing Rigor** | 547 unit tests, 28 in-process integration tests that `LOAD` the built extension, 78 sqllogictest directives (44 `query` + 34 `statement`) across 8 SQL test files run against the DuckDB CLI, 31 property-based tests (proptest), 88.4% mutation kill rate (cargo-mutants, measured on v0.4.x and not re-measured since). |
 | **Performance** | Optimization sessions recorded in [PERF.md](https://github.com/tomtom215/duckdb-behavioral/blob/main/PERF.md) with before/after Criterion.rs measurements and 95% confidence intervals, including a 1-billion-event `sessionize_update` benchmark and five documented negative results. |
 | **Algorithm Design** | Custom pattern engine with recursive descent parser, fast-path classification, and a feasibility-then-greedy matcher differentially tested against a backtracking reference. Bitmask-based retention with O(1) combine. |
-| **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. Variadic signatures registered as function sets (31 overloads for `retention` and the `sequence_match`/`sequence_count`/`sequence_match_events` family, 64 for `window_funnel`/`window_funnel_events`, 32 for `sequence_next_node`). Stable C API (v1.2.0): one binary loads into DuckDB 1.3.2 through 1.5.6. Correct combine semantics for segment tree windowing. |
+| **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. Variadic signatures registered as function sets (31 overloads for `retention` and the `sequence_match`/`sequence_count`/`sequence_match_events` family, 64 for `window_funnel`/`window_funnel_events`, 32 for `sequence_next_node`). Stable C API (v1.2.0): one binary loads into DuckDB 1.3.2 through 2.0.0. Correct combine semantics for segment tree windowing. |
 | **CI/CD** | 14 CI jobs (incl. a DuckDB-WASM compile check), 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
 | **Feature Completeness** | All six ClickHouse behavioral functions (source-verified semantics) plus `sessionize` and `window_funnel_events`: 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
 
@@ -285,8 +285,8 @@ For a comprehensive technical overview, see the
 
 ## Requirements
 
-- **DuckDB 1.3.2 or later** (built against 1.5.6; stable C API, so one binary serves every release CI checks: 1.3.2, 1.4.4, 1.5.0, 1.5.6)
-- **Rust 1.87+** (MSRV) for building from source
+- **DuckDB 1.3.2 or later** (built against 2.0.0; stable C API, so one binary serves every release CI checks: 1.3.2, 1.4.4, 1.5.0, 1.5.6, 2.0.0)
+- **Rust 1.88+** (MSRV) for building from source
 - Python 3 and `make` for `make configure release` (stamps the metadata footer)
 
 ## Source Code

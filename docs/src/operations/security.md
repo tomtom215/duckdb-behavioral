@@ -34,8 +34,8 @@ The extension has exactly **two** runtime dependencies:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `quack-rs` | `=0.18.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
-| `libduckdb-sys` | `=1.10506.0` | DuckDB C API bindings (re-exported by quack-rs; pinned explicitly because the FFI callbacks use its raw types) |
+| `quack-rs` | `=0.19.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
+| `libduckdb-sys` | `=1.20000.0` | DuckDB C API bindings (re-exported by quack-rs; pinned explicitly because the FFI callbacks use its raw types) |
 
 Both versions are **pinned exactly** to prevent silent dependency updates.
 `quack-rs` provides `entry_point_v2!`, `Connection`/`Registrar` trait,

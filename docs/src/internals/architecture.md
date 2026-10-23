@@ -100,7 +100,7 @@ hand-rolled unsafe code from earlier versions.
 
 ### quack-rs SDK
 
-The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.18.0,
+The FFI layer uses [quack-rs](https://crates.io/crates/quack-rs) v0.19.0,
 a Rust SDK for DuckDB loadable extensions. It provides:
 
 - **`AggregateFunctionSetBuilder`**: Safe registration of function sets with
@@ -137,7 +137,7 @@ feature) so that test builds link a prebuilt libduckdb
 
 The extension uses only the stable C API. The `.duckdb_extension` file is
 stamped with C API version `v1.2.0` and ABI type `C_STRUCT`, so one binary
-loads into DuckDB 1.3.2 and later (CI checks 1.3.2, 1.4.4, 1.5.0, and 1.5.6).
+loads into DuckDB 1.3.2 and later (CI checks 1.3.2, 1.4.4, 1.5.0, 1.5.6, and 2.0.0).
 
 ## Event Representation
 
