@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-23
+
+DuckDB 2.0.0 support. No change to the SQL surface or to results.
+
 ### Changed
 
 - quack-rs 0.18.0 → 0.19.0. libduckdb-sys / duckdb 1.10506.0 → 1.20000.0
   (DuckDB v1.5.6 → v2.0.0). No source change was needed.
 - **MSRV 1.87 → 1.88.** libduckdb-sys and duckdb 1.20000.0 declare 1.88
   (quack-rs 0.19.0 declares 1.86.0). The CI MSRV job now runs `cargo +1.88`.
+- Lockfile refreshed (`cargo update`, 69 entries). The only one linked into
+  the extension is `smallvec` 1.15.2 → 1.16.3; the rest are dev, test and
+  build dependencies. `smallvec` 2.x is still a beta and was not adopted.
 - The binary is still stamped `C_STRUCT`, C API `v1.2.0`. It still uses 76
   stable-prefix slots, now of 548, and the highest is still 306. The one
   release build loads and answers a `window_funnel` query correctly in DuckDB
@@ -27,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The "libduckdb-sys's init reads past an older DuckDB's shorter API struct"
+  risk is now measured, not conjectured: under valgrind the stamped binary
+  loaded into DuckDB 1.3.2 and 1.4.4 and answered a query per function with 0
+  invalid reads or writes. The only reports are "conditional jump depends on
+  uninitialised value" inside `behavioral_init_c_api` during `LOAD` (59 and
+  52), which the same CLIs without the extension, and 2.0.0 with it, do not
+  produce. The over-read is in libduckdb-sys's init, not in this crate.
 - The three crashing query shapes (duckdb/duckdb#26109: `ORDER BY` inside the
   call, `OVER ()`, an `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frame)
   segfault on DuckDB 1.5.6 (exit 139) and did not crash on 2.0.0 in the same

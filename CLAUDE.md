@@ -183,7 +183,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.1 \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -597,9 +597,16 @@ Hard-won knowledge from developing this extension. Consult before making changes
   (`quack_rs::DUCKDB_API_VERSION`), set by `TARGET_DUCKDB_VERSION` in the
   `Makefile`. CI's `compat` job (`e2e.yml`) loads one binary into DuckDB
   v1.3.2, v1.4.4, v1.5.0, v1.5.6 and v2.0.0. Residual risk: libduckdb-sys's init
-  copies all 548 slot pointers, and an older DuckDB's struct is shorter, so
-  the copy reads past it (stack memory in DuckDB's loader); the extra values
-  are never called. CONJECTURED benign.
+  copies all 548 slot pointers (`if let Some(fun) = (*p_api).<slot>` per
+  slot), and an older DuckDB's struct is shorter, so the copy reads past it;
+  the extra values are never called. VALIDATED benign in practice: under
+  valgrind (release build, 1.3.2 and 1.4.4 CLIs, a query per function) there
+  were 0 invalid reads or writes, and every reported "conditional jump
+  depends on uninitialised value" (59 on 1.3.2, 52 on 1.4.4) was inside
+  `behavioral_init_c_api` during `LOAD`; none during queries, and the same
+  CLIs without the extension, and DuckDB 2.0.0 with it, report 0. The
+  over-read itself is upstream (libduckdb-sys's init) and is not fixable
+  here.
 
 - **No interrupt check is possible**: DuckDB 1.5.6's C API has
   `duckdb_interrupt(connection)` but nothing an aggregate callback can poll,

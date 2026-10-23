@@ -62,7 +62,7 @@ cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.10.0 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.10.1 \
   -o /tmp/behavioral.duckdb_extension
 ```
 
