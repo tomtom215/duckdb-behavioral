@@ -52,6 +52,7 @@ pub mod sequence_match_events;
 pub mod sequence_next_node;
 pub mod sessionize;
 pub mod version;
+pub mod view;
 pub mod window_funnel;
 pub mod window_funnel_events;
 
@@ -72,67 +73,18 @@ use quack_rs::error::ExtensionError;
 /// in `lib.rs`. Every function registers through the
 /// [`Registrar`](quack_rs::connection::Registrar) trait.
 ///
-/// # Safety
-///
-/// The caller must ensure `con` holds a valid `duckdb_connection` handle.
-///
 /// # Errors
 ///
 /// Returns an error if any function registration fails.
-pub unsafe fn register_all(con: &Connection) -> Result<(), ExtensionError> {
-    // Safety: The Connection holds a valid handle — obtained via duckdb_connect
-    // in the entry_point_v2! macro and will be disconnected after registration.
-    unsafe {
-        sessionize::register_sessionize(con)?;
-        retention::register_retention(con)?;
-        window_funnel::register_window_funnel(con)?;
-        window_funnel_events::register_window_funnel_events(con)?;
-        sequence::register_sequence_match(con)?;
-        sequence::register_sequence_count(con)?;
-        sequence_match_events::register_sequence_match_events(con)?;
-        sequence_next_node::register_sequence_next_node(con)?;
-        version::register_behavioral_version(con)?;
-    }
-
+pub fn register_all(con: &Connection) -> Result<(), ExtensionError> {
+    sessionize::register_sessionize(con)?;
+    retention::register_retention(con)?;
+    window_funnel::register_window_funnel(con)?;
+    window_funnel_events::register_window_funnel_events(con)?;
+    sequence::register_sequence_match(con)?;
+    sequence::register_sequence_count(con)?;
+    sequence_match_events::register_sequence_match_events(con)?;
+    sequence_next_node::register_sequence_next_node(con)?;
+    version::register_behavioral_version(con)?;
     Ok(())
-}
-
-/// The raw 16-byte `duckdb_string_t` slots of a `VARCHAR` column, for a
-/// cheap "same string as the previous row" check on configuration arguments
-/// that are normally constant.
-///
-/// Equal slots imply equal strings: a slot holds the length and either the
-/// whole string inline (at most 12 bytes) or a 4-byte prefix plus a pointer
-/// to the bytes, so equal slots have equal lengths and equal bytes (or point
-/// at the same bytes). Unequal slots prove nothing, so callers fall back to
-/// comparing the strings.
-pub struct RawStringSlots(*const [u8; 16]);
-
-impl RawStringSlots {
-    /// # Safety
-    ///
-    /// `chunk` must be a valid data chunk whose column `col` is a `VARCHAR`
-    /// vector, alive for as long as the returned value is used.
-    pub unsafe fn new(chunk: libduckdb_sys::duckdb_data_chunk, col: usize) -> Self {
-        // SAFETY: the caller guarantees `chunk` is valid and `col` is a
-        // VARCHAR column; `duckdb_vector_get_data` returns that vector's
-        // array of 16-byte `duckdb_string_t` slots, one per row.
-        unsafe {
-            let vector = libduckdb_sys::duckdb_data_chunk_get_vector(chunk, col as u64);
-            Self(libduckdb_sys::duckdb_vector_get_data(vector).cast::<[u8; 16]>())
-        }
-    }
-
-    /// The slot of row `i`.
-    ///
-    /// # Safety
-    ///
-    /// `i` must be below the chunk's row count. (A NULL row's slot may hold
-    /// stale bytes, which is harmless for an equality pre-check: it is only
-    /// read, never dereferenced.)
-    pub unsafe fn get(&self, i: usize) -> [u8; 16] {
-        // SAFETY: the vector holds one slot per row and `i` is in bounds
-        // (caller contract); `[u8; 16]` has alignment 1.
-        unsafe { *self.0.add(i) }
-    }
 }

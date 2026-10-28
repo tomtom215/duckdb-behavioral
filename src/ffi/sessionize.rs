@@ -18,14 +18,12 @@
 //! default NULL handling, i.e. no `duckdb_aggregate_function_set_special_handling`).
 //! See `LESSONS.md` for context on the original decision.
 
+use super::view::{Combine, Finalize, I64Kind, States, Update};
+use crate::common::config::invalid_interval_message;
 use crate::common::timestamp::interval_to_micros;
 use crate::sessionize::SessionizeBoundaryState;
-use libduckdb_sys::*;
-use quack_rs::aggregate::{
-    AggregateFunctionInfo, AggregateFunctionSetBuilder, AggregateOverloadBuilder, FfiState,
-};
+use quack_rs::aggregate::{AggregateFunctionSetBuilder, AggregateOverloadBuilder};
 use quack_rs::types::TypeId;
-use quack_rs::vector::{VectorReader, VectorWriter};
 
 impl quack_rs::aggregate::AggregateState for SessionizeBoundaryState {}
 
@@ -40,14 +38,10 @@ impl quack_rs::aggregate::AggregateState for SessionizeBoundaryState {}
 /// FROM events
 /// ```
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_sessionize(
+pub fn register_sessionize(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     // One overload per timestamp type (TIMESTAMP and TIMESTAMPTZ are both
@@ -73,102 +67,92 @@ pub unsafe fn register_sessionize(
     unsafe { con.register_aggregate_set(builder) }
 }
 
-// SAFETY: `input` is a valid DuckDB data chunk with columns (TIMESTAMP, INTERVAL)
-// as registered. `states` points to `row_count` aggregate state pointers, each
-// initialized by `FfiState::init_callback`.
+// SAFETY (the three callbacks below): DuckDB calls each with the handles the
+// `Update`, `Combine` and `Finalize` constructors require, for the aggregate
+// registered in `register_sessionize`: `FfiState<SessionizeBoundaryState>`
+// states, arguments (TIMESTAMP | TIMESTAMPTZ, INTERVAL), a BIGINT result.
 quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let row_count = duckdb_data_chunk_get_size(input) as usize;
-
-        // Vector 0: TIMESTAMP (event timestamp)
-        let ts_reader = VectorReader::new(input, 0);
-        // Vector 1: INTERVAL (gap threshold)
-        let interval_reader = VectorReader::new(input, 1);
-
-        for i in 0..row_count {
-            let Some(state) = FfiState::<SessionizeBoundaryState>::with_state_mut(*states.add(i))
-            else {
-                continue;
-            };
-
-            // NULL timestamps: mark state so finalize emits NULL for this row
-            if !ts_reader.is_valid(i) {
-                state.mark_null_row();
-                continue;
-            }
-
-            // NULL gap threshold: skip the row entirely
-            if !interval_reader.is_valid(i) {
-                continue;
-            }
-
-            // Read interval threshold (same for all rows, but read per-row for safety).
-            // Invalid gaps (month-based or negative) abort the query instead of
-            // silently sessionizing with a zero threshold.
-            let iv = interval_reader.read_interval(i);
-            match interval_to_micros(iv.months, iv.days, iv.micros) {
-                Some(threshold_us) if threshold_us >= 0 => state.threshold_us = threshold_us,
-                Some(_) => {
-                    info.set_error("sessionize: INTERVAL gap must be non-negative");
-                    return;
-                }
-                None => {
-                    info.set_error(
-                        "sessionize: invalid INTERVAL gap: month-based intervals are \
-                         ambiguous (28-31 days) and the total must fit in signed 64-bit \
-                         microseconds; use day/hour/minute/second units instead",
-                    );
-                    return;
-                }
-            }
-
-            state.update(ts_reader.read_i64(i));
-        }
-    }
+    // SAFETY: see above.
+    let call = unsafe { Update::<SessionizeBoundaryState>::from_raw(info, input, states) };
+    update(call);
 });
 
-// SAFETY: `source` and `target` point to `count` aggregate state pointers.
+/// `update`: adds each row's timestamp to its state.
+fn update(call: Update<SessionizeBoundaryState>) {
+    let Update {
+        info,
+        chunk,
+        mut states,
+    } = call;
+    // SAFETY: column 0 is registered as TIMESTAMP or TIMESTAMPTZ.
+    let timestamps = unsafe { chunk.timestamps(0) };
+    // SAFETY: column 1 is registered as INTERVAL.
+    let gaps = unsafe { chunk.intervals(1) };
+
+    for i in 0..chunk.rows() {
+        let Some(state) = states.get_mut(i) else {
+            continue;
+        };
+
+        // NULL timestamps: mark state so finalize emits NULL for this row
+        let Some(timestamp_us) = timestamps.get(i) else {
+            state.mark_null_row();
+            continue;
+        };
+
+        // NULL gap threshold: skip the row entirely
+        let Some(gap) = gaps.get(i) else {
+            continue;
+        };
+
+        // The gap is read per row, because each row's gap judges that row.
+        // Invalid gaps (month-based, overflowing or negative) abort the query
+        // instead of silently sessionizing with a zero threshold.
+        match interval_to_micros(gap.months, gap.days, gap.micros) {
+            Some(threshold_us) if threshold_us >= 0 => state.threshold_us = threshold_us,
+            Some(_) => {
+                info.set_error("sessionize: INTERVAL gap must be non-negative");
+                return;
+            }
+            None => {
+                info.set_error(&invalid_interval_message("sessionize", "gap", gap.months));
+                return;
+            }
+        }
+
+        state.update(timestamp_us);
+    }
+}
+
 // `target` is the LEFT (earlier) segment in DuckDB's segment tree, `source`
 // the RIGHT (later) one; `SessionizeBoundaryState::combine` preserves that
 // orientation (cross-boundary check, right-hand `current_row_null` wins).
-quack_rs::aggregate_combine_callback!(state_combine, |_info, source, target, count| {
-    unsafe {
-        for i in 0..count as usize {
-            let Some(src) = FfiState::<SessionizeBoundaryState>::with_state(*source.add(i)) else {
-                continue;
-            };
-            let Some(tgt) = FfiState::<SessionizeBoundaryState>::with_state_mut(*target.add(i))
-            else {
-                continue;
-            };
-
+quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
+    // SAFETY: see above.
+    let Combine {
+        source, mut target, ..
+    } = unsafe { Combine::<SessionizeBoundaryState>::from_raw(info, source, target, count) };
+    for i in 0..source.count() {
+        if let Some((src, tgt)) = States::pair(&source, &mut target, i) {
             *tgt = tgt.combine(src);
         }
     }
 });
 
-// SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB BIGINT vector with room for `offset + count` elements. Empty
-// states and NULL-timestamp rows produce NULL output via the validity bitmap.
-quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
-    unsafe {
-        let mut writer = VectorWriter::new(result);
-
-        for i in 0..count as usize {
-            let idx = offset as usize + i;
-
-            let Some(state) = FfiState::<SessionizeBoundaryState>::with_state(*source.add(i))
-            else {
-                writer.set_null(idx);
-                continue;
-            };
-
-            if state.first_ts.is_none() || state.current_row_null {
-                writer.set_null(idx);
-            } else {
-                writer.write_i64(idx, state.finalize());
+// Empty states and NULL-timestamp rows produce NULL output.
+quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
+    // SAFETY: see above.
+    let Finalize {
+        states, mut out, ..
+    } = unsafe {
+        Finalize::<SessionizeBoundaryState, I64Kind>::from_raw(info, source, result, count, offset)
+    };
+    for i in 0..out.count() {
+        match states.get(i) {
+            Some(state) if state.first_ts.is_some() && !state.current_row_null => {
+                out.write(i, state.finalize());
             }
+            _ => out.set_null(i),
         }
     }
 });

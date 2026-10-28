@@ -7,15 +7,13 @@
 //! registration, [`quack_rs::aggregate::FfiState`] for safe state management,
 //! and [`quack_rs::vector::VectorReader`] for safe vector reading.
 
-use super::RawStringSlots;
-use crate::common::config::{conflict_message, out_of_memory_message};
+use super::view::{Combine, Finalize, I32Kind, States, Update, Varchars};
+use crate::common::config::{conflict_message, invalid_interval_message, out_of_memory_message};
 use crate::common::event::Event;
 use crate::common::timestamp::interval_to_micros;
 use crate::window_funnel::{FunnelMode, WindowFunnelState};
-use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::AggregateFunctionSetBuilder;
 use quack_rs::types::TypeId;
-use quack_rs::vector::{VectorReader, VectorWriter};
 
 /// Error text listing every SQL mode string `window_funnel` accepts.
 const VALID_MODES: &str = "'strict', 'strict_deduplication', 'strict_order', \
@@ -38,14 +36,10 @@ impl quack_rs::aggregate::AggregateState for WindowFunnelState {}
 /// The VARCHAR parameter accepts a comma-separated list of mode names
 /// (e.g., `'strict_increase, strict_once'`).
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_window_funnel(
+pub fn register_window_funnel(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     // Register both overload groups under the same function set name.
@@ -88,25 +82,23 @@ pub unsafe fn register_window_funnel(
     unsafe { con.register_aggregate_set(builder) }
 }
 
-// SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
-// BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
-// Shared with `window_funnel_events`, which differs only in finalize.
+// SAFETY (the update callbacks below): DuckDB calls them with the handles
+// `Update::from_raw` requires, for the aggregate registered in
+// `register_window_funnel`: `FfiState<WindowFunnelState>` states and the
+// columns that overload declares. Shared with `window_funnel_events`, which
+// differs only in finalize.
 quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
+    // SAFETY: see above.
+    let call = unsafe { Update::<WindowFunnelState>::from_raw(info, input, states) };
     // No mode parameter: INTERVAL(0), TIMESTAMP(1), BOOLEAN(2..N)
-    unsafe {
-        update_impl(info, input, states, false, "window_funnel");
-    }
+    update_impl(call, false, "window_funnel");
 });
 
-// SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, VARCHAR,
-// TIMESTAMP, BOOLEAN...) as registered. The VARCHAR at column 1 contains the mode
-// string. `states` points to `row_count` aggregate state pointers.
-// Shared with `window_funnel_events`, which differs only in finalize.
 quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, states| {
+    // SAFETY: see above.
+    let call = unsafe { Update::<WindowFunnelState>::from_raw(info, input, states) };
     // With mode parameter: INTERVAL(0), VARCHAR(1), TIMESTAMP(2), BOOLEAN(3..N)
-    unsafe {
-        update_impl(info, input, states, true, "window_funnel");
-    }
+    update_impl(call, true, "window_funnel");
 });
 
 /// Shared update implementation for both signatures.
@@ -122,153 +114,122 @@ quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, state
 ///
 /// `func` names the SQL function in error messages (`window_funnel` or
 /// `window_funnel_events`).
-///
-/// # Safety
-///
-/// Requires a valid `info` handle plus valid `input` data chunk and `states`
-/// aggregate state pointers.
-pub(super) unsafe fn update_impl(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-    has_mode: bool,
-    func: &str,
-) {
-    // SAFETY: forwarded from this function's contract: `info`, `input` and
-    // `states` are the handles DuckDB passed to the update callback, with
-    // `states` holding one initialised state pointer per input row.
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let row_count = duckdb_data_chunk_get_size(input) as usize;
-        let col_count = duckdb_data_chunk_get_column_count(input) as usize;
+pub(super) fn update_impl(call: Update<WindowFunnelState>, has_mode: bool, func: &str) {
+    let Update {
+        info,
+        chunk,
+        mut states,
+    } = call;
 
-        // Column indices depend on whether mode parameter is present
-        let ts_col: usize = if has_mode { 2 } else { 1 };
-        let bool_start: usize = if has_mode { 3 } else { 2 };
-        let num_conditions = col_count.saturating_sub(bool_start);
+    // Column indices depend on whether mode parameter is present
+    let ts_col: usize = if has_mode { 2 } else { 1 };
+    let bool_start: usize = ts_col + 1;
+    let num_conditions = chunk.cols().saturating_sub(bool_start);
 
-        // Vector 0: INTERVAL (window size) — read via VectorReader
-        let interval_reader = VectorReader::new(input, 0);
+    // SAFETY: column 0 is registered as INTERVAL (the window).
+    let windows = unsafe { chunk.intervals(0) };
+    // SAFETY: with a mode, column 1 is registered as VARCHAR.
+    let modes = has_mode.then(|| unsafe { chunk.varchars(1) });
+    // SAFETY: the timestamp column is registered as TIMESTAMP or TIMESTAMPTZ.
+    let timestamps = unsafe { chunk.timestamps(ts_col) };
+    // SAFETY: every column after the timestamp is registered as BOOLEAN.
+    let conditions = unsafe { chunk.bool_range(bool_start..chunk.cols()) };
 
-        // Mode vector (only if has_mode)
-        let mode_reader = if has_mode {
-            Some(VectorReader::new(input, 1))
-        } else {
-            None
+    // The mode and window are normally the same on every row: remember the
+    // last raw value of each and its parse, and redo the parse only when a
+    // row's raw value differs.
+    let mut last_mode: Option<([u8; 16], FunnelMode)> = None;
+    let mut last_window: Option<((i32, i32, i64), i64)> = None;
+    // DuckDB hands consecutive rows of one group the same state, so work per
+    // run of equal state pointers: with one large group the whole chunk is
+    // one run.
+    let mut start = 0;
+    while start < chunk.rows() {
+        let end = states.run_end(start);
+        let run = start..end;
+        start = end;
+        let Some(state) = states.get_mut(run.start) else {
+            continue;
         };
 
-        // TIMESTAMP vector
-        let ts_reader = VectorReader::new(input, ts_col);
-
-        // BOOLEAN condition vectors
-        let cond_readers: Vec<VectorReader> = (bool_start..col_count)
-            .map(|c| VectorReader::new(input, c))
-            .collect();
-
-        // The mode and window are normally the same on every row: remember
-        // the last raw value of each and its parse, and redo the parse only
-        // when a row's raw value differs.
-        let mode_slots = has_mode.then(|| RawStringSlots::new(input, 1));
-        let mut last_mode: Option<([u8; 16], FunnelMode)> = None;
-        let mut last_window: Option<((i32, i32, i64), i64)> = None;
-        // DuckDB hands consecutive rows of one group the same state, so work
-        // per run of equal state pointers: with one large group the whole
-        // chunk is one run.
-        let mut start = 0;
-        while start < row_count {
-            let state_ptr = *states.add(start);
-            let mut end = start + 1;
-            while end < row_count && *states.add(end) == state_ptr {
-                end += 1;
-            }
-            let run = start..end;
-            start = end;
-            let Some(state) = FfiState::<WindowFunnelState>::with_state_mut(state_ptr) else {
+        // 1. Configuration. Rows with a NULL timestamp or a NULL window are
+        //    skipped (a zero default window would silently run a 0-length
+        //    funnel).
+        let mut any_row = false;
+        for i in run.clone() {
+            let (true, Some(iv)) = (timestamps.is_valid(i), windows.get(i)) else {
                 continue;
             };
-
-            // 1. Configuration. Rows with a NULL timestamp or a NULL window
-            //    are skipped (a zero default window would silently run a
-            //    0-length funnel).
-            let mut any_row = false;
-            for i in run.clone() {
-                if !ts_reader.is_valid(i) || !interval_reader.is_valid(i) {
-                    continue;
-                }
-                any_row = true;
-                let iv = interval_reader.read_interval(i);
-                let raw_window = (iv.months, iv.days, iv.micros);
-                match last_window {
-                    Some((last, window_us))
-                        if last == raw_window
-                            && state.window_set
-                            && state.window_size_us == window_us => {}
-                    _ => {
-                        if let Err(message) =
-                            apply_window(state, iv.months, iv.days, iv.micros, func)
-                        {
-                            info.set_error(&message);
-                            return;
-                        }
-                        last_window = Some((raw_window, state.window_size_us));
+            any_row = true;
+            let raw_window = (iv.months, iv.days, iv.micros);
+            match last_window {
+                Some((last, window_us))
+                    if last == raw_window
+                        && state.window_set
+                        && state.window_size_us == window_us => {}
+                _ => {
+                    if let Err(message) = apply_window(state, iv.months, iv.days, iv.micros, func) {
+                        info.set_error(&message);
+                        return;
                     }
-                }
-                // Every non-NULL mode is parsed: an invalid or different mode
-                // anywhere in the group is an error, whatever the row order.
-                if let (Some(reader), Some(slots)) = (&mode_reader, &mode_slots) {
-                    if reader.is_valid(i) {
-                        let recorded = row_mode(reader, slots, i, &mut last_mode, func)
-                            .and_then(|mode| record_mode(state, mode, func));
-                        if let Err(message) = recorded {
-                            info.set_error(&message);
-                            return;
-                        }
-                    }
+                    last_window = Some((raw_window, state.window_size_us));
                 }
             }
-            if !any_row {
-                continue;
-            }
-            state.num_conditions = num_conditions;
-
-            // 2. Events. Reserve the run once, fallibly (an allocation
-            //    failure becomes a SQL error instead of aborting the host
-            //    process); `extend` then writes into the reserved space. As in
-            //    `WindowFunnelState::update`, an event with no true condition
-            //    is kept only under `strict_order`, where it breaks a chain.
-            let needed = run.len();
-            if state.events.capacity() - state.events.len() < needed
-                && state.events.try_reserve(needed).is_err()
-            {
-                info.set_error(&out_of_memory_message(func, state.events.len() + needed));
-                return;
-            }
-            // While a mode-taking state has not seen its mode yet (its rows
-            // so far had a NULL mode), keep such events too: the group's mode
-            // may still turn out to be `strict_order`. Finalize ignores them
-            // in the other modes.
-            let keep_empty =
-                state.mode.has(FunnelMode::STRICT_ORDER) || (has_mode && !state.mode_set);
-            state.events.extend(run.filter_map(|i| {
-                if !ts_reader.is_valid(i) || !interval_reader.is_valid(i) {
-                    return None;
+            // Every non-NULL mode is parsed: an invalid or different mode
+            // anywhere in the group is an error, whatever the row order.
+            if let Some(modes) = &modes {
+                let recorded = row_mode(modes, i, &mut last_mode, func)
+                    .and_then(|mode| mode.map_or(Ok(()), |mode| record_mode(state, mode, func)));
+                if let Err(message) = recorded {
+                    info.set_error(&message);
+                    return;
                 }
-                let mut bitmask: u32 = 0;
-                for (c, reader) in cond_readers.iter().enumerate() {
-                    if reader.is_valid(i) && reader.read_bool(i) {
-                        bitmask |= 1 << c;
-                    }
-                }
-                (bitmask != 0 || keep_empty).then(|| Event::new(ts_reader.read_i64(i), bitmask))
-            }));
+            }
         }
+        if !any_row {
+            continue;
+        }
+        state.num_conditions = num_conditions;
+
+        // 2. Events. Reserve the run once, fallibly (an allocation failure
+        //    becomes a SQL error instead of aborting the host process);
+        //    `extend` then writes into the reserved space. As in
+        //    `WindowFunnelState::update`, an event with no true condition is
+        //    kept only under `strict_order`, where it breaks a chain.
+        let needed = run.len();
+        if state.events.capacity() - state.events.len() < needed
+            && state.events.try_reserve(needed).is_err()
+        {
+            info.set_error(&out_of_memory_message(func, state.events.len() + needed));
+            return;
+        }
+        // While a mode-taking state has not seen its mode yet (its rows so
+        // far had a NULL mode), keep such events too: the group's mode may
+        // still turn out to be `strict_order`. Finalize ignores them in the
+        // other modes.
+        let keep_empty = state.mode.has(FunnelMode::STRICT_ORDER) || (has_mode && !state.mode_set);
+        state.events.extend(run.filter_map(|i| {
+            if !windows.is_valid(i) {
+                return None;
+            }
+            let timestamp_us = timestamps.get(i)?;
+            let mut bitmask: u32 = 0;
+            for (c, condition) in conditions.iter().enumerate() {
+                if condition.is_true(i) {
+                    bitmask |= 1 << c;
+                }
+            }
+            (bitmask != 0 || keep_empty).then(|| Event::new(timestamp_us, bitmask))
+        }));
     }
 }
 
-// SAFETY: `source` and `target` point to `count` aggregate state pointers.
+// SAFETY: DuckDB calls it with the handles `Combine::from_raw` requires.
 // Shared with `window_funnel_events`, which differs only in finalize.
 quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
-    unsafe { combine_impl(info, source, target, count, "window_funnel") }
+    // SAFETY: see above.
+    let call = unsafe { Combine::<WindowFunnelState>::from_raw(info, source, target, count) };
+    combine_impl(call, "window_funnel");
 });
 
 /// Validates a row's window and records it in the state, or returns the
@@ -296,40 +257,34 @@ fn apply_window(
             Ok(())
         }
         Some(_) => Err(format!("{func}: INTERVAL window must be non-negative")),
-        None => Err(format!(
-            "{func}: invalid INTERVAL window: month-based intervals are ambiguous \
-             (28-31 days) and the total must fit in signed 64-bit microseconds; use \
-             day/hour/minute/second units instead"
-        )),
+        None => Err(invalid_interval_message(func, "window", months)),
     }
 }
 
 /// The mode of row `i`, parsing it only when its raw string slot differs
 /// from the last one parsed in this chunk (the mode is normally the same
-/// string on every row).
-///
-/// # Safety
-///
-/// `reader` and `slots` must read the chunk's `VARCHAR` mode column, and row
-/// `i` must be in bounds and non-`NULL`.
-unsafe fn row_mode(
-    reader: &VectorReader,
-    slots: &RawStringSlots,
+/// string on every row). `Ok(None)` for a `NULL` mode.
+fn row_mode(
+    modes: &Varchars,
     i: usize,
     last_mode: &mut Option<([u8; 16], FunnelMode)>,
     func: &str,
-) -> Result<FunnelMode, String> {
-    // SAFETY: forwarded from this function's contract.
-    let slot = unsafe { slots.get(i) };
-    match *last_mode {
-        Some((last, mode)) if last == slot => Ok(mode),
-        _ => {
-            // SAFETY: forwarded from this function's contract.
-            let mode = parse_mode(unsafe { reader.read_str(i) }, func)?;
-            *last_mode = Some((slot, mode));
-            Ok(mode)
+) -> Result<Option<FunnelMode>, String> {
+    if !modes.is_valid(i) {
+        return Ok(None);
+    }
+    let slot = modes.slot(i);
+    if let Some((last, mode)) = *last_mode {
+        if last == slot {
+            return Ok(Some(mode));
         }
     }
+    let Some(text) = modes.get(i) else {
+        return Ok(None);
+    };
+    let mode = parse_mode(text, func)?;
+    *last_mode = Some((slot, mode));
+    Ok(Some(mode))
 }
 
 /// Parses a mode string, or returns the error message: unknown modes and
@@ -367,56 +322,42 @@ fn record_mode(state: &mut WindowFunnelState, mode: FunnelMode, func: &str) -> R
 /// Combine shared by `window_funnel` and `window_funnel_events`: appends the
 /// source's events, propagates the window and mode into fresh targets, and
 /// rejects a target and source holding different windows or modes.
-///
-/// # Safety
-///
-/// Requires a valid `info` handle and `source`/`target` arrays of `count`
-/// state pointers, with `source[i]` and `target[i]` distinct states (as
-/// `DuckDB` guarantees), so the shared and mutable borrows do not alias.
-pub(super) unsafe fn combine_impl(
-    info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    target: *mut duckdb_aggregate_state,
-    count: idx_t,
-    func: &str,
-) {
-    // SAFETY: forwarded from this function's contract.
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        for i in 0..count as usize {
-            let Some(src) = FfiState::<WindowFunnelState>::with_state(*source.add(i)) else {
-                continue;
-            };
-            let Some(tgt) = FfiState::<WindowFunnelState>::with_state_mut(*target.add(i)) else {
-                continue;
-            };
-            if tgt.window_set && src.window_set && tgt.window_size_us != src.window_size_us {
-                info.set_error(&conflict_message(
-                    func,
-                    "window",
-                    &describe_micros(tgt.window_size_us),
-                    &describe_micros(src.window_size_us),
-                ));
-                return;
-            }
-            if tgt.mode_set && src.mode_set && tgt.mode != src.mode {
-                info.set_error(&conflict_message(
-                    func,
-                    "mode",
-                    &format!("'{}'", tgt.mode),
-                    &format!("'{}'", src.mode),
-                ));
-                return;
-            }
-            if tgt.events.try_reserve(src.events.len()).is_err() {
-                info.set_error(&out_of_memory_message(
-                    func,
-                    tgt.events.len() + src.events.len(),
-                ));
-                return;
-            }
-            tgt.combine_in_place(src);
+pub(super) fn combine_impl(call: Combine<WindowFunnelState>, func: &str) {
+    let Combine {
+        info,
+        source,
+        mut target,
+    } = call;
+    for i in 0..source.count() {
+        let Some((src, tgt)) = States::pair(&source, &mut target, i) else {
+            continue;
+        };
+        if tgt.window_set && src.window_set && tgt.window_size_us != src.window_size_us {
+            info.set_error(&conflict_message(
+                func,
+                "window",
+                &describe_micros(tgt.window_size_us),
+                &describe_micros(src.window_size_us),
+            ));
+            return;
         }
+        if tgt.mode_set && src.mode_set && tgt.mode != src.mode {
+            info.set_error(&conflict_message(
+                func,
+                "mode",
+                &format!("'{}'", tgt.mode),
+                &format!("'{}'", src.mode),
+            ));
+            return;
+        }
+        if tgt.events.try_reserve(src.events.len()).is_err() {
+            info.set_error(&out_of_memory_message(
+                func,
+                tgt.events.len() + src.events.len(),
+            ));
+            return;
+        }
+        tgt.combine_in_place(src);
     }
 }
 
@@ -429,22 +370,21 @@ fn describe_micros(us: i64) -> String {
     }
 }
 
-// SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB INTEGER vector with room for `offset + count` elements.
-quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
-    unsafe {
-        let mut writer = VectorWriter::new(result);
-
-        for i in 0..count as usize {
-            let idx = offset as usize + i;
-
-            let Some(state) = FfiState::<WindowFunnelState>::with_state_mut(*source.add(i)) else {
-                writer.set_null(idx);
-                continue;
-            };
-
-            let step = state.finalize();
-            writer.write_i32(idx, step as i32);
+// SAFETY: DuckDB calls it with the handles `Finalize::from_raw` requires; the
+// INTEGER result vector matches the registered return type.
+quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
+    // SAFETY: see above.
+    let Finalize {
+        mut states,
+        mut out,
+        ..
+    } = unsafe {
+        Finalize::<WindowFunnelState, I32Kind>::from_raw(info, source, result, count, offset)
+    };
+    for i in 0..out.count() {
+        match states.get_mut(i) {
+            Some(state) => out.write(i, state.finalize() as i32),
+            None => out.set_null(i),
         }
     }
 });
