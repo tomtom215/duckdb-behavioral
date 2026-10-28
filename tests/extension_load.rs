@@ -988,6 +988,40 @@ fn sessionize_varying_gap_matches_reference() {
 /// `forward` + `tail` and `backward` + `head` start the chain at an end of
 /// the sequence, so no adjacent event exists. `ClickHouse` rejects both; the
 /// extension used to return NULL silently.
+/// A pattern made only of `.*` matches the empty sequence, so it matches a
+/// group whose rows all have every condition false (ClickHouse's
+/// `sequenceMatch('.*')` returns 1 there). Nothing is counted, and a group
+/// with no rows at all is still NULL (a documented difference).
+#[test]
+fn star_only_pattern_matches_a_group_without_usable_events() {
+    let db = load_extension();
+    let rows = "(VALUES (TIMESTAMP '2024-01-01', false, false)) t(ts, c1, c2)";
+    let matched: bool = db
+        .query_one(&format!(
+            "SELECT sequence_match('.*', ts, c1, c2) FROM {rows}"
+        ))
+        .unwrap();
+    assert!(matched);
+    let count: i64 = db
+        .query_one(&format!(
+            "SELECT sequence_count('.*', ts, c1, c2) FROM {rows}"
+        ))
+        .unwrap();
+    assert_eq!(count, 0);
+    let stepped: bool = db
+        .query_one(&format!(
+            "SELECT sequence_match('(?1)', ts, c1, c2) FROM {rows}"
+        ))
+        .unwrap();
+    assert!(!stepped, "a pattern with a (?N) step still needs an event");
+    let no_rows: Option<bool> = db
+        .query_one(&format!(
+            "SELECT sequence_match('.*', ts, c1, c2) FROM {rows} WHERE false"
+        ))
+        .unwrap();
+    assert_eq!(no_rows, None);
+}
+
 #[test]
 fn sequence_next_node_rejects_end_anchored_chains() {
     let db = load_extension();

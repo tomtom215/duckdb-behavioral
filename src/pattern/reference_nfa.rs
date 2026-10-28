@@ -92,6 +92,19 @@ pub fn execute_pattern_nfa(
     events: &[Event],
     count_all: bool,
 ) -> Result<MatchResult, PatternError> {
+    // The empty sequence is matched by a pattern made only of `.*` (and
+    // counted as nothing), as in ClickHouse; the search below only starts at
+    // an event, so it is stated here.
+    if events.is_empty() {
+        return Ok(MatchResult {
+            matched: !pattern.steps.is_empty()
+                && pattern
+                    .steps
+                    .iter()
+                    .all(|step| matches!(step, PatternStep::AnyEvents)),
+            count: 0,
+        });
+    }
     let mut total_matches = 0;
     let mut search_start = 0;
     let budget = nfa_budget(events.len(), pattern.steps.len());

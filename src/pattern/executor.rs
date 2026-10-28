@@ -83,9 +83,22 @@ pub fn execute_pattern(
     events: &[Event],
     count_all: bool,
 ) -> Result<MatchResult, PatternError> {
-    if events.is_empty() || pattern.steps.is_empty() {
+    if pattern.steps.is_empty() {
         return Ok(MatchResult {
             matched: false,
+            count: 0,
+        });
+    }
+    if events.is_empty() {
+        // No event can fill a `(?N)` or `.` step, but `.*` alone still matches
+        // the empty sequence, as in ClickHouse's `sequenceMatch('.*')`. There
+        // is nothing to count, so the count stays 0 in both engines.
+        let matches_empty = pattern
+            .steps
+            .iter()
+            .all(|step| matches!(step, PatternStep::AnyEvents));
+        return Ok(MatchResult {
+            matched: matches_empty,
             count: 0,
         });
     }
@@ -1876,9 +1889,6 @@ mod differential_tests {
         events: &[Event],
         count_all: bool,
     ) -> Option<(bool, usize)> {
-        if events.is_empty() {
-            return Some((false, 0));
-        }
         reference_nfa::execute_pattern_nfa(pattern, events, count_all)
             .ok()
             .map(|r| (r.matched, r.count))
