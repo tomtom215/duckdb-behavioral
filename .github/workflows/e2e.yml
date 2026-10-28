@@ -1,420 +1,99 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
-name: E2E Tests
+name: E2E
 
+# Builds the extension the way the community-extensions CI does, runs the SQL
+# logic tests, and loads the one resulting binary into every DuckDB release
+# that shares its stable C API. Called from ci.yml, so the single CI Gate
+# covers it; also runnable by hand.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Cancel redundant runs on the same branch/PR
-concurrency:
-  group: e2e-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 5
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
+  # The DuckDB release the SQL logic tests (Makefile: DUCKDB_TEST_VERSION) and
+  # the per-platform check below run against. The older releases are in the
+  # `compat` matrix.
   DUCKDB_VERSION: "v2.0.0"
 
 jobs:
-  e2e-test:
-    name: E2E (${{ matrix.os }})
+  build:
+    name: Build and test (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             platform: linux_amd64
-            duckdb_asset: duckdb-cli-linux-amd64.tar.gz
+            cli_platform: linux-amd64
           - os: macos-latest
             platform: osx_arm64
-            duckdb_asset: duckdb-cli-osx-universal.tar.gz
-
+            cli_platform: osx-universal
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
         with:
-          key: e2e-${{ matrix.platform }}
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+          cache-key: e2e-${{ matrix.platform }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-
-      # Build the extension using the community extension Makefile
-      - name: Configure extension build
-        run: make configure
-
-      - name: Build release extension
-        run: make release
-
-      # Run SQL integration tests via the DuckDB test runner
-      - name: Run SQL integration tests
+      - name: Build the extension
+        run: |
+          make configure
+          make release
+      - name: SQL logic tests (test/sql)
         run: make test_release
-
-      # Run extended E2E tests using DuckDB CLI
-      - name: Install DuckDB CLI
+      - name: Check the built binary in DuckDB ${{ env.DUCKDB_VERSION }}
         run: |
-          curl -sSL "https://github.com/duckdb/duckdb/releases/download/${{ env.DUCKDB_VERSION }}/${{ matrix.duckdb_asset }}" -o duckdb.tar.gz
-          tar xzf duckdb.tar.gz
-          chmod +x duckdb
-          echo "DuckDB version: $(./duckdb --version)"
-
-      - name: Verify extension loads
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-            SELECT 'Extension loaded successfully' AS status;
-          "
-
-      - name: E2E - sessionize
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE events AS SELECT * FROM (VALUES
-              (TIMESTAMP '2024-01-01 10:00:00'),
-              (TIMESTAMP '2024-01-01 10:05:00'),
-              (TIMESTAMP '2024-01-01 10:45:00'),
-              (TIMESTAMP '2024-01-01 11:30:00')
-            ) AS t(ts);
-
-            SELECT ts, sessionize(ts, INTERVAL '30 minutes') OVER (ORDER BY ts) AS session_id
-            FROM events
-            ORDER BY ts;
-          "
-
-      - name: E2E - retention
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE user_actions AS SELECT * FROM (VALUES
-              (1, true, true, false),
-              (1, true, false, true),
-              (2, true, false, false),
-              (2, false, true, false)
-            ) AS t(user_id, day0, day1, day7);
-
-            SELECT user_id, retention(day0, day1, day7)
-            FROM user_actions
-            GROUP BY user_id
-            ORDER BY user_id;
-          "
-
-      - name: E2E - window_funnel
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE funnel_events AS SELECT * FROM (VALUES
-              (1, TIMESTAMP '2024-01-01 10:00:00', 'view'),
-              (1, TIMESTAMP '2024-01-01 10:05:00', 'cart'),
-              (1, TIMESTAMP '2024-01-01 10:10:00', 'purchase'),
-              (2, TIMESTAMP '2024-01-01 10:00:00', 'view'),
-              (2, TIMESTAMP '2024-01-01 10:05:00', 'cart')
-            ) AS t(user_id, ts, event);
-
-            SELECT user_id, window_funnel(INTERVAL '1 hour', ts,
-              event = 'view', event = 'cart', event = 'purchase')
-            FROM funnel_events
-            GROUP BY user_id
-            ORDER BY user_id;
-          "
-
-      - name: E2E - window_funnel with modes
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE mode_events AS SELECT * FROM (VALUES
-              (TIMESTAMP '2024-01-01 10:00:00', true, false),
-              (TIMESTAMP '2024-01-01 10:00:00', false, true),
-              (TIMESTAMP '2024-01-01 10:05:00', true, false)
-            ) AS t(ts, step1, step2);
-
-            SELECT window_funnel(INTERVAL '1 hour', 'strict_increase', ts, step1, step2)
-            FROM mode_events;
-          "
-
-      - name: E2E - window_funnel_events
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE chain_events AS SELECT * FROM (VALUES
-              (TIMESTAMP '2024-01-01 10:00:00', 'view'),
-              (TIMESTAMP '2024-01-01 10:05:00', 'cart'),
-              (TIMESTAMP '2024-01-01 10:10:00', 'purchase')
-            ) AS t(ts, event);
-
-            SELECT window_funnel_events(INTERVAL '1 hour', ts,
-              event = 'view', event = 'cart', event = 'purchase') AS chain
-            FROM chain_events;
-          "
-
-      - name: E2E - sequence_match and sequence_count
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE seq_events AS SELECT * FROM (VALUES
-              (TIMESTAMP '2024-01-01 10:00:00', true, false, false),
-              (TIMESTAMP '2024-01-01 10:05:00', false, true, false),
-              (TIMESTAMP '2024-01-01 10:10:00', false, false, true)
-            ) AS t(ts, c1, c2, c3);
-
-            SELECT
-              sequence_match('(?1).*(?2).*(?3)', ts, c1, c2, c3) AS matched,
-              sequence_count('(?1)(?2)', ts, c1, c2, c3) AS count
-            FROM seq_events;
-          "
-
-      - name: E2E - sequence_match_events
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE sme_events AS SELECT * FROM (VALUES
-              (TIMESTAMP '2024-01-01 10:00:00', true, false),
-              (TIMESTAMP '2024-01-01 10:05:00', false, true)
-            ) AS t(ts, c1, c2);
-
-            SELECT sequence_match_events('(?1)(?2)', ts, c1, c2)
-            FROM sme_events;
-          "
-
-      - name: E2E - sequence_next_node
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE snn_events AS SELECT * FROM (VALUES
-              (TIMESTAMP '2024-01-01 10:00:00', 'home',    true, true,  false),
-              (TIMESTAMP '2024-01-01 10:01:00', 'product', true, false, true),
-              (TIMESTAMP '2024-01-01 10:02:00', 'cart',    false, false, false)
-            ) AS t(ts, page, base_cond, e1, e2);
-
-            SELECT sequence_next_node('forward', 'first_match', ts, page, base_cond, e1, e2)
-            FROM snn_events;
-          "
-
-      - name: E2E - GROUP BY aggregation
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            CREATE TABLE grouped AS SELECT * FROM (VALUES
-              (1, TIMESTAMP '2024-01-01 10:00:00', true, false),
-              (1, TIMESTAMP '2024-01-01 10:05:00', false, true),
-              (2, TIMESTAMP '2024-01-01 10:00:00', true, false),
-              (2, TIMESTAMP '2024-01-01 10:01:00', true, true)
-            ) AS t(user_id, ts, c1, c2);
-
-            SELECT
-              user_id,
-              sequence_match('(?1)(?2)', ts, c1, c2) AS matched,
-              sequence_count('(?1)(?2)', ts, c1, c2) AS cnt
-            FROM grouped
-            GROUP BY user_id
-            ORDER BY user_id;
-          "
-
-      - name: E2E - load test (100K events)
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            -- Generate 100K events for load testing
-            CREATE TABLE load_test AS
-            SELECT
-              (i / 100)::INTEGER AS user_id,
-              TIMESTAMP '2024-01-01' + (i * INTERVAL '1 second') AS ts,
-              (i % 3 = 0) AS c1,
-              (i % 5 = 0) AS c2,
-              (i % 7 = 0) AS c3
-            FROM generate_series(1, 100000) AS t(i);
-
-            -- Sessionize (window function)
-            SELECT COUNT(*) AS session_count FROM (
-              SELECT DISTINCT sessionize(ts, INTERVAL '5 minutes') OVER (PARTITION BY user_id ORDER BY ts) AS sid
-              FROM load_test
-            );
-
-            -- Retention
-            SELECT COUNT(*) FROM (
-              SELECT user_id, retention(c1, c2, c3) FROM load_test GROUP BY user_id
-            );
-
-            -- Window funnel
-            SELECT COUNT(*) FROM (
-              SELECT user_id, window_funnel(INTERVAL '1 hour', ts, c1, c2, c3)
-              FROM load_test GROUP BY user_id
-            );
-
-            -- Sequence match
-            SELECT COUNT(*) FROM (
-              SELECT user_id, sequence_match('(?1).*(?2)', ts, c1, c2, c3)
-              FROM load_test GROUP BY user_id
-            );
-
-            -- Sequence count
-            SELECT COUNT(*) FROM (
-              SELECT user_id, sequence_count('(?1)(?2)', ts, c1, c2, c3)
-              FROM load_test GROUP BY user_id
-            );
-
-            SELECT 'Load test passed: 100K events, all 5 aggregate functions' AS result;
-          "
-
-      - name: E2E - no match cases
-        run: |
-          ./duckdb -unsigned -c "
-            LOAD 'build/release/behavioral.duckdb_extension';
-
-            -- Empty input
-            CREATE TABLE empty_events(ts TIMESTAMP, c1 BOOLEAN, c2 BOOLEAN);
-
-            SELECT sequence_match('(?1)(?2)', ts, c1, c2) FROM empty_events;
-            SELECT sequence_count('(?1)(?2)', ts, c1, c2) FROM empty_events;
-            SELECT window_funnel(INTERVAL '1 hour', ts, c1, c2) FROM empty_events;
-
-            -- No match
-            CREATE TABLE nomatch AS SELECT * FROM (VALUES
-              (TIMESTAMP '2024-01-01 10:00:00', true, false),
-              (TIMESTAMP '2024-01-01 10:05:00', true, false)
-            ) AS t(ts, c1, c2);
-
-            SELECT
-              sequence_match('(?1)(?2)', ts, c1, c2) AS matched,
-              window_funnel(INTERVAL '1 hour', ts, c1, c2) AS funnel
-            FROM nomatch;
-
-            SELECT 'No-match cases passed' AS result;
-          "
-
-      - name: Platform summary
-        if: always()
-        run: |
-          {
-            echo "### E2E Results (${{ matrix.platform }})"
-            echo ""
-            echo "| Test | Status |"
-            echo "|------|--------|"
-            echo "| Extension build | ${{ job.status == 'success' && '✅' || '⚠️ Check logs' }} |"
-            echo "| Extension loads | Verified |"
-            echo "| sessionize | Verified |"
-            echo "| retention | Verified |"
-            echo "| window_funnel | Verified |"
-            echo "| window_funnel modes | Verified |"
-            echo "| window_funnel_events | Verified |"
-            echo "| sequence_match/count | Verified |"
-            echo "| sequence_match_events | Verified |"
-            echo "| sequence_next_node | Verified |"
-            echo "| GROUP BY aggregation | Verified |"
-            echo "| 100K load test | Verified |"
-            echo "| No-match cases | Verified |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload E2E logs
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          scripts/install-duckdb-cli.sh "$DUCKDB_VERSION" "${{ matrix.cli_platform }}" "$RUNNER_TEMP/duckdb"
+          scripts/compat-check.sh "$RUNNER_TEMP/duckdb/duckdb" build/release/behavioral.duckdb_extension
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-logs-${{ matrix.platform }}
-          path: |
-            build/release/*.log
-            build/release/behavioral.duckdb_extension
+          name: extension-${{ matrix.platform }}
+          path: build/release/behavioral.duckdb_extension
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   # The extension is stamped for the stable C API (`C_STRUCT`, C API v1.2.0), so
-  # one binary must load and answer correctly on every DuckDB release with that
-  # C API. This job loads the Linux artifact built above into several releases
-  # and asserts the query output, not just the absence of an error.
+  # the Linux binary built above must load and answer correctly in every older
+  # release that has that C API.
   compat:
     name: Compat (DuckDB ${{ matrix.duckdb }})
-    needs: e2e-test
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        duckdb: ["v1.3.2", "v1.4.4", "v1.5.0", "v1.5.6", "v2.0.0"]
+        duckdb: ["v1.3.2", "v1.4.4", "v1.5.0", "v1.5.6"]
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      # No checkout of the code under test is needed beyond the scripts.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          name: e2e-logs-linux_amd64
+          sparse-checkout: |
+            scripts
+            Cargo.toml
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: extension-linux_amd64
           path: artifact
-
       - name: Load into DuckDB ${{ matrix.duckdb }} and check results
+        env:
+          DUCKDB: ${{ matrix.duckdb }}
         run: |
-          # DuckDB 2.0.0 renamed its release assets (.tar.gz, dashed name);
-          # older releases keep duckdb_cli-linux-amd64.zip.
-          BASE="https://github.com/duckdb/duckdb/releases/download/${{ matrix.duckdb }}"
-          if curl -sSLf "$BASE/duckdb-cli-linux-amd64.tar.gz" -o duckdb.tar.gz; then
-            tar xzf duckdb.tar.gz
-          else
-            curl -sSLf "$BASE/duckdb_cli-linux-amd64.zip" -o duckdb.zip
-            unzip -q duckdb.zip
-          fi
-          EXT="$(find artifact -name behavioral.duckdb_extension | head -1)"
-          test -n "$EXT"
-          ACTUAL="$(./duckdb -unsigned -csv -noheader -c "
-            LOAD '$EXT';
-            SELECT window_funnel(INTERVAL '1 hour', ts, e = 'a', e = 'b', e = 'c'),
-                   sequence_match('(?1).*(?2)', ts, e = 'a', e = 'c'),
-                   sequence_count('(?1).*(?2)', ts, e = 'a', e = 'c'),
-                   retention(e = 'a', e = 'b'),
-                   sequence_next_node('forward', 'head', ts, e, e = 'a', e = 'a')
-            FROM (VALUES (TIMESTAMP '2024-01-01 00:00', 'a'),
-                         (TIMESTAMP '2024-01-01 00:10', 'b'),
-                         (TIMESTAMP '2024-01-01 00:20', 'c')) t(ts, e);")"
-          EXPECTED='3,true,1,"[true, true]",b'
-          echo "actual:   $ACTUAL"
-          echo "expected: $EXPECTED"
-          test "$ACTUAL" = "$EXPECTED"
-
-  e2e-summary:
-    name: E2E Summary
-    needs: [e2e-test, compat]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Evaluate results
-        run: |
-          {
-            echo "### E2E Test Summary"
-            echo ""
-            echo "| Platform | Result |"
-            echo "|----------|--------|"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          RESULT="${{ needs.e2e-test.result == 'success' && needs.compat.result || needs.e2e-test.result }}"
-          case "$RESULT" in
-            success)
-              echo "| All platforms | ✅ passed |" >> "$GITHUB_STEP_SUMMARY"
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "✅ **All E2E tests passed.** Extension loads, all 8 aggregate functions execute, 100K load test succeeded, and the stable-ABI binary loads into every DuckDB release in the compat matrix." >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            *)
-              echo "| One or more platforms | ❌ $RESULT |" >> "$GITHUB_STEP_SUMMARY"
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "❌ **E2E tests failed.** Check individual platform logs above." >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-              ;;
-          esac
+          scripts/install-duckdb-cli.sh "$DUCKDB" linux-amd64 "$RUNNER_TEMP/duckdb"
+          scripts/compat-check.sh "$RUNNER_TEMP/duckdb/duckdb" artifact/behavioral.duckdb_extension

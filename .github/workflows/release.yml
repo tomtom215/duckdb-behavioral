@@ -14,12 +14,16 @@ name: Release
 #
 # Pre-1.0 (0.x.y): MINOR bumps may include breaking changes per SemVer §4.
 #
-# The release process:
-#   1. Update version in Cargo.toml and description.yml
+# The release process (see also RELEASING.md):
+#   1. Move the CHANGELOG.md [Unreleased] entries under a new version heading
+#      and bump the version in Cargo.toml and description.yml.
 #   2. Commit: "chore: bump version to X.Y.Z"
 #   3. Tag: git tag vX.Y.Z && git push origin vX.Y.Z
-#   4. This workflow validates, builds, tests, publishes, and auto-updates
-#      description.yml ref to the tagged commit SHA on main
+#   4. This workflow validates, builds, tests, attests and publishes, then
+#      updates description.yml's ref on main to the tagged commit.
+#
+# Release builds deliberately use no cargo cache: a cache restored from a
+# branch or pull request run must not be able to influence an attested binary.
 
 on:
   push:
@@ -28,82 +32,83 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "SemVer tag to release (e.g., v0.1.0)"
+        description: "Existing SemVer tag to (re)release (e.g., v0.1.0)"
         required: true
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 5
   EXTENSION_NAME: behavioral
 
 jobs:
-  # Validate that the tag follows SemVer and matches Cargo.toml version
+  # Validate that the tag follows SemVer and matches the repository metadata
   validate:
     name: Validate version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
       semver: ${{ steps.version.outputs.semver }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
 
       - name: Determine version
         id: version
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
+          set -euo pipefail
+          TAG="${TAG_INPUT:-$REF_NAME}"
 
           # Validate SemVer format: vMAJOR.MINOR.PATCH with optional pre-release
-          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
-            echo "ERROR: Tag '$TAG' does not follow SemVer format (vMAJOR.MINOR.PATCH)"
+          if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$' <<<"$TAG"; then
+            echo "::error::Tag '$TAG' does not follow SemVer format (vMAJOR.MINOR.PATCH)"
             exit 1
           fi
 
-          SEMVER="${TAG#v}"  # Strip 'v' prefix
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
-          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "semver=${TAG#v}" >> "$GITHUB_OUTPUT"
           echo "Tag: $TAG"
-          echo "SemVer: $SEMVER"
 
-      - name: Verify Cargo.toml version matches tag
+      - name: Verify Cargo.toml, description.yml and CHANGELOG.md match the tag
+        env:
+          SEMVER: ${{ steps.version.outputs.semver }}
         run: |
-          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          TAG_VERSION="${{ steps.version.outputs.semver }}"
-
-          # Strip pre-release suffix for comparison (v0.1.0-rc.1 matches Cargo 0.1.0)
-          TAG_BASE="${TAG_VERSION%%-*}"
-
-          if [ "$CARGO_VERSION" != "$TAG_BASE" ]; then
-            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match tag version ($TAG_BASE)"
-            echo "Update Cargo.toml version before tagging."
-            exit 1
-          fi
-          echo "Version match confirmed: Cargo.toml=$CARGO_VERSION, tag=$TAG_BASE"
-
-      - name: Verify description.yml version matches
-        run: |
-          DESC_VERSION=$(grep '  version:' description.yml | head -1 | awk '{print $2}')
-          TAG_SEMVER="${{ steps.version.outputs.semver }}"
-          TAG_BASE="${TAG_SEMVER%%-*}"
-
-          if [ "$DESC_VERSION" != "$TAG_BASE" ]; then
-            echo "ERROR: description.yml version ($DESC_VERSION) does not match tag ($TAG_BASE)"
-            echo "Update description.yml version before tagging."
-            exit 1
-          fi
-          echo "description.yml version match confirmed: $DESC_VERSION"
+          set -euo pipefail
+          # A pre-release suffix is stripped: v0.1.0-rc.1 matches version 0.1.0.
+          base="${SEMVER%%-*}"
+          cargo_version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          desc_version="$(sed -n 's/^  version: *//p' description.yml | head -1)"
+          for pair in "Cargo.toml=$cargo_version" "description.yml=$desc_version"; do
+            if [ "${pair#*=}" != "$base" ]; then
+              echo "::error::${pair%%=*} version (${pair#*=}) does not match the tag ($base)"
+              exit 1
+            fi
+          done
+          # Fails if the version has no CHANGELOG.md section.
+          scripts/release-notes.sh "$base" > /dev/null
+          echo "Version $base: Cargo.toml, description.yml and CHANGELOG.md agree"
 
   build:
     name: Build (${{ matrix.platform }})
     needs: validate
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write # build provenance attestation
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -111,143 +116,141 @@ jobs:
           # The community Makefile passes --target only for the osx_*
           # platforms; Linux builds for the runner's own architecture, so
           # linux_arm64 needs an arm64 runner. `arch` is what `file` reports
-          # for the built library (checked below).
+          # for the built library (checked below). `native` platforms run the
+          # SQL logic tests and the compat checks against the binary they built.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux_amd64
+            cli_platform: linux-amd64
             lib_ext: so
             arch: x86-64
+            native: true
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             platform: linux_arm64
+            cli_platform: linux-arm64
             lib_ext: so
             arch: aarch64
+            native: true
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: osx_amd64
             lib_ext: dylib
             arch: x86_64
+            native: false
           - os: macos-latest
             target: aarch64-apple-darwin
             platform: osx_arm64
+            cli_platform: osx-universal
             lib_ext: dylib
             arch: arm64
+            native: true
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.tag || github.ref }}
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
+          cache: "false"
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: release-${{ matrix.target }}
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 
       # Build via community extension Makefile for metadata correctness
-      - name: Configure extension
-        run: |
-          DUCKDB_PLATFORM=${{ matrix.platform }} \
-          EXTENSION_VERSION=${{ needs.validate.outputs.semver }} \
-          make configure
-
       - name: Build release extension
+        env:
+          DUCKDB_PLATFORM: ${{ matrix.platform }}
+          EXTENSION_VERSION: ${{ needs.validate.outputs.semver }}
         run: |
-          DUCKDB_PLATFORM=${{ matrix.platform }} make release
+          make configure
+          make release
 
       - name: Verify binary architecture
+        env:
+          LIB_EXT: ${{ matrix.lib_ext }}
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
-          for f in "build/release/${{ env.EXTENSION_NAME }}.duckdb_extension" \
-                   "build/release/lib${{ env.EXTENSION_NAME }}.${{ matrix.lib_ext }}"; do
+          for f in "build/release/${EXTENSION_NAME}.duckdb_extension" \
+                   "build/release/lib${EXTENSION_NAME}.${LIB_EXT}"; do
             desc=$(file -b "$f")
             echo "$f: $desc"
-            if ! grep -q "${{ matrix.arch }}" <<<"$desc"; then
-              echo "::error::$f is not ${{ matrix.arch }} (platform ${{ matrix.platform }})"
+            if ! grep -q "$ARCH" <<<"$desc"; then
+              echo "::error::$f is not $ARCH (platform $PLATFORM)"
               exit 1
             fi
           done
 
+      - name: SQL logic tests
+        if: matrix.native
+        env:
+          DUCKDB_PLATFORM: ${{ matrix.platform }}
+        run: make test_release
+
+      - name: Check the binary in a real DuckDB CLI
+        if: matrix.native
+        env:
+          CLI_PLATFORM: ${{ matrix.cli_platform }}
+        run: |
+          # The Makefile pins DUCKDB_TEST_VERSION (no leading v) to the release
+          # the SQL logic tests run against; use the same one here.
+          version="v$(sed -n 's/^DUCKDB_TEST_VERSION=//p' Makefile)"
+          scripts/install-duckdb-cli.sh "$version" "$CLI_PLATFORM" "$RUNNER_TEMP/duckdb"
+          scripts/compat-check.sh "$RUNNER_TEMP/duckdb/duckdb" "build/release/${EXTENSION_NAME}.duckdb_extension"
+
       # Package artifacts with checksums
       - name: Package extension
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          LIB_EXT: ${{ matrix.lib_ext }}
         run: |
+          set -euo pipefail
           mkdir -p dist
-          cp "build/release/${{ env.EXTENSION_NAME }}.duckdb_extension" dist/
-          cp "build/release/lib${{ env.EXTENSION_NAME }}.${{ matrix.lib_ext }}" dist/
+          cp "build/release/${EXTENSION_NAME}.duckdb_extension" dist/
+          cp "build/release/lib${EXTENSION_NAME}.${LIB_EXT}" dist/
 
           (
-            cd dist || exit 1
+            cd dist
             sha256sum ./* > SHA256SUMS.txt 2>/dev/null || shasum -a 256 ./* > SHA256SUMS.txt
           )
 
-          tar czf "${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz" -C dist .
+          tar czf "${EXTENSION_NAME}-${VERSION}-${PLATFORM}.tar.gz" -C dist .
 
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.EXTENSION_NAME }}-${{ matrix.platform }}
-          path: |
-            ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz
+          path: ${{ env.EXTENSION_NAME }}-${{ needs.validate.outputs.version }}-${{ matrix.platform }}.tar.gz
           retention-days: 90
-
-  # Run SQL integration tests on platforms where testing is supported
-  test:
-    name: Test (${{ matrix.platform }})
-    needs: validate
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            platform: osx_arm64
-
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: release-test-${{ matrix.platform }}
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.12"
-
-      - name: Configure and build
-        run: |
-          DUCKDB_PLATFORM=${{ matrix.platform }} make configure
-          DUCKDB_PLATFORM=${{ matrix.platform }} make release
-
-      - name: Run SQL integration tests
-        run: |
-          DUCKDB_PLATFORM=${{ matrix.platform }} make test_release
+          if-no-files-found: error
 
   release:
     name: Create Release
-    needs: [validate, build, test]
+    needs: [validate, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release and upload assets
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
 
@@ -257,95 +260,90 @@ jobs:
           mkdir -p release
           find artifacts -name '*.tar.gz' -exec cp {} release/ \;
 
-          # Validate at least one artifact was collected
           ARTIFACT_COUNT=$(find release -name '*.tar.gz' | wc -l)
-          if [ "$ARTIFACT_COUNT" -eq 0 ]; then
-            echo "::error::No release artifacts found. All platform builds may have failed."
+          if [ "$ARTIFACT_COUNT" -ne 4 ]; then
+            echo "::error::Expected 4 platform archives, found $ARTIFACT_COUNT."
             exit 1
           fi
 
-          cd release || exit 1
+          cd release
           sha256sum ./*.tar.gz > SHA256SUMS.txt
           echo "=== Release artifacts ($ARTIFACT_COUNT files) ==="
           cat SHA256SUMS.txt
 
-      - name: Determine release type
-        id: release_type
+      # The notes are the CHANGELOG.md section for this version, so the
+      # release page cannot drift from the changelog.
+      - name: Write release notes
+        id: notes
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          SEMVER: ${{ needs.validate.outputs.semver }}
         run: |
-          VERSION="${{ needs.validate.outputs.semver }}"
-          if echo "$VERSION" | grep -qE '-(alpha|beta|rc)'; then
+          set -euo pipefail
+          {
+            scripts/release-notes.sh "${SEMVER%%-*}"
+            echo
+            echo '### Install'
+            echo
+            echo '```sql'
+            echo 'INSTALL behavioral FROM community;'
+            echo 'LOAD behavioral;'
+            echo '```'
+            echo
+            echo "Or load a downloaded build: \`LOAD '/path/to/behavioral.duckdb_extension';\` (DuckDB started with \`-unsigned\`)."
+            echo
+            echo '### Verify'
+            echo
+            echo '```bash'
+            echo 'sha256sum -c SHA256SUMS.txt'
+            echo "gh attestation verify ${EXTENSION_NAME}-${VERSION}-linux_amd64.tar.gz --repo ${GITHUB_REPOSITORY}"
+            echo '```'
+          } > release-notes.md
+          if grep -qE '-(alpha|beta|rc)' <<<"$SEMVER"; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.validate.outputs.version }}
           name: ${{ env.EXTENSION_NAME }} ${{ needs.validate.outputs.version }}
-          prerelease: ${{ steps.release_type.outputs.prerelease }}
+          prerelease: ${{ steps.notes.outputs.prerelease }}
           files: release/*
-          generate_release_notes: true
-          body: |
-            ## DuckDB Behavioral Analytics Extension ${{ needs.validate.outputs.version }}
-
-            Behavioral analytics functions for DuckDB with complete ClickHouse parity.
-
-            ### Installation
-
-            ```sql
-            -- Community extension (when available)
-            INSTALL behavioral FROM community;
-            LOAD behavioral;
-
-            -- Manual installation
-            LOAD '/path/to/behavioral.duckdb_extension';
-            ```
-
-            ### Supported Platforms
-            | Platform | File |
-            |----------|------|
-            | Linux x86_64 | `behavioral-${{ needs.validate.outputs.version }}-linux_amd64.tar.gz` |
-            | Linux ARM64 | `behavioral-${{ needs.validate.outputs.version }}-linux_arm64.tar.gz` |
-            | macOS x86_64 | `behavioral-${{ needs.validate.outputs.version }}-osx_amd64.tar.gz` |
-            | macOS ARM64 | `behavioral-${{ needs.validate.outputs.version }}-osx_arm64.tar.gz` |
-
-            ### Verification
-            ```bash
-            # Verify SHA256 checksums
-            sha256sum -c SHA256SUMS.txt
-
-            # Verify build provenance (requires gh CLI)
-            gh attestation verify behavioral-${{ needs.validate.outputs.version }}-linux_amd64.tar.gz \
-              --repo tomtom215/duckdb-behavioral
-            ```
-
-            ### Functions
-            `sessionize`, `retention`, `window_funnel`, `sequence_match`, `sequence_count`, `sequence_match_events`, `sequence_next_node`
-
-            See [documentation](https://tomtom215.github.io/duckdb-behavioral/) for full usage.
+          body_path: release-notes.md
 
   # After a successful release, update description.yml ref on main to point
   # to the tagged commit. This resolves the chicken-and-egg problem: the ref
   # cannot be set before the commit exists, so we update it after the release.
-  # The updated description.yml is what gets submitted to DuckDB community-extensions.
+  # The updated description.yml is what the DuckDB community-extensions
+  # repository pins (RELEASING.md describes the follow-up pull request).
   update-description-ref:
     name: Update description.yml ref
     needs: [validate, release]
     runs-on: ubuntu-latest
-    # Only run for tag pushes on main (not workflow_dispatch or pre-releases)
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the ref update to main
+    # Only run for tag pushes (not workflow_dispatch or pre-releases)
     if: github.event_name == 'push' && !contains(needs.validate.outputs.semver, '-')
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: main
           fetch-depth: 0
+          # This job pushes: it needs the checkout token, and it uploads no
+          # artifact that could carry it.
+          persist-credentials: true # zizmor: ignore[artipacked]
 
       - name: Update description.yml ref to tagged commit
+        env:
+          TAGGED_SHA: ${{ github.sha }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          TAGGED_SHA="${{ github.sha }}"
-          CURRENT_REF=$(grep '  ref:' description.yml | head -1 | awk '{print $2}')
+          set -euo pipefail
+          CURRENT_REF=$(sed -n 's/^  ref: *//p' description.yml | head -1)
 
           if [ "$CURRENT_REF" = "$TAGGED_SHA" ]; then
             echo "description.yml ref already matches tagged commit ($TAGGED_SHA)"
@@ -353,10 +351,10 @@ jobs:
           fi
 
           echo "Updating description.yml ref: $CURRENT_REF -> $TAGGED_SHA"
-          sed -i "s|  ref: .*|  ref: $TAGGED_SHA|" description.yml
+          sed -i "s|^  ref: .*|  ref: $TAGGED_SHA|" description.yml
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add description.yml
-          git commit -m "chore: update description.yml ref to ${{ needs.validate.outputs.version }} ($TAGGED_SHA)"
+          git commit -m "chore: update description.yml ref to $VERSION ($TAGGED_SHA)"
           git push origin main
