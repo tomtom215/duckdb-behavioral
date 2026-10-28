@@ -11,10 +11,9 @@
 
 use super::view::{Combine, Finalize, States, Update, VarcharKind, Varchars};
 use crate::common::config::{conflict_message, out_of_memory_message};
-use crate::sequence_next_node::{Base, Direction, NextNodeEvent, SequenceNextNodeState};
+use crate::sequence_next_node::{Base, Direction, SequenceNextNodeState, StoreError};
 use quack_rs::aggregate::AggregateFunctionSetBuilder;
 use quack_rs::types::TypeId;
-use std::sync::Arc;
 
 /// Minimum number of event condition boolean parameters.
 const MIN_EVENT_CONDITIONS: usize = 1;
@@ -141,9 +140,6 @@ fn update(call: Update<SequenceNextNodeState>) {
             continue;
         };
 
-        // Read event_column value (nullable), convert to Arc<str> for O(1) clone
-        let value: Option<Arc<str>> = values.get(i).map(Arc::from);
-
         // Pack event conditions into u32 bitmask
         let mut bitmask: u32 = 0;
         for (c, condition) in event_conditions.iter().enumerate() {
@@ -152,21 +148,28 @@ fn update(call: Update<SequenceNextNodeState>) {
             }
         }
 
-        // Grow fallibly: an allocation failure becomes a SQL error instead of
-        // aborting the host process.
-        if state.events.len() == state.events.capacity() && state.events.try_reserve(1).is_err() {
-            info.set_error(&out_of_memory_message(
-                "sequence_next_node",
-                state.events.len() + 1,
-            ));
+        // The state copies the value into its own buffer and grows fallibly:
+        // an allocation failure becomes a SQL error instead of aborting the
+        // host process.
+        if let Err(error) = state.try_push(
+            timestamp_us,
+            values.get(i),
+            base_conditions.is_true(i),
+            bitmask,
+        ) {
+            info.set_error(&store_error_message(error, state.event_count() + 1));
             return;
         }
-        state.update(NextNodeEvent {
-            timestamp_us,
-            value,
-            base_condition: base_conditions.is_true(i),
-            conditions: bitmask,
-        });
+    }
+}
+
+/// The SQL error for a state that could not store another event.
+fn store_error_message(error: StoreError, events: usize) -> String {
+    match error {
+        StoreError::OutOfMemory => out_of_memory_message("sequence_next_node", events),
+        StoreError::TooLarge => {
+            format!("sequence_next_node: the values of one group exceed 4 GiB ({events} events)")
+        }
     }
 }
 
@@ -286,14 +289,11 @@ quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, coun
                 return;
             }
         }
-        if tgt.events.try_reserve(src.events.len()).is_err() {
-            info.set_error(&out_of_memory_message(
-                "sequence_next_node",
-                tgt.events.len() + src.events.len(),
-            ));
+        let events_after = tgt.event_count() + src.event_count();
+        if let Err(error) = tgt.try_combine_in_place(src) {
+            info.set_error(&store_error_message(error, events_after));
             return;
         }
-        tgt.combine_in_place(src);
     }
 });
 
@@ -370,8 +370,9 @@ quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, co
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sequence_next_node::{Base, Direction};
+    use crate::sequence_next_node::{Base, Direction, NextNodeEvent};
     use quack_rs::testing::AggregateTestHarness;
+    use std::sync::Arc;
 
     #[test]
     fn test_next_node_combine_config_propagation() {

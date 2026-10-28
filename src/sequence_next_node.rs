@@ -39,17 +39,21 @@
 //! 4. On a full match the value at `base ± num_steps` is returned; `NULL`
 //!    when that index falls off either end.
 //!
-//! # `Arc<str>` Value Storage (Session 9)
+//! # Value storage
 //!
-//! Event values use `Arc<str>` (atomically reference-counted immutable string)
-//! instead of `String`. This reduces the per-event struct size from 40 bytes
-//! to 32 bytes (20% reduction) and makes `clone()` O(1) via reference count
-//! increment instead of O(n) deep string copy. Unlike `Rc<str>`, `Arc<str>`
-//! is `Send + Sync`, eliminating theoretical unsoundness if `DuckDB` ever
-//! parallelizes combine operations. The O(1) clone directly benefits:
-//! - **Combine**: cloning events in `combine_in_place` is O(1) per event
-//! - **Sort**: swapping 32-byte elements vs 40-byte elements
-//! - **Cache utilization**: 2 events per cache line vs 1.6 previously
+//! Every event keeps its `VARCHAR` value, since any event can be the one
+//! returned. A state stores the bytes of all its events' values back to back
+//! in one buffer (`values`) and each event holds a `(start, len)` range into
+//! it, so an event is a 24-byte `Copy` record and a group makes two
+//! allocations however many events it has. The buffer and the event list grow
+//! with `try_reserve`, so memory exhaustion is a reported error, not an abort.
+//!
+//! This replaced one `Arc<str>` per event (one heap allocation each: about 64
+//! bytes of allocator overhead and header for a 10-byte page name, an abort
+//! when `malloc` failed, and one leaked allocation per event when `DuckDB`
+//! abandons a grouped scan without destroying its states). The earlier "string
+//! pool" experiment in `PERF.md` that lost to `Arc<str>` kept one `String`
+//! per entry; a byte buffer has no per-value allocation to pay for.
 
 use std::sync::Arc;
 
@@ -79,23 +83,18 @@ pub enum Base {
     LastMatch,
 }
 
-/// A single timestamped event with a string value for `sequence_next_node`.
+/// A timestamped event with a string value, as one input row.
 ///
-/// Uses `Arc<str>` instead of `String` for O(1) clone semantics. This reduces
-/// per-event struct size from 40 bytes to 32 bytes and eliminates deep string
-/// copying in combine operations (reference count increment instead of heap
-/// allocation + memcpy).
-///
-/// Unlike [`crate::common::event::Event`] (which is `Copy` with a `u32` bitmask),
-/// this struct stores a reference-counted string value that may be returned as
-/// the function result.
+/// [`SequenceNextNodeState::update`] takes this convenient owned form (tests
+/// and benchmarks build it); the aggregate itself calls
+/// [`SequenceNextNodeState::try_push`] with a borrowed `&str` and allocates
+/// nothing per event.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct NextNodeEvent {
     /// Timestamp in microseconds since Unix epoch.
     pub timestamp_us: i64,
-    /// The event column value (candidate return value). Uses `Arc<str>` for
-    /// O(1) clone — critical for combine performance in `DuckDB`'s segment tree.
+    /// The event column value (candidate return value); `None` for `NULL`.
     pub value: Option<Arc<str>>,
     /// Whether the base condition is satisfied for this event.
     pub base_condition: bool,
@@ -122,6 +121,34 @@ impl NextNodeEvent {
     }
 }
 
+/// Why a state could not store another event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreError {
+    /// The allocator could not grow the event list or the value buffer.
+    OutOfMemory,
+    /// The group's values need more than `u32::MAX` bytes (4 GiB) of buffer.
+    TooLarge,
+}
+
+/// `len` marking a `NULL` value (a real value is at most `u32::MAX - 1` bytes).
+const NO_VALUE: u32 = u32::MAX;
+
+/// One stored event. Its value, if any, is `values[start..start + len]`.
+#[derive(Debug, Clone, Copy)]
+struct StoredEvent {
+    timestamp_us: i64,
+    start: u32,
+    len: u32,
+    conditions: u32,
+    base_condition: bool,
+}
+
+impl StoredEvent {
+    const fn has_value(self) -> bool {
+        self.len != NO_VALUE
+    }
+}
+
 /// State for the `sequence_next_node` aggregate function.
 ///
 /// Collects events with string values during `update`, then performs
@@ -130,8 +157,10 @@ impl NextNodeEvent {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SequenceNextNodeState {
-    /// Collected events. Sorted by timestamp in finalize.
-    pub events: Vec<NextNodeEvent>,
+    /// Collected events. Sorted by `(timestamp, value, ..)` in finalize.
+    events: Vec<StoredEvent>,
+    /// The events' values, back to back (see the module docs).
+    values: Vec<u8>,
     /// Direction of traversal (forward or backward).
     pub direction: Option<Direction>,
     /// Base position for matching.
@@ -146,10 +175,23 @@ impl SequenceNextNodeState {
     pub const fn new() -> Self {
         Self {
             events: Vec::new(),
+            values: Vec::new(),
             direction: None,
             base: None,
             num_steps: 0,
         }
+    }
+
+    /// Number of collected events.
+    #[must_use]
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Whether no event has been collected.
+    #[must_use]
+    pub fn has_no_events(&self) -> bool {
+        self.events.is_empty()
     }
 
     /// Sets the direction parameter.
@@ -192,38 +234,140 @@ impl SequenceNextNodeState {
         }
     }
 
+    /// The bytes of `event`'s value, or `None` for a `NULL` value.
+    fn value_of(&self, event: StoredEvent) -> Option<&[u8]> {
+        event
+            .has_value()
+            .then(|| &self.values[event.start as usize..][..event.len as usize])
+    }
+
     /// Adds an event to the state.
     ///
     /// All events are stored regardless of conditions because any event could
-    /// be the "next node" whose value is returned.
+    /// be the "next node" whose value is returned. A value equal to the
+    /// previous event's is stored once.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] if the event list or the value buffer cannot grow.
+    pub fn try_push(
+        &mut self,
+        timestamp_us: i64,
+        value: Option<&str>,
+        base_condition: bool,
+        conditions: u32,
+    ) -> Result<(), StoreError> {
+        self.events
+            .try_reserve(1)
+            .map_err(|_| StoreError::OutOfMemory)?;
+        let (start, len) = match value {
+            None => (0, NO_VALUE),
+            Some(text) => match self.events.last().copied() {
+                // Repeated values are common (a page visited again, a status
+                // that holds): share the previous event's bytes.
+                Some(previous) if self.value_of(previous) == Some(text.as_bytes()) => {
+                    (previous.start, previous.len)
+                }
+                _ => {
+                    let len = u32::try_from(text.len()).map_err(|_| StoreError::TooLarge)?;
+                    let start =
+                        u32::try_from(self.values.len()).map_err(|_| StoreError::TooLarge)?;
+                    if len == NO_VALUE || start.checked_add(len).is_none() {
+                        return Err(StoreError::TooLarge);
+                    }
+                    self.values
+                        .try_reserve(text.len())
+                        .map_err(|_| StoreError::OutOfMemory)?;
+                    self.values.extend_from_slice(text.as_bytes());
+                    (start, len)
+                }
+            },
+        };
+        self.events.push(StoredEvent {
+            timestamp_us,
+            start,
+            len,
+            conditions,
+            base_condition,
+        });
+        Ok(())
+    }
+
+    /// Adds an event given as a [`NextNodeEvent`].
+    ///
+    /// # Panics
+    ///
+    /// If the state cannot grow; the aggregate uses [`try_push`](Self::try_push)
+    /// and reports that as a SQL error instead.
+    #[allow(clippy::needless_pass_by_value)] // the owned row is the convenient form for callers
     pub fn update(&mut self, event: NextNodeEvent) {
-        self.events.push(event);
+        self.try_push(
+            event.timestamp_us,
+            event.value.as_deref(),
+            event.base_condition,
+            event.conditions,
+        )
+        .expect("sequence_next_node state could not grow");
     }
 
     /// Combines two states by concatenating their event lists, returning a new state.
+    ///
+    /// # Panics
+    ///
+    /// If the combined state cannot grow (see [`update`](Self::update)).
     #[must_use]
     pub fn combine(&self, other: &Self) -> Self {
-        let mut events = Vec::with_capacity(self.events.len() + other.events.len());
-        events.extend(self.events.iter().cloned());
-        events.extend(other.events.iter().cloned());
-        Self {
-            events,
-            direction: self.direction.or(other.direction),
-            base: self.base.or(other.base),
-            num_steps: if self.num_steps > 0 {
-                self.num_steps
-            } else {
-                other.num_steps
-            },
-        }
+        let mut combined = self.clone();
+        combined.combine_in_place(other);
+        combined
     }
 
     /// Combines another state into `self` in-place by appending its events.
     ///
     /// Preferred for sequential (left-fold) chains. Uses Vec's doubling growth
     /// strategy for O(N) amortized total copies.
+    ///
+    /// # Panics
+    ///
+    /// If `self` cannot grow; the aggregate uses
+    /// [`try_combine_in_place`](Self::try_combine_in_place).
     pub fn combine_in_place(&mut self, other: &Self) {
-        self.events.extend(other.events.iter().cloned());
+        self.try_combine_in_place(other)
+            .expect("sequence_next_node state could not grow");
+    }
+
+    /// Like [`combine_in_place`](Self::combine_in_place), but reports a
+    /// failure to grow instead of panicking. `self` is unchanged on error
+    /// (its configuration is propagated only once the events are stored).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] if the event list or the value buffer cannot grow.
+    pub fn try_combine_in_place(&mut self, other: &Self) -> Result<(), StoreError> {
+        // `other`'s values are appended after `self`'s, so its events' ranges
+        // move by the buffer length `self` has now.
+        let shift = u32::try_from(self.values.len()).map_err(|_| StoreError::TooLarge)?;
+        let total = u32::try_from(other.values.len())
+            .ok()
+            .and_then(|extra| shift.checked_add(extra))
+            .ok_or(StoreError::TooLarge)?;
+        debug_assert!(total >= shift);
+        self.events
+            .try_reserve(other.events.len())
+            .map_err(|_| StoreError::OutOfMemory)?;
+        self.values
+            .try_reserve(other.values.len())
+            .map_err(|_| StoreError::OutOfMemory)?;
+        self.values.extend_from_slice(&other.values);
+        self.events
+            .extend(other.events.iter().map(|&event| StoredEvent {
+                start: if event.has_value() {
+                    event.start + shift
+                } else {
+                    0
+                },
+                ..event
+            }));
         if self.direction.is_none() {
             self.direction = other.direction;
         }
@@ -233,6 +377,7 @@ impl SequenceNextNodeState {
         if self.num_steps == 0 {
             self.num_steps = other.num_steps;
         }
+        Ok(())
     }
 
     /// Executes the sequence matching and returns the next node's value.
@@ -267,20 +412,23 @@ impl SequenceNextNodeState {
     /// equal on both in arrival order, so its result can change with row
     /// order and thread count. Breaking those ties by the conditions makes
     /// the order total, so the result never depends on arrival order. `None`
-    /// values order before all strings (`Option` ordering).
+    /// values order before all strings, and strings by their bytes (which is
+    /// `str` order).
     fn sort_events(&mut self) {
-        fn key(e: &NextNodeEvent) -> (i64, Option<&str>, bool, u32) {
+        let Self { events, values, .. } = self;
+        let key = |e: &StoredEvent| {
             (
                 e.timestamp_us,
-                e.value.as_deref(),
+                e.has_value()
+                    .then(|| &values[e.start as usize..][..e.len as usize]),
                 e.base_condition,
                 e.conditions,
             )
-        }
-        if self.events.windows(2).all(|w| key(&w[0]) <= key(&w[1])) {
+        };
+        if events.windows(2).all(|w| key(&w[0]) <= key(&w[1])) {
             return;
         }
-        self.events.sort_unstable_by(|a, b| key(a).cmp(&key(b)));
+        events.sort_unstable_by(|a, b| key(a).cmp(&key(b)));
     }
 
     /// Selects the base (anchor) index, mirroring `ClickHouse`'s
@@ -303,6 +451,12 @@ impl SequenceNextNodeState {
         }
     }
 
+    /// The value of the event at sorted position `index`, as an owned string.
+    fn value_string(&self, index: usize) -> Option<String> {
+        self.value_of(self.events[index])
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+    }
+
     /// Matches the event chain at consecutive positions and returns the
     /// adjacent node's value, mirroring `ClickHouse`'s `getNextNodeIndex`:
     /// `eventK` must hold at position `base + k` (forward) or `base - k`
@@ -320,7 +474,7 @@ impl SequenceNextNodeState {
                 }
                 let next = base_idx + self.num_steps;
                 if next < n {
-                    self.events[next].value.as_deref().map(String::from)
+                    self.value_string(next)
                 } else {
                     None
                 }
@@ -336,10 +490,7 @@ impl SequenceNextNodeState {
                     }
                 }
                 if base_idx >= self.num_steps {
-                    self.events[base_idx - self.num_steps]
-                        .value
-                        .as_deref()
-                        .map(String::from)
+                    self.value_string(base_idx - self.num_steps)
                 } else {
                     None
                 }
@@ -408,6 +559,99 @@ mod tests {
             base_condition: base_cond,
             conditions: bitmask,
         }
+    }
+
+    // --- Value buffer ---
+
+    fn forward_head_state() -> SequenceNextNodeState {
+        let mut state = SequenceNextNodeState::new();
+        state.set_direction(Direction::Forward);
+        state.set_base(Base::Head);
+        state.num_steps = 1;
+        state
+    }
+
+    #[test]
+    fn empty_string_value_is_distinct_from_null() {
+        let mut empty = forward_head_state();
+        empty.update(make_event(1, "A", true, &[true]));
+        empty.update(make_event(2, "", false, &[false]));
+        assert_eq!(empty.finalize(), Some(String::new()));
+
+        let mut null = forward_head_state();
+        null.update(make_event(1, "A", true, &[true]));
+        null.update(make_null_event(2, false, &[false]));
+        assert_eq!(null.finalize(), None);
+    }
+
+    #[test]
+    fn repeated_adjacent_values_are_stored_once() {
+        let mut state = forward_head_state();
+        for ts in 1..=4 {
+            state.update(make_event(ts, "page", false, &[false]));
+        }
+        state.update(make_event(5, "other", false, &[false]));
+        state.update(make_event(6, "page", false, &[false]));
+        assert_eq!(state.event_count(), 6);
+        // "page" + "other" + "page" again (not adjacent to the first run).
+        assert_eq!(
+            state.values.len(),
+            "page".len() + "other".len() + "page".len()
+        );
+    }
+
+    #[test]
+    fn combine_moves_the_value_ranges_of_the_appended_events() {
+        // Interleaved timestamps, so the sorted order mixes both states' values.
+        let mut a = forward_head_state();
+        a.update(make_event(1, "head", true, &[true]));
+        a.update(make_event(3, "third", false, &[false]));
+        let mut b = SequenceNextNodeState::new();
+        b.update(make_event(2, "second", false, &[false]));
+        b.update(make_null_event(4, false, &[false]));
+        b.update(make_event(5, "fifth", false, &[false]));
+
+        let mut combined = a.clone();
+        combined.combine_in_place(&b);
+        assert_eq!(combined.finalize(), Some("second".to_string()));
+
+        // The same events fed to one state give the same chain of values.
+        let mut whole = forward_head_state();
+        for (ts, value) in [
+            (1, Some("head")),
+            (3, Some("third")),
+            (2, Some("second")),
+            (4, None),
+            (5, Some("fifth")),
+        ] {
+            match value {
+                Some(v) => whole.update(make_event(ts, v, ts == 1, &[ts == 1])),
+                None => whole.update(make_null_event(ts, false, &[false])),
+            }
+        }
+        whole.sort_events();
+        let in_order: Vec<Option<&[u8]>> =
+            whole.events.iter().map(|&e| whole.value_of(e)).collect();
+        let mut combined_sorted = combined.clone();
+        combined_sorted.sort_events();
+        let combined_order: Vec<Option<&[u8]>> = combined_sorted
+            .events
+            .iter()
+            .map(|&e| combined_sorted.value_of(e))
+            .collect();
+        assert_eq!(in_order, combined_order);
+    }
+
+    #[test]
+    fn combine_leaves_the_source_unchanged() {
+        let mut a = forward_head_state();
+        a.update(make_event(1, "x", true, &[true]));
+        let mut b = SequenceNextNodeState::new();
+        b.update(make_event(2, "y", false, &[false]));
+        let before = (b.event_count(), b.values.clone());
+        a.combine_in_place(&b);
+        assert_eq!((b.event_count(), b.values.clone()), before);
+        assert_eq!(a.event_count(), 2);
     }
 
     // --- Direction and Base parsing ---

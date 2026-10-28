@@ -556,7 +556,7 @@ proptest! {
                     parts[part].update(to_event(raw));
                 }
                 for part in &mut parts {
-                    if part.events.is_empty() && rng.coin() {
+                    if part.has_no_events() && rng.coin() {
                         *part = SequenceNextNodeState::new();
                     }
                 }

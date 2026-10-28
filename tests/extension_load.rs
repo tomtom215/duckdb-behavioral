@@ -989,7 +989,7 @@ fn sessionize_varying_gap_matches_reference() {
 /// the sequence, so no adjacent event exists. `ClickHouse` rejects both; the
 /// extension used to return NULL silently.
 /// A pattern made only of `.*` matches the empty sequence, so it matches a
-/// group whose rows all have every condition false (ClickHouse's
+/// group whose rows all have every condition false (`ClickHouse`'s
 /// `sequenceMatch('.*')` returns 1 there). Nothing is counted, and a group
 /// with no rows at all is still NULL (a documented difference).
 #[test]
