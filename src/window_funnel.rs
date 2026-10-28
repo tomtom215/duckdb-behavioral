@@ -753,18 +753,31 @@ impl WindowFunnelState {
         }
     }
 
+    /// Whether an event with no true condition must still be stored.
+    ///
+    /// Such an event cannot fill a funnel step, so it is dropped to save
+    /// memory, except under `strict_order`, where it interrupts the chain (as
+    /// in `ClickHouse`). `mode_may_change` is for a caller that has not read
+    /// the group's mode yet (a `NULL` mode argument so far): the mode may still
+    /// turn out to be `strict_order`, so the event is kept and finalize ignores
+    /// it in the other modes. The FFI update and [`update`](Self::update) share
+    /// this one rule.
+    #[must_use]
+    pub fn keeps_conditionless_events(&self, mode_may_change: bool) -> bool {
+        self.mode.has(FunnelMode::STRICT_ORDER) || mode_may_change
+    }
+
     /// Adds an event to the state.
     ///
-    /// Events where no condition is true cannot fill a funnel step and are
-    /// dropped to save memory, except under `strict_order`, where such an
-    /// event interrupts the chain (as in `ClickHouse`). The mode must be set
-    /// before the event is added.
+    /// Events where no condition is true are dropped unless
+    /// [`keeps_conditionless_events`](Self::keeps_conditionless_events) says
+    /// otherwise. The mode must be set before the event is added.
     ///
     /// `num_conditions` is the total number of funnel steps. This is passed
     /// explicitly because the `Event` bitmask does not carry length information.
     pub fn update(&mut self, event: Event, num_conditions: usize) {
         self.num_conditions = num_conditions;
-        if event.has_any_condition() || self.mode.has(FunnelMode::STRICT_ORDER) {
+        if event.has_any_condition() || self.keeps_conditionless_events(false) {
             self.events.push(event);
         }
     }
@@ -1052,8 +1065,8 @@ mod tests {
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(1_000, &[true, false, false]), 3); // cond[0] fires again
         state.update(make_event(2_000, &[false, true, false]), 3);
-        // First entry at t=0: scanning at t=1000, cond[0] fires (earlier than current_step=1)
-        // -> returns step 1. Second entry at t=1000: scanning at t=2000, cond[1] matches -> step 2.
+        // The entry at t=0 is broken by the entry condition firing again at
+        // t=1000 (it reaches step 1); the entry at t=1000 then reaches step 2.
         assert_eq!(state.finalize(), 2);
     }
 
@@ -1196,7 +1209,8 @@ mod tests {
         state.update(make_event(1_000, &[false, true, false]), 3); // step 1
         state.update(make_event(2_000, &[false, true, false]), 3); // step 1 fires again
         state.update(make_event(3_000, &[false, false, true]), 3); // step 2
-                                                                   // At t=2000: cond[1] (current_step-1) fires but cond[2] doesn't -> break
+                                                                   // The repeat at t=2000 hits a level that was already reached, which
+                                                                   // stops the scan under strict_deduplication, so step 3 is never seen.
         assert_eq!(state.finalize(), 2);
     }
 
@@ -1238,11 +1252,11 @@ mod tests {
         assert_eq!(a.events.len(), 1);
     }
 
-    // --- Mutation testing coverage: finalize edge cases ---
+    // --- finalize edge cases ---
 
     #[test]
     fn test_finalize_events_but_zero_conditions() {
-        // Covers: replace || with && in finalize
+        // Events but zero funnel steps: there is no step to reach.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
         // Manually push an event without going through update (which sets num_conditions)
@@ -1253,36 +1267,18 @@ mod tests {
 
     #[test]
     fn test_finalize_no_events_with_conditions() {
-        // Covers: replace || with && in finalize
+        // Funnel steps but no events: nothing to reach.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
         state.num_conditions = 3;
         assert_eq!(state.finalize(), 0);
     }
 
-    // --- Mutation testing coverage: strict mode current_step > 0 ---
-
-    #[test]
-    fn test_strict_mode_refire_breaks_chain() {
-        // Covers: strict mode condition check with current_step > 0
-        let mut state = WindowFunnelState::new();
-        state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT;
-        // Entry, then cond[0] refires without cond[1], then cond[1]
-        state.update(make_event(0, &[true, false, false]), 3);
-        state.update(make_event(1_000, &[true, false, false]), 3); // cond[0] refires → break
-        state.update(make_event(2_000, &[false, true, false]), 3); // cond[1]
-                                                                   // From entry t=0: at t=1000 cond[0] fires without cond[1] → break → step 1
-                                                                   // From entry t=1000: at t=2000 cond[1] fires → step 2
-        assert_eq!(state.finalize(), 2);
-    }
-
-    // --- Session 3: Mutation-killing boundary tests ---
+    // --- Window and boundary edge cases ---
 
     #[test]
     fn test_window_boundary_exactly_at_limit_included() {
-        // Kills mutant: replace `>` with `>=` in scan_funnel window check.
-        // An event at exactly window_size_us should be INCLUDED (not > boundary).
+        // An event exactly window_size_us after the entry is inside the window.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 1000;
         state.update(make_event(0, &[true, false]), 2);
@@ -1303,21 +1299,9 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_funnel_returns_at_exact_num_conditions() {
-        // Kills mutant: replace `>=` with `>` in current_step >= num_conditions check.
-        // When current_step reaches exactly num_conditions, should return immediately.
-        let mut state = WindowFunnelState::new();
-        state.window_size_us = 3_600_000_000;
-        state.update(make_event(0, &[true, false]), 2);
-        state.update(make_event(1_000, &[false, true]), 2);
-        // current_step becomes 2, num_conditions is 2 → exactly equal → return
-        assert_eq!(state.finalize(), 2);
-    }
-
-    #[test]
     fn test_strict_dedup_timestamp_equality_not_inequality() {
-        // Kills mutant: replace `==` with `!=` in StrictDeduplication timestamp check.
-        // Same timestamp should be skipped; different timestamp should pass.
+        // Under timestamp_dedup an event at the previous event's timestamp
+        // cannot extend a chain; one at a later timestamp can.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
         state.mode = FunnelMode::STRICT_DEDUPLICATION;
@@ -1344,20 +1328,9 @@ mod tests {
     }
 
     #[test]
-    fn test_finalize_zero_conditions_returns_zero() {
-        // Kills mutant: replace `||` with `&&` in finalize's early return.
-        let mut state = WindowFunnelState::new();
-        state.window_size_us = 3_600_000_000;
-        state.events.push(Event::new(0, 1)); // has events
-        state.num_conditions = 0; // but zero conditions
-        assert_eq!(state.finalize(), 0);
-    }
-
-    #[test]
-    fn test_max_step_uses_max_not_assignment() {
-        // Kills mutant: replace max_step.max(step) with max_step = step.
-        // First entry reaches step 2, second entry reaches step 3.
-        // max_step should be 3, not the last value.
+    fn test_later_entry_completes_after_earlier_chain_expires() {
+        // The first entry reaches step 2 and its third step falls outside
+        // the window; a second entry completes all three steps.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 60_000_000; // 1 minute
                                            // First entry: reaches step 2 then window expires
@@ -2010,32 +1983,11 @@ mod proptests {
         }
 
         #[test]
-        fn combine_preserves_events(
-            n_a in 0..=20usize,
-            n_b in 0..=20usize,
-        ) {
-            let mut a = WindowFunnelState::new();
-            a.window_size_us = 3_600_000_000;
-            for i in 0..n_a {
-                a.update(Event::new(i as i64, 1u32), 2);
-            }
-
-            let mut b = WindowFunnelState::new();
-            b.window_size_us = 3_600_000_000;
-            for i in 0..n_b {
-                b.update(Event::new((n_a + i) as i64, 2u32), 2);
-            }
-
-            let combined = a.combine(&b);
-            prop_assert_eq!(combined.events.len(), n_a + n_b);
-        }
-
-        #[test]
-        fn funnel_monotonic_with_more_events(
+        fn complete_funnel_reaches_every_step(
             window_us in 1_000_000i64..10_000_000_000,
             num_conditions in 2..=5usize,
         ) {
-            // A complete funnel sequence should always reach num_conditions
+            // One event per step, in order, inside the window: every step is reached.
             let mut state = WindowFunnelState::new();
             state.window_size_us = window_us;
             for i in 0..num_conditions {
@@ -2079,35 +2031,6 @@ mod proptests {
             prop_assert_eq!(result, num_conditions as i64);
         }
 
-        // ── Coverage gap: STRICT_DEDUPLICATION + ALLOW_REENTRY combined mode ──
-        // Validates the interaction when both modes are active:
-        //   ALLOW_REENTRY resets the chain when entry condition fires again
-        //   STRICT_DEDUPLICATION skips events with the same timestamp as prev match
-        // The modes are evaluated in order: ALLOW_REENTRY first, then STRICT_DEDUP.
-
-        #[test]
-        fn combine_preserves_events_wide(
-            n_a in 0..=20usize,
-            n_b in 0..=20usize,
-            num_conditions in 9..=32usize,
-        ) {
-            let mut a = WindowFunnelState::new();
-            a.window_size_us = i64::MAX;
-            for i in 0..n_a {
-                let bitmask = 1u32 << (i % num_conditions);
-                a.update(Event::new(i as i64, bitmask), num_conditions);
-            }
-
-            let mut b = WindowFunnelState::new();
-            b.window_size_us = i64::MAX;
-            for i in 0..n_b {
-                let bitmask = 1u32 << ((n_a + i) % num_conditions);
-                b.update(Event::new((n_a + i) as i64, bitmask), num_conditions);
-            }
-
-            let combined = a.combine(&b);
-            prop_assert_eq!(combined.events.len(), n_a + n_b);
-        }
     }
 }
 

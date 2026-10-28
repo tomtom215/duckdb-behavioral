@@ -1069,22 +1069,6 @@ mod tests {
         assert_eq!(state.finalize(), None);
     }
 
-    #[test]
-    fn test_backward_head_at_start() {
-        // Backward + Head: base at first event, match backward from there
-        // Since it's the first event, backward matching can't go further back
-        let mut state = SequenceNextNodeState::new();
-        state.direction = Some(Direction::Backward);
-        state.base = Some(Base::Head);
-        state.num_steps = 1;
-
-        state.update(make_event(1, "A", true, &[true]));
-        state.update(make_event(2, "B", false, &[false]));
-
-        // event1 at pos 0, no event before → None
-        assert_eq!(state.finalize(), None);
-    }
-
     // --- Session 9: Arc<str> specific tests ---
 
     #[test]
@@ -1428,19 +1412,6 @@ mod tests {
     }
 
     #[test]
-    fn test_forward_head_two_step_match_at_end() {
-        // Forward + Head: match completes at last event, no next event.
-        let mut state = SequenceNextNodeState::new();
-        state.direction = Some(Direction::Forward);
-        state.base = Some(Base::Head);
-        state.num_steps = 2;
-        state.update(make_event(1, "A", true, &[true, false])); // base + event1
-        state.update(make_event(2, "B", false, &[false, true])); // event2 (last)
-                                                                 // Match completes at B (pos 1), no next event → None
-        assert_eq!(state.finalize(), None);
-    }
-
-    #[test]
     fn test_backward_head_anchor_is_literal_first_event() {
         // ClickHouse parity: `head` is the literal first event regardless of
         // which later events satisfy base_condition. Here the first event is
@@ -1600,38 +1571,6 @@ mod proptests {
 
             let result = state.finalize();
             prop_assert_eq!(result, Some("result".to_string()));
-        }
-
-        #[test]
-        fn combine_preserves_event_count(
-            n_a in 0..=10usize,
-            n_b in 0..=10usize,
-        ) {
-            let mut a = SequenceNextNodeState::new();
-            a.direction = Some(Direction::Forward);
-            a.base = Some(Base::FirstMatch);
-            a.num_steps = 1;
-            for i in 0..n_a {
-                a.update(NextNodeEvent {
-                    timestamp_us: i as i64,
-                    value: Some(Arc::from(format!("a_{i}").as_str())),
-                    base_condition: true,
-                    conditions: 1,
-                });
-            }
-
-            let mut b = SequenceNextNodeState::new();
-            for i in 0..n_b {
-                b.update(NextNodeEvent {
-                    timestamp_us: (n_a + i) as i64,
-                    value: Some(Arc::from(format!("b_{i}").as_str())),
-                    base_condition: false,
-                    conditions: 0,
-                });
-            }
-
-            let combined = a.combine(&b);
-            prop_assert_eq!(combined.events.len(), n_a + n_b);
         }
 
         #[test]

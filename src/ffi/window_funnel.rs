@@ -203,11 +203,10 @@ pub(super) fn update_impl(call: Update<WindowFunnelState>, has_mode: bool, func:
             info.set_error(&out_of_memory_message(func, state.events.len() + needed));
             return;
         }
-        // While a mode-taking state has not seen its mode yet (its rows so
-        // far had a NULL mode), keep such events too: the group's mode may
-        // still turn out to be `strict_order`. Finalize ignores them in the
-        // other modes.
-        let keep_empty = state.mode.has(FunnelMode::STRICT_ORDER) || (has_mode && !state.mode_set);
+        // The same rule as `WindowFunnelState::update`, plus: a mode-taking
+        // state that has not seen its mode yet (its rows so far had a NULL
+        // mode) keeps such events too.
+        let keep_empty = state.keeps_conditionless_events(has_mode && !state.mode_set);
         state.events.extend(run.filter_map(|i| {
             if !windows.is_valid(i) {
                 return None;

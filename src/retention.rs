@@ -308,13 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn test_single_condition_anchor_only() {
-        let mut state = RetentionState::new();
-        state.update(&[true]);
-        assert_eq!(state.finalize(), vec![true]);
-    }
-
-    #[test]
     fn test_all_false() {
         let mut state = RetentionState::new();
         state.update(&[false, false, false]);

@@ -36,6 +36,9 @@ pub mod sequence_next_node;
 pub mod sessionize;
 pub mod window_funnel;
 
+#[cfg(test)]
+mod oracle_tests;
+
 // The only module that may contain `unsafe` (see `unsafe_code` in Cargo.toml).
 #[allow(unsafe_code)]
 mod ffi;
