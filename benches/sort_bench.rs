@@ -8,8 +8,8 @@
 //! and `window_funnel` benchmarks, enables Amdahl's Law analysis.
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
-use behavioral::common::event::{sort_events, Event};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use behavioral::common::event::{Event, sort_events};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 fn make_random_events(num_events: usize) -> Vec<Event> {

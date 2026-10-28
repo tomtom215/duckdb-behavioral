@@ -121,10 +121,10 @@ impl SessionizeBoundaryState {
                 if timestamp_us > prev {
                     self.last_ts = Some(timestamp_us);
                 }
-                if let Some(first) = self.first_ts {
-                    if timestamp_us < first {
-                        self.first_ts = Some(timestamp_us);
-                    }
+                if let Some(first) = self.first_ts
+                    && timestamp_us < first
+                {
+                    self.first_ts = Some(timestamp_us);
                 }
             }
         }

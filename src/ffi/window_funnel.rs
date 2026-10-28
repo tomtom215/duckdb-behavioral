@@ -109,7 +109,7 @@ quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, state
 ///   \[0\] INTERVAL, \[1\] TIMESTAMP, \[2..N\] BOOLEAN
 ///
 /// Invalid configuration (month-based or negative window, unknown mode string)
-/// aborts the query via [`AggregateFunctionInfo::set_error`] instead of
+/// aborts the query via `AggregateFunctionInfo::set_error` instead of
 /// silently producing wrong results.
 ///
 /// `func` names the SQL function in error messages (`window_funnel` or
@@ -273,10 +273,10 @@ fn row_mode(
         return Ok(None);
     }
     let slot = modes.slot(i);
-    if let Some((last, mode)) = *last_mode {
-        if last == slot {
-            return Ok(Some(mode));
-        }
+    if let Some((last, mode)) = *last_mode
+        && last == slot
+    {
+        return Ok(Some(mode));
     }
     let Some(text) = modes.get(i) else {
         return Ok(None);
@@ -425,9 +425,11 @@ mod tests {
         apply_mode(&mut state, " STRICT_ORDER ", "f").unwrap();
         let err = apply_mode(&mut state, "strict_once", "f").unwrap_err();
         assert!(err.contains("the mode argument must be the same"), "{err}");
-        assert!(apply_mode(&mut state, "bogus", "f")
-            .unwrap_err()
-            .contains("unknown mode"));
+        assert!(
+            apply_mode(&mut state, "bogus", "f")
+                .unwrap_err()
+                .contains("unknown mode")
+        );
         let mut fresh = WindowFunnelState::new();
         assert!(apply_mode(&mut fresh, "allow_reentry", "f").is_err());
         // An empty mode string is a set (default) mode, distinct from a NULL.

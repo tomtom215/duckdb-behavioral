@@ -732,3 +732,34 @@ mod error_text_tests {
         assert!(err.message.contains("'\u{ff11}'"), "{err}");
     }
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(5000))]
+
+        /// The pattern text is user input: whatever it holds, parsing returns
+        /// a value (a pattern or a positioned error) and never panics. The
+        /// alphabet is the pattern syntax plus multi-byte characters, which
+        /// is where byte-offset slicing goes wrong.
+        #[test]
+        fn pattern_syntax_soup_never_panics(text in "[()?t<>=!.* 0-9a-z\u{e9}\u{4e2d}\u{1f600}]{0,48}") {
+            let _ = parse_pattern(&text);
+        }
+
+        #[test]
+        fn arbitrary_text_never_panics(text in any::<String>()) {
+            let _ = parse_pattern(&text);
+        }
+
+        /// Huge numbers in `(?N)` and `(?t..N)` are rejected, not wrapped.
+        #[test]
+        fn huge_numbers_never_panic(digits in "[0-9]{1,40}") {
+            let _ = parse_pattern(&format!("(?{digits})"));
+            let _ = parse_pattern(&format!("(?1)(?t>={digits})(?2)"));
+        }
+    }
+}

@@ -10,7 +10,7 @@
 use super::view::{BoolKind, Combine, Finalize, I64Kind, States, Update};
 use crate::common::config::{conflict_message, out_of_memory_message};
 use crate::common::event::Event;
-use crate::pattern::parser::{parse_pattern, CompiledPattern};
+use crate::pattern::parser::{CompiledPattern, parse_pattern};
 use crate::sequence::SequenceState;
 use quack_rs::aggregate::AggregateFunctionSetBuilder;
 use quack_rs::types::TypeId;
@@ -334,16 +334,16 @@ pub(super) fn combine_impl(call: Combine<SequenceState>, func: &str) {
         let Some((src, tgt)) = States::pair(&source, &mut target, i) else {
             continue;
         };
-        if let (Some(a), Some(b)) = (tgt.pattern_str.as_deref(), src.pattern_str.as_deref()) {
-            if a != b {
-                info.set_error(&conflict_message(
-                    func,
-                    "pattern",
-                    &quote_pattern(a),
-                    &quote_pattern(b),
-                ));
-                return;
-            }
+        if let (Some(a), Some(b)) = (tgt.pattern_str.as_deref(), src.pattern_str.as_deref())
+            && a != b
+        {
+            info.set_error(&conflict_message(
+                func,
+                "pattern",
+                &quote_pattern(a),
+                &quote_pattern(b),
+            ));
+            return;
         }
         if tgt.events.try_reserve(src.events.len()).is_err() {
             info.set_error(&out_of_memory_message(

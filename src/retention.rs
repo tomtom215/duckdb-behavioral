@@ -265,7 +265,7 @@ mod tests {
         state.update(&conds);
         let result = state.finalize();
         assert!(result[0]); // anchor is met
-                            // Condition 32 is silently ignored (bit 32 doesn't fit in u32)
+        // Condition 32 is silently ignored (bit 32 doesn't fit in u32)
         assert!(!result[32]);
     }
 

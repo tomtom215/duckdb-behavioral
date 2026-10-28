@@ -14,7 +14,7 @@
 #![allow(missing_docs, clippy::cast_possible_truncation)]
 
 use behavioral::sequence_next_node::{Base, Direction, NextNodeEvent, SequenceNextNodeState};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::sync::Arc;
 

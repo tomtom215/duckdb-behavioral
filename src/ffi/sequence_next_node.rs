@@ -90,7 +90,7 @@ quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
 });
 
 /// `update`: parses and checks the group's direction and base, and collects
-/// each row as a [`NextNodeEvent`].
+/// each row as an event of the state.
 fn update(call: Update<SequenceNextNodeState>) {
     let Update {
         info,
@@ -267,27 +267,27 @@ quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, coun
         let Some((src, tgt)) = States::pair(&source, &mut target, i) else {
             continue;
         };
-        if let (Some(a), Some(b)) = (tgt.direction, src.direction) {
-            if a != b {
-                info.set_error(&conflict_message(
-                    "sequence_next_node",
-                    "direction",
-                    &format!("'{}'", direction_name(a)),
-                    &format!("'{}'", direction_name(b)),
-                ));
-                return;
-            }
+        if let (Some(a), Some(b)) = (tgt.direction, src.direction)
+            && a != b
+        {
+            info.set_error(&conflict_message(
+                "sequence_next_node",
+                "direction",
+                &format!("'{}'", direction_name(a)),
+                &format!("'{}'", direction_name(b)),
+            ));
+            return;
         }
-        if let (Some(a), Some(b)) = (tgt.base, src.base) {
-            if a != b {
-                info.set_error(&conflict_message(
-                    "sequence_next_node",
-                    "base",
-                    &format!("'{}'", base_name(a)),
-                    &format!("'{}'", base_name(b)),
-                ));
-                return;
-            }
+        if let (Some(a), Some(b)) = (tgt.base, src.base)
+            && a != b
+        {
+            info.set_error(&conflict_message(
+                "sequence_next_node",
+                "base",
+                &format!("'{}'", base_name(a)),
+                &format!("'{}'", base_name(b)),
+            ));
+            return;
         }
         let events_after = tgt.event_count() + src.event_count();
         if let Err(error) = tgt.try_combine_in_place(src) {

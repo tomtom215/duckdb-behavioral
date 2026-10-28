@@ -4,7 +4,7 @@
 [package]
 name = "duckdb-behavioral"
 version = "0.10.1"
-edition = "2021"
+edition = "2024"
 rust-version = "1.88"
 authors = ["Tom F <tomtom215@users.noreply.github.com>"]
 description = "Behavioral analytics functions for DuckDB: sessionize, retention, funnels, sequence matching"

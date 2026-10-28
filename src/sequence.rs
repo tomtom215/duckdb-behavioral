@@ -30,9 +30,9 @@
 
 use std::sync::Arc;
 
-use crate::common::event::{sort_events, Event};
-use crate::pattern::executor::{execute_pattern, execute_pattern_events, MatchResult};
-use crate::pattern::parser::{parse_pattern, CompiledPattern, PatternError};
+use crate::common::event::{Event, sort_events};
+use crate::pattern::executor::{MatchResult, execute_pattern, execute_pattern_events};
+use crate::pattern::parser::{CompiledPattern, PatternError, parse_pattern};
 
 /// State for `sequence_match` and `sequence_count` aggregate functions.
 ///

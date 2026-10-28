@@ -11,7 +11,7 @@
 #![allow(missing_docs)]
 
 use behavioral::retention::RetentionState;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 fn bench_retention_update(c: &mut Criterion) {

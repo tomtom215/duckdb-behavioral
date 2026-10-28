@@ -46,7 +46,7 @@
 //! - **`allow_reentry`** (requires `strict_order`): a step arriving before its
 //!   predecessor is skipped instead of stopping the scan.
 
-use crate::common::event::{sort_events, Event};
+use crate::common::event::{Event, sort_events};
 
 /// Funnel matching mode as a bitmask, controlling how strictly the event
 /// sequence is enforced.
@@ -333,10 +333,10 @@ impl<P: PathStore> Level<P> {
 
     /// Moves `cur` into `prev` when the timestamp advances.
     fn roll(&mut self) {
-        if let Some(c) = self.cur.take() {
-            if self.prev.is_none_or(|p| c.first >= p.first) {
-                self.prev = Some(c);
-            }
+        if let Some(c) = self.cur.take()
+            && self.prev.is_none_or(|p| c.first >= p.first)
+        {
+            self.prev = Some(c);
         }
     }
 }
@@ -926,7 +926,7 @@ mod tests {
         state.window_size_us = 3_600_000_000;
         state.update(make_event(0, &[true, false, false]), 3); // step 0
         state.update(make_event(1_000_000, &[false, true, false]), 3); // step 1
-                                                                       // No step 2
+        // No step 2
         assert_eq!(state.finalize(), 2);
     }
 
@@ -953,10 +953,10 @@ mod tests {
     fn test_multiple_entries_best_wins() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 60_000_000; // 1 minute
-                                           // First entry: step 0, then window expires before step 1
+        // First entry: step 0, then window expires before step 1
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(120_000_000, &[false, true, false]), 3); // too late
-                                                                         // Second entry: step 0, step 1 within window
+        // Second entry: step 0, step 1 within window
         state.update(make_event(200_000_000, &[true, false, false]), 3);
         state.update(make_event(230_000_000, &[false, true, false]), 3); // 30s, ok
         assert_eq!(state.finalize(), 2);
@@ -998,9 +998,9 @@ mod tests {
         state.update(make_event(0, &[true, false, false]), 3); // step 0
         state.update(make_event(1_000, &[true, false, false]), 3); // step 0 again!
         state.update(make_event(2_000, &[false, true, false]), 3); // step 1
-                                                                   // In strict mode, step 0 fired again before step 1,
-                                                                   // so the first entry's chain breaks at step 0.
-                                                                   // But the second entry at t=1000 can match step 1 at t=2000.
+        // In strict mode, step 0 fired again before step 1,
+        // so the first entry's chain breaks at step 0.
+        // But the second entry at t=1000 can match step 1 at t=2000.
         assert_eq!(state.finalize(), 2);
     }
 
@@ -1209,8 +1209,8 @@ mod tests {
         state.update(make_event(1_000, &[false, true, false]), 3); // step 1
         state.update(make_event(2_000, &[false, true, false]), 3); // step 1 fires again
         state.update(make_event(3_000, &[false, false, true]), 3); // step 2
-                                                                   // The repeat at t=2000 hits a level that was already reached, which
-                                                                   // stops the scan under strict_deduplication, so step 3 is never seen.
+        // The repeat at t=2000 hits a level that was already reached, which
+        // stops the scan under strict_deduplication, so step 3 is never seen.
         assert_eq!(state.finalize(), 2);
     }
 
@@ -1283,7 +1283,7 @@ mod tests {
         state.window_size_us = 1000;
         state.update(make_event(0, &[true, false]), 2);
         state.update(make_event(1000, &[false, true]), 2); // exactly at boundary
-                                                           // 1000 - 0 = 1000, which is NOT > 1000, so included
+        // 1000 - 0 = 1000, which is NOT > 1000, so included
         assert_eq!(state.finalize(), 2);
     }
 
@@ -1294,7 +1294,7 @@ mod tests {
         state.window_size_us = 1000;
         state.update(make_event(0, &[true, false]), 2);
         state.update(make_event(1001, &[false, true]), 2); // one past boundary
-                                                           // 1001 - 0 = 1001 > 1000, so excluded
+        // 1001 - 0 = 1001 > 1000, so excluded
         assert_eq!(state.finalize(), 1);
     }
 
@@ -1333,11 +1333,11 @@ mod tests {
         // the window; a second entry completes all three steps.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 60_000_000; // 1 minute
-                                           // First entry: reaches step 2 then window expires
+        // First entry: reaches step 2 then window expires
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(30_000_000, &[false, true, false]), 3);
         state.update(make_event(120_000_000, &[false, false, true]), 3); // outside window
-                                                                         // Second entry: reaches step 3
+        // Second entry: reaches step 3
         state.update(make_event(200_000_000, &[true, false, false]), 3);
         state.update(make_event(210_000_000, &[false, true, false]), 3);
         state.update(make_event(220_000_000, &[false, false, true]), 3);
@@ -1627,7 +1627,7 @@ mod tests {
         state_default.window_size_us = 3_600_000_000;
         state_default.update(make_event(0, &[true, false, false]), 3);
         state_default.update(make_event(1000, &[false, true, true]), 3); // cond1+cond2
-                                                                         // Default: matches step 1 (cond[1]), then step 2 (cond[2]) on same event
+        // Default: matches step 1 (cond[1]), then step 2 (cond[2]) on same event
         let default_result = state_default.finalize();
 
         let mut state_once = WindowFunnelState::new();
@@ -1685,7 +1685,7 @@ mod tests {
         state.mode = FunnelMode::ALLOW_REENTRY;
         state.update(make_event(0, &[true, false, false]), 3); // entry 1
         state.update(make_event(1000, &[false, true, false]), 3); // step 1
-                                                                  // Entry fires again: reset chain
+        // Entry fires again: reset chain
         state.update(make_event(2000, &[true, false, false]), 3); // reentry
         state.update(make_event(3000, &[false, true, false]), 3); // step 1 (from reentry)
         state.update(make_event(4000, &[false, false, true]), 3); // step 2 (from reentry)
