@@ -449,7 +449,7 @@ tests (feature `e2e`) load the build into a real DuckDB, so a bare
 
 ## Running Tests
 
-The extension includes 541 unit tests, 33 in-process integration tests
+The extension includes 541 unit tests, 34 in-process integration tests
 (`tests/extension_load.rs`), and 1 doc-test:
 
 ```bash

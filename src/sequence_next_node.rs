@@ -26,9 +26,9 @@
 //! Mirrors `ClickHouse`'s `sequenceNextNode` exactly (verified against
 //! `AggregateFunctionSequenceNextNode.cpp`):
 //!
-//! 1. Events are sorted by `(timestamp, value)` — the value tie-break matches
-//!    `ClickHouse`'s comparator and makes results deterministic under
-//!    parallel combines.
+//! 1. Events are sorted by `(timestamp, value, base_condition, conditions)` —
+//!    the value tie-break matches `ClickHouse`'s comparator, and the rest make
+//!    the order total, so results are deterministic under parallel combines.
 //! 2. A single base (anchor) index is selected per [`Base`]: `head`/`tail`
 //!    are the literal first/last events (which must satisfy the base
 //!    condition), `first_match`/`last_match` scan for an event satisfying
@@ -347,11 +347,11 @@ impl SequenceNextNodeState {
         // `other`'s values are appended after `self`'s, so its events' ranges
         // move by the buffer length `self` has now.
         let shift = u32::try_from(self.values.len()).map_err(|_| StoreError::TooLarge)?;
-        let total = u32::try_from(other.values.len())
+        // The combined buffer must stay addressable by a `u32` offset.
+        u32::try_from(other.values.len())
             .ok()
             .and_then(|extra| shift.checked_add(extra))
             .ok_or(StoreError::TooLarge)?;
-        debug_assert!(total >= shift);
         self.events
             .try_reserve(other.events.len())
             .map_err(|_| StoreError::OutOfMemory)?;

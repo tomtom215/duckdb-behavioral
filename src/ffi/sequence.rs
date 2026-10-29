@@ -7,7 +7,7 @@
 //! registration, [`quack_rs::aggregate::FfiState`] for safe state management,
 //! and [`quack_rs::vector::VectorReader`] for safe vector reading.
 
-use super::view::{BoolKind, Combine, Finalize, I64Kind, States, Update};
+use super::view::{BoolKind, Combine, Finalize, I64Kind, States, Update, condition_mask};
 use crate::common::config::{conflict_message, out_of_memory_message};
 use crate::common::event::Event;
 use crate::pattern::parser::{CompiledPattern, parse_pattern};
@@ -241,10 +241,12 @@ pub(super) fn update_impl(call: Update<SequenceState>, func: &str) {
         //    slot carry the same string, already checked for this state.
         let mut checked_slot: Option<[u8; 16]> = None;
         for i in run.clone() {
-            if !timestamps.is_valid(i) || !patterns.is_valid(i) {
+            if !timestamps.is_valid(i) {
                 continue;
             }
-            let slot = patterns.slot(i);
+            let Some(slot) = patterns.slot(i) else {
+                continue;
+            };
             if checked_slot == Some(slot) {
                 continue;
             }
@@ -314,12 +316,7 @@ pub(super) fn update_impl(call: Update<SequenceState>, func: &str) {
         }
         state.events.extend(run.filter_map(|i| {
             let timestamp_us = timestamps.get(i)?;
-            let mut bitmask: u32 = 0;
-            for (c, condition) in conditions.iter().enumerate() {
-                if condition.is_true(i) {
-                    bitmask |= 1 << c;
-                }
-            }
+            let bitmask = condition_mask(&conditions, i);
             // Only events with a true condition can match a `(?N)` step (as
             // in `SequenceState::update`).
             (bitmask != 0).then(|| Event::new(timestamp_us, bitmask))

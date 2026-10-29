@@ -5,9 +5,9 @@
 //!
 //! Uses [`quack_rs::aggregate::AggregateFunctionSetBuilder`] for function set
 //! registration, [`quack_rs::aggregate::FfiState`] for safe state management,
-//! and [`quack_rs::vector::VectorReader`] for safe vector reading.
+//! and the safe input and output views in [`super::view`].
 
-use super::view::{Combine, Finalize, I32Kind, States, Update, Varchars};
+use super::view::{Combine, Finalize, I32Kind, States, Update, Varchars, condition_mask};
 use crate::common::config::{conflict_message, invalid_interval_message, out_of_memory_message};
 use crate::common::event::Event;
 use crate::common::timestamp::interval_to_micros;
@@ -213,12 +213,7 @@ pub(super) fn update_impl(call: Update<WindowFunnelState>, has_mode: bool, func:
                 return None;
             }
             let timestamp_us = timestamps.get(i)?;
-            let mut bitmask: u32 = 0;
-            for (c, condition) in conditions.iter().enumerate() {
-                if condition.is_true(i) {
-                    bitmask |= 1 << c;
-                }
-            }
+            let bitmask = condition_mask(&conditions, i);
             (bitmask != 0 || keep_empty).then(|| Event::new(timestamp_us, bitmask))
         }));
     }
@@ -270,10 +265,9 @@ fn row_mode(
     last_mode: &mut Option<([u8; 16], FunnelMode)>,
     func: &str,
 ) -> Result<Option<FunnelMode>, String> {
-    if !modes.is_valid(i) {
+    let Some(slot) = modes.slot(i) else {
         return Ok(None);
-    }
-    let slot = modes.slot(i);
+    };
     if let Some((last, mode)) = *last_mode
         && last == slot
     {

@@ -31,8 +31,10 @@ return a session per row without a word. On DuckDB before 2.0.0 do not use `OVER
 `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frame, or a window with
 only a `PARTITION BY`: DuckDB crashes on those for every C API aggregate
 ([FAQ](../faq.md#which-query-shapes-crash-duckdb)). Without `OVER` it is an
-ordinary aggregate whose rows DuckDB does not order, so its result depends on
-scan order and thread count; use the window form.
+ordinary aggregate whose rows DuckDB does not order and whose per-thread states
+it merges in any order: a run is either correct or fails with the
+ascending-order error, depending on thread scheduling (it used to return a
+different count per run). Use the window form.
 
 ```sql
 SELECT user_id, event_time,

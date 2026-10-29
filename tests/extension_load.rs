@@ -984,6 +984,33 @@ fn sessionize_rejects_rows_out_of_timestamp_order() {
     assert_eq!(sessions, 2);
 }
 
+/// Without `OVER`, `sessionize` is a plain aggregate whose thread-local
+/// states `DuckDB` merges in any order, so partial states can meet out of
+/// timestamp order. That used to give a different session count per run (8 or
+/// 9 sessions for one that is exactly 1, at four threads); combine now rejects
+/// the misordered merge. Scheduling decides whether a given run merges in
+/// order, so the invariant is "correct or an error, never a silently different
+/// answer".
+#[test]
+fn sessionize_plain_aggregate_is_correct_or_an_error_never_wrong() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET threads = 4;
+         CREATE TABLE sorted AS SELECT TIMESTAMP '2024-01-01' + to_seconds(i * 60) AS ts
+         FROM range(1000000) t(i);",
+    )
+    .unwrap();
+    for run in 0..8 {
+        match db.query_one::<i64>("SELECT sessionize(ts, INTERVAL 2 MINUTE) FROM sorted") {
+            Ok(sessions) => assert_eq!(sessions, 1, "run {run}: a silently wrong count"),
+            Err(e) => assert!(
+                e.to_string().contains("ascending timestamp order"),
+                "run {run}: {e}"
+            ),
+        }
+    }
+}
+
 /// `sessionize` over every kind of window frame `DuckDB` offers, against a
 /// reference computed from the frame's own rows: the number of gaps above the
 /// threshold in the list of timestamps the frame holds, plus one. Running,

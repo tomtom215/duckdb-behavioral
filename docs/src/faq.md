@@ -625,10 +625,10 @@ notebook, will grow.
 
 `sessionize` compares each row with the previous one in window order, so it
 needs `OVER (... ORDER BY ts)` with an ascending order. A plain `GROUP BY`
-aggregate sees rows in whatever order and thread split DuckDB chooses (the
-result changes with `threads` and with `preserve_insertion_order`, and a row
-that arrives before an earlier one raises `rows must arrive in ascending
-timestamp order`). A descending order is that same error: it used to read every
+aggregate sees rows in whatever order and thread split DuckDB chooses and
+merges per-thread states in any order, so a run is either correct or raises
+`rows must arrive in ascending timestamp order` (it used to return a different
+count per run). A descending order is that same error: it used to read every
 gap as enormous and open a session on every row. Within an ascending window
 the result is exact, including across `±infinity` timestamps.
 

@@ -16,7 +16,7 @@ cargo build
 
 # Or run checks individually
 cargo test --lib                                     # 541 unit tests, no libduckdb needed
-DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features      # 541 unit + 33 integration + 1 doc-test
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features      # 541 unit + 34 integration + 1 doc-test
 cargo clippy --all-targets --all-features            # Zero warnings required
 cargo fmt -- --check                                 # Format check
 ```
@@ -98,7 +98,7 @@ All checks must pass before submitting a PR:
 
 | Check | Command | What it validates |
 |---|---|---|
-| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features` | 541 unit tests + 33 in-process integration tests + 1 doc-test |
+| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features` | 541 unit tests + 34 in-process integration tests + 1 doc-test |
 | Lints | `cargo clippy --all-targets --all-features` | Zero warnings (pedantic + nursery + cargo) |
 | Format | `cargo fmt -- --check` | Code formatting |
 | Docs | `cargo doc --no-deps` | Documentation builds without warnings |

@@ -862,6 +862,9 @@ impl WindowFunnelState {
         sort_events(&mut self.events);
 
         let mode = self.mode;
+        // The SQL layer rejects a negative window; a negative field here would
+        // become a huge unsigned window below.
+        debug_assert!(self.window_size_us >= 0, "negative window");
         let mut scan = Scan {
             levels: [Level::EMPTY; MAX_STEPS],
             dirty: 0,

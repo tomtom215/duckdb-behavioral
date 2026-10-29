@@ -144,10 +144,25 @@ fn update(call: Update<SessionizeBoundaryState>) {
 quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
     // SAFETY: see above.
     let Combine {
-        source, mut target, ..
+        info,
+        source,
+        mut target,
     } = unsafe { Combine::<SessionizeBoundaryState>::from_raw(info, source, target, count) };
     for i in 0..source.count() {
         if let Some((src, tgt)) = States::pair(&source, &mut target, i) {
+            // The target is the earlier segment. A source that starts before the
+            // target ends was combined out of order (a plain GROUP BY, whose
+            // thread-local states DuckDB merges in any order): an error, not a
+            // silently different session count.
+            if let (Some(left_last), Some(right_first)) = (tgt.last_ts, src.first_ts)
+                && right_first < left_last
+            {
+                info.set_error(
+                    "sessionize: rows must arrive in ascending timestamp order; use \
+                     OVER (... ORDER BY <timestamp column>) with an ascending order",
+                );
+                return;
+            }
             *tgt = tgt.combine(src);
         }
     }

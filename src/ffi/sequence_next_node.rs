@@ -5,11 +5,11 @@
 //!
 //! Uses [`quack_rs::aggregate::AggregateFunctionSetBuilder`] for function set
 //! registration, [`quack_rs::aggregate::FfiState`] for safe state management,
-//! and [`quack_rs::vector::VectorReader`] for safe vector reading (including
-//! `read_str()` which replaces the hand-rolled `read_varchar()` helper that
-//! handled the undocumented `duckdb_string_t` 16-byte inline/pointer format).
+//! and the safe input and output views in [`super::view`] (including
+//! `Varchars`, which reads the `duckdb_string_t` 16-byte inline/pointer
+//! format).
 
-use super::view::{Combine, Finalize, States, Update, VarcharKind, Varchars};
+use super::view::{Combine, Finalize, States, Update, VarcharKind, Varchars, condition_mask};
 use crate::common::config::{conflict_message, out_of_memory_message};
 use crate::sequence_next_node::{Base, Direction, SequenceNextNodeState, StoreError};
 use quack_rs::aggregate::AggregateFunctionSetBuilder;
@@ -114,8 +114,8 @@ fn update(call: Update<SequenceNextNodeState>) {
     let event_conditions = unsafe { chunk.bool_range(FIXED_PARAMS..chunk.cols()) };
 
     // Last direction and base strings parsed in this chunk, with parses.
-    let mut last_direction: Option<(&[u8], Direction)> = None;
-    let mut last_base: Option<(&[u8], Base)> = None;
+    let mut last_direction: Option<([u8; 16], Direction)> = None;
+    let mut last_base: Option<([u8; 16], Base)> = None;
     for i in 0..chunk.rows() {
         let Some(state) = states.get_mut(i) else {
             continue;
@@ -141,13 +141,7 @@ fn update(call: Update<SequenceNextNodeState>) {
             continue;
         };
 
-        // Pack event conditions into u32 bitmask
-        let mut bitmask: u32 = 0;
-        for (c, condition) in event_conditions.iter().enumerate() {
-            if condition.is_true(i) {
-                bitmask |= 1 << c;
-            }
-        }
+        let bitmask = condition_mask(&event_conditions, i);
 
         // The state copies the value into its own buffer and grows fallibly:
         // an allocation failure becomes a SQL error instead of aborting the
@@ -178,19 +172,20 @@ fn store_error_message(error: StoreError, events: usize) -> String {
 /// an unknown direction or one that differs from the group's earlier rows.
 /// A `NULL` direction is ignored.
 ///
-/// Normally the same string is on every row: its raw bytes are compared with
-/// the last row's, and only a new string is validated and parsed.
-fn record_direction<'a>(
-    directions: &'a Varchars,
+/// Normally the same string is on every row: its 16-byte `duckdb_string_t` slot
+/// is compared with the last row's (one comparison, however long the string),
+/// and only a new string is validated and parsed.
+fn record_direction(
+    directions: &Varchars,
     i: usize,
-    last: &mut Option<(&'a [u8], Direction)>,
+    last: &mut Option<([u8; 16], Direction)>,
     state: &mut SequenceNextNodeState,
 ) -> Result<(), String> {
-    let Some(raw) = directions.bytes(i) else {
+    let Some(raw) = directions.slot(i) else {
         return Ok(());
     };
     let dir = match *last {
-        Some((bytes, dir)) if bytes == raw => dir,
+        Some((slot, dir)) if slot == raw => dir,
         _ => {
             let text = directions.get(i).unwrap_or_default();
             let dir = SequenceNextNodeState::parse_direction(text).ok_or_else(|| {
@@ -219,17 +214,17 @@ fn record_direction<'a>(
 }
 
 /// Records row `i`'s base in the state; see [`record_direction`].
-fn record_base<'a>(
-    bases: &'a Varchars,
+fn record_base(
+    bases: &Varchars,
     i: usize,
-    last: &mut Option<(&'a [u8], Base)>,
+    last: &mut Option<([u8; 16], Base)>,
     state: &mut SequenceNextNodeState,
 ) -> Result<(), String> {
-    let Some(raw) = bases.bytes(i) else {
+    let Some(raw) = bases.slot(i) else {
         return Ok(());
     };
     let base = match *last {
-        Some((bytes, base)) if bytes == raw => base,
+        Some((slot, base)) if slot == raw => base,
         _ => {
             let text = bases.get(i).unwrap_or_default();
             let base = SequenceNextNodeState::parse_base(text).ok_or_else(|| {

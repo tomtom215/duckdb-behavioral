@@ -175,7 +175,7 @@ cargo build --release
 # Unit tests (541): nothing to install, no libduckdb.
 cargo test --lib
 
-# All tests (541 unit + 33 integration + 1 doc-test). The integration tests
+# All tests (541 unit + 34 integration + 1 doc-test). The integration tests
 # (`tests/extension_load.rs`, feature `e2e`) LOAD the release library into a
 # real DuckDB, which needs a libduckdb to link. DUCKDB_DOWNLOAD_LIB=1 makes
 # libduckdb-sys download a prebuilt one (cached in target/duckdb-download/)
@@ -339,7 +339,7 @@ Every change MUST meet these requirements:
   checks `window_funnel` against an exhaustive reference and every state for
   order/split/combine-tree invariance (below).
 - **1 doc-test** for the pattern parser
-- **33 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **34 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
@@ -568,7 +568,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 
 Run with `cargo test --lib` (unit tests) or `DUCKDB_DOWNLOAD_LIB=1 cargo test
 --all-features` (everything). The 541 unit tests take a few
-seconds (the doc-test about 1 s). The 33 in-process integration tests add
+seconds (the doc-test about 1 s). The 34 in-process integration tests add
 20–35 s when the release `cdylib` must be rebuilt (they build and `LOAD` it)
 and about 5 s once it is cached. CI runs the same tests with
 `cargo nextest run --lib --tests --all-features` plus `cargo test --doc`

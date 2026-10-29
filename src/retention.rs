@@ -37,7 +37,7 @@ pub struct RetentionState {
     /// Bitmask of conditions that were true for at least one row.
     /// Bit `i` is set if condition `i` was true for some row.
     pub conditions_met: u32,
-    /// Number of conditions (set during first update).
+    /// Number of conditions passed to the call (set on every update).
     pub num_conditions: usize,
 }
 

@@ -37,8 +37,10 @@
 //! counts. A plain aggregate (`GROUP BY`) is not ordered by `DuckDB` and its
 //! result depends on scan order and thread count; use the window form. The
 //! FFI `update` therefore rejects a row whose timestamp is below the previous
-//! row's in the same state (an error, not a wrong answer);
-//! [`SessionizeBoundaryState::update`] itself does not check.
+//! row's in the same state, and the FFI `combine` a source that starts before
+//! its target ends (an error, not a wrong answer);
+//! [`SessionizeBoundaryState::update`] and [`SessionizeBoundaryState::combine`]
+//! themselves do not check.
 //!
 //! The `combine` operation is O(1) — it merges two adjacent segments by checking
 //! if the gap between `left.last_ts` and `right.first_ts` exceeds the threshold.
