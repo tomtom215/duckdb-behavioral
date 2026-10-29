@@ -14,6 +14,7 @@ fail-fast = true
 status-level = "pass"
 final-status-level = "slow"
 fail-fast = false
-# JUnit XML output for CI integration
-junit.path = "target/nextest/ci/junit.xml"
+# JUnit XML output for CI integration. The path is relative to
+# target/nextest/<profile>/, so ci.yml uploads target/nextest/ci/junit.xml.
+junit.path = "junit.xml"
 junit.report-name = "duckdb-behavioral"
