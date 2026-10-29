@@ -274,7 +274,11 @@ functions then return `TIMESTAMPTZ[]`).
   `setup-rust` composite action (`.github/actions/setup-rust`) runs
   "Re-fetch prebuilt libduckdb if the cache dropped it" after rust-cache for
   every job that sets `DUCKDB_DOWNLOAD_LIB=1`; bumping the cache key only
-  defers this.
+  defers this. The step must reach every build directory: cargo-llvm-cov
+  builds into `target/llvm-cov-target/debug`, one level deeper than
+  `target/debug`, and a `target/*/build/...` glob missed it (the Coverage job
+  failed on the first pull request after a cache existed: `quack-rs`'s build
+  script panicked for lack of `DEP_DUCKDB_INCLUDE`).
   Gotcha: libduckdb-sys's downloader (ureq/rustls with bundled roots) ignores
   a proxy CA. Behind a TLS-intercepting proxy, fetch
   `libduckdb-linux-amd64.zip` with curl into
