@@ -322,16 +322,18 @@ of repeated runs, except `sequence_next_node`, which takes about half the time
 All six ClickHouse behavioral functions are implemented. Each was compared with
 `clickhouse local` 26.10.2.103 (`window_funnel` also on 26.9.8.3, with identical
 results) on random event groups: ties, events matching several conditions,
-every mode combination, random patterns. Counts and the remaining differences
-are in
+every mode combination, random patterns. For the `sequence_*` functions a small
+model of each engine predicts every one of 57.6 million results (two seeds)
+([`scripts/clickhouse-sequence-diff.py`](scripts/clickhouse-sequence-diff.py)
+reruns it). Counts and the remaining differences are in
 [ClickHouse Compatibility](https://tomtom215.github.io/duckdb-behavioral/internals/clickhouse-compatibility.html).
 
 | Function | Result |
 |---|---|
 | `retention` | Identical in 200,000 groups |
 | `window_funnel` | Identical for 15 of the 24 mode combinations in every variant; the 6 that use `strict_increase` without `strict_once` differ by design, and the 3 that pair `strict_deduplication` with `strict_once` differ only when ties arrive in a different order than the extension's sort |
-| `sequence_match`, `sequence_count` | Identical when time constraints follow `(?N)` or `.` and the pattern does not end in `.*` or a vacuous constraint (where ClickHouse reads past its action list); differ by design after `.*` |
-| `sequence_match_events` | As above, except that where ClickHouse can report an abandoned attempt the extension reports the events that matched (5,174 of 600,000 results with distinct timestamps) |
+| `sequence_match`, `sequence_count` | Identical unless a time constraint directly follows `.*` (ClickHouse measures it from a different event) or tied rows reach ClickHouse in another order than the extension's |
+| `sequence_match_events` | As above, except that when an earlier attempt matched every step and then failed a later time constraint, ClickHouse reports that attempt and the extension reports the chain that matched (5,174 of 600,000 results for patterns with no constraint after `.*`, distinct timestamps) |
 | `sequence_next_node` | Identical with distinct (timestamp, value) per event; with ties, identical whenever ClickHouse receives rows in the extension's tie order |
 
 Deliberate differences, each because ClickHouse is defective or depends on row order:
@@ -355,7 +357,7 @@ microseconds with `(?t)` thresholds in seconds, windows are `INTERVAL`s, and
 
 | | |
 |---|---|
-| Unit tests | 540, plus 1 doc-test, including 37 property tests (proptest). The `window_funnel` engine is compared with an exhaustive reference and every state with order- and combine-tree-invariance checks (`src/oracle_tests.rs`) |
+| Unit tests | 541, plus 1 doc-test, including 37 property tests (proptest). The `window_funnel` engine is compared with an exhaustive reference and every state with order- and combine-tree-invariance checks (`src/oracle_tests.rs`) |
 | Integration tests | 29, in process: the release library is loaded into a real DuckDB and every function runs through SQL, including error paths, `±infinity` timestamps, and parallel determinism |
 | End-to-end | `make test_release` (8 SQL logic files in `test/sql/`) and 21 asserted queries (`scripts/compat-check.sh`) on Linux and macOS, then the same build in DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
 | Differential | Against ClickHouse, see above |

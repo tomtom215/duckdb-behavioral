@@ -70,11 +70,17 @@ runs:
     # as a build profile and keeps only build/, .fingerprint/ and deps/. A warm
     # cache then restores libduckdb-sys's build-script output without the
     # library it links (`-lduckdb` not found). When the library is missing,
-    # drop that output so the build script runs again and downloads it.
+    # drop that output so the build script runs again and downloads it. The
+    # output sits one level deeper when cargo builds into a subdirectory of
+    # target/ (cargo-llvm-cov uses target/llvm-cov-target, a --target triple
+    # adds a directory), so the search covers target/<dir>/<dir>/build too.
     - name: Re-fetch prebuilt libduckdb if the cache dropped it
       if: inputs.cache == 'true' && env.DUCKDB_DOWNLOAD_LIB == '1'
       shell: bash
       run: |
-        if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-          rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+        [ -d target ] || exit 0
+        if ! find target -path '*/duckdb-download/*/*/libduckdb.*' -print -quit | grep -q .; then
+          find target -maxdepth 4 \
+            \( -path '*/build/libduckdb-sys-*' -o -path '*/.fingerprint/libduckdb-sys-*' \) \
+            -prune -exec rm -rf {} +
         fi

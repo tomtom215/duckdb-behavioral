@@ -21,7 +21,7 @@ call uses `--locked`.
 |-----|---------|------|
 | **fmt** | Formatting verification | `cargo fmt --all -- --check` |
 | **clippy** | Zero-warning lint enforcement, including the unsafe-code lints; also type-checks every target | `cargo clippy --all-targets -- -D warnings` |
-| **test** | 540 unit tests + 29 in-process integration tests, then the doc-test, on Linux and macOS | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
+| **test** | 541 unit tests + 29 in-process integration tests, then the doc-test, on Linux and macOS | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
 | **doc** | Documentation builds without warnings | `cargo doc --no-deps --document-private-items` with `-Dwarnings` |
 | **msrv** | Minimum Supported Rust Version (1.88) | the `setup-rust` action with `toolchain: "1.88"`, then `cargo check --all-targets` |
 | **wasm-check** | Library compiles for DuckDB-WASM | `cargo check --target wasm32-unknown-emscripten --lib` |
@@ -149,7 +149,7 @@ version" in `CLAUDE.md`.
 ./scripts/check.sh
 
 # Or one at a time
-DUCKDB_DOWNLOAD_LIB=1 cargo test --locked   # 540 unit + 29 integration + 1 doc-test
+DUCKDB_DOWNLOAD_LIB=1 cargo test --locked   # 541 unit + 29 integration + 1 doc-test
 cargo clippy --all-targets --locked -- -D warnings
 cargo fmt --all -- --check
 RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --document-private-items --locked

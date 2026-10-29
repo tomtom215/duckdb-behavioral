@@ -1426,6 +1426,41 @@ mod tests {
         assert_eq!(result, vec![100, 300]);
     }
 
+    /// `ClickHouse`'s `sequenceMatchEvents` reports the first chain that reaches
+    /// the full length, even if that attempt then fails the trailing gate and a
+    /// later attempt completes the pattern (it replaces its answer only for a
+    /// strictly longer chain). Here `(?1)` at 13 s is such an attempt: the
+    /// events after it are 2, 8 and 11 s away, never 9 s. `ClickHouse` 26.10.2.103
+    /// reports `[7, 13]`; this extension reports the chain that matched, with
+    /// `(?1)` at 15 s (24 s is 9 s later). The attempt shares its first step
+    /// with the match, so dropping the events before the match does not
+    /// remove it.
+    #[test]
+    fn test_events_report_the_completing_chain_not_an_abandoned_attempt() {
+        let pattern = parse_pattern("(?2).*(?1)(?t==9)").unwrap();
+        // (seconds, condition bitmask): bit 0 is (?1), bit 1 is (?2).
+        let rows: [(i64, u32); 10] = [
+            (0, 0b01),
+            (4, 0b01),
+            (7, 0b11),
+            (8, 0b10),
+            (13, 0b11),
+            (15, 0b01),
+            (21, 0b11),
+            (24, 0b10),
+            (26, 0b01),
+            (29, 0b10),
+        ];
+        let events: Vec<Event> = rows
+            .iter()
+            .map(|&(seconds, mask)| Event::new(seconds * 1_000_000, mask))
+            .collect();
+        assert_eq!(
+            execute_pattern_events(&pattern, &events).unwrap(),
+            vec![7_000_000, 15_000_000]
+        );
+    }
+
     // --- Fast path tests ---
 
     #[test]

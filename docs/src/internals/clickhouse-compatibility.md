@@ -91,28 +91,55 @@ Each function was run in both engines on the same randomly generated event
 groups (whole-second timestamps, frequent ties, events matching zero, one or
 several conditions) and the results compared group by group. ClickHouse ran as
 `clickhouse local` 26.10.2.103; `window_funnel` was also run on 26.9.8.3 and
-gave identical results. Every difference was minimized and explained from
-ClickHouse's source (`AggregateFunctionWindowFunnel.cpp`,
-`AggregateFunctionSequenceMatch.cpp`, `AggregateFunctionSequenceNextNode.cpp`).
+gave identical results.
 
 | Function | Cases | Outcome |
 |---|---|---|
 | `retention` | 200,000 groups, 2 to 32 conditions | Identical |
 | `window_funnel` | 96,000 groups x 24 mode combinations x 3 windows = 6,912,000 results | 70,314 differ, all within 9 of the 24 combinations; the other 15 are identical in every variant. Six combinations use `strict_increase` without `strict_once` (difference 1). Three use `strict_deduplication` with `strict_once` and differ only when tied rows arrive in an order other than the extension's (difference 2): 353 results with shuffled ties, 0 with ties in the extension's order |
-| `sequence_match` / `sequence_count` | 600 patterns x 1,000 groups per pattern class, distinct timestamps, patterns without the hazards of differences 4 and 6 | Identical (0 of 600,000 results each) |
-| same, patterns ending in `.*` or a vacuous time constraint | 600 x 1,000 | `sequence_match` differs in 160 results, `sequence_count` in none (difference 6) |
-| same, a time constraint directly after `.*` | 600 x 1,000 | Differ widely (difference 4) |
-| same, tied timestamps | 600 x 1,000 | Identical when rows reach ClickHouse in the extension's tie order; otherwise they differ (difference 3) |
-| `sequence_match_events` | same | 5,174 of 600,000 results differ with distinct timestamps (difference 5) |
 | `sequence_next_node` (6 valid direction/base pairs, 1 to 5 conditions) | 100,000 groups = 600,000 results per variant | Identical with distinct timestamps and with ties in the extension's order; with shuffled ties 10,862 differ (difference 2) |
+| `sequence_match`, `sequence_count`, `sequence_match_events` | see below | Every result of both engines is predicted by a model of that engine |
 
-For the `sequence_match_events` differences, 1,274 results (up to 25 per
-pattern) were triaged by deleting the events before the extension's chain and
-asking ClickHouse again: 975 then report the extension's chain, so the earlier
-attempt was what ClickHouse reported. The other 299 (21 patterns, each with an
-equality or other time gate at the end) are not explained by that test, because
-the abandoned attempt shares its first step with the successful match; one was
-traced by hand to the same cause, the rest were not.
+### The sequence functions
+
+`scripts/clickhouse-sequence-diff.py` generates 150 random patterns for each
+condition count from 2 to 5 and 1,000 random groups of up to 14 events for
+each, runs all three functions in both engines, and compares each engine's
+answer with a small Python model of that engine. The runs below are its
+default output (seed 1).
+
+- **Pattern classes.** A1: time constraints only after `(?N)` or `.`, and the
+  pattern does not end in `.*` or in a constraint that is vacuous at the end
+  of the events. A2: it does end in one of those. B: a time constraint directly
+  after `.*`.
+- **Timestamps.** `unique`: distinct within a group. `ties_extorder`: ties,
+  with the rows arriving in the extension's order. `ties_shuffled`: ties, rows
+  in random order.
+
+| Case | Cells | `sequence_match_events` differs | Any of the three differs |
+|---|---|---|---|
+| A1, unique | 600,000 | 5,174 | 5,174 |
+| A1, ties in extension order | 600,000 | 4,385 | 4,385 |
+| A1, shuffled ties | 600,000 | 39,812 | 48,669 |
+| A2, unique | 600,000 | 21,372 | 21,372 |
+| A2, ties in extension order | 600,000 | 19,823 | 19,823 |
+| A2, shuffled ties | 600,000 | 49,680 | 59,673 |
+| B, unique | 600,000 | 56,804 | 129,636 |
+| B, ties in extension order | 600,000 | 47,995 | 113,920 |
+
+In all eight cases the extension equals its model and ClickHouse equals its
+model, for `sequence_match`, `sequence_count` and `sequence_match_events`
+(600,000 of 600,000 each, 28.8 million results in all). The two models share a
+lazy depth-first search over the events (the search the extension used before
+0.10.0); they differ by the rules in differences 3, 4 and 5 below. The
+ClickHouse rules were found by running ClickHouse, not from its source, and
+fitted on seed 1. The same eight cases with seed 2 (other groups, other
+patterns; `--seed 2`) are a hold-out: every one of another 28.8 million results
+is predicted too, with different counts of differences (for example 4,033
+`sequence_match_events` differences for A1 with unique timestamps). A model
+that predicts every result does not prove the rules are ClickHouse's code,
+only that nothing in these inputs tells them apart. Not generated: groups of more than 14 events, more than 5 conditions, `!=`,
+two constraints in a row, and a constraint before any `(?N)` or `.`.
 
 ## Semantic Compatibility
 
@@ -196,30 +223,49 @@ order:
    `src/oracle_tests.rs`) that follows ClickHouse's algorithm but keeps every
    chain and orders ties canonically.
 
-3. **`sequenceMatch` and friends also order same-timestamp events by
-   arrival** (`::sort` on timestamp only); the extension orders them by
-   condition bitmask.
+3. **`sequenceMatch` and friends keep same-timestamp events in arrival
+   order**; the extension orders them by condition bitmask. With shuffled ties
+   a model that keeps tied rows in arrival order reproduces every ClickHouse
+   result (groups of up to 14 events; larger groups were not tested).
 
 4. **Time-constraint anchor.** The extension measures `(?t op N)` from the
-   event consumed by the last `(?N)` or `.` step. ClickHouse resets the anchor
-   at `.*` to the event after the last match, so `(?1).*(?t>0)(?2)` can never
-   match there and `(?t<=N)` directly after `.*` is vacuously true. A
-   constraint before any `(?N)` or `.` is an error in the extension;
+   event consumed by the last `(?N)` or `.` step. After `.*`, ClickHouse
+   measures it from the event where `.*` stopped consuming, which is the event
+   after the last consumed one when `.*` consumes nothing. So
+   `(?1).*(?t>0)(?2)` and `(?1).*(?t>=5)(?2)` can never match there (over
+   `c1@0, c2@5` the extension matches both), and `(?t<=N)` directly after `.*`
+   is vacuously true (`(?1).*(?t<=2)(?2)` matches over `c1@0, c2@5`; the
+   extension does not). In ClickHouse neither `.*` nor a skipping constraint
+   can absorb the last event, so a pattern ending in `.*(?t<0)` matches only if
+   its earlier steps already consumed the last event; the extension also
+   matches when `.*` can absorb the rest, because it takes a trailing `(?t<0)`
+   as matching the empty rest. A constraint before any `(?N)` or `.` is an error in the extension;
    ClickHouse measures it from wherever its implicit leading `.*` is.
 
-5. **`sequenceMatchEvents` reports an abandoned attempt.** ClickHouse replaces
-   its best chain only when a strictly longer one appears, so after a failed
-   attempt it can report that attempt's timestamps for a later successful
-   match of the same length (`(?1)(?t==2)` over `c1@0, c1@3, c2@5` reports
-   `[0]`). The same happens when the failed attempt shares its first step
-   with the successful match. The extension reports the events that matched
-   (`[3]`).
+5. **`sequenceMatchEvents` reports the first chain that reached the longest
+   length, even if that attempt failed.** ClickHouse replaces its answer only
+   when a strictly longer chain appears. An earlier attempt that matched every
+   `(?N)` step but then failed a later constraint therefore stays the answer
+   when a later attempt completes the pattern, because the later chain is not
+   longer. Example: `(?1)(?t==2)` over `c1@0, c1@3, c2@5` reports `[0]`, the
+   extension `[3]`. The failed attempt can share its first step with the
+   match: `(?2).*(?1)(?t==9)` over `c2&c1@7, c2@8, c2&c1@13, c1@15, c2&c1@21,
+   c2@24` reports `[7, 13]` (nothing is 9 s after 13 s), the extension
+   `[7, 15]` (24 s is 9 s after 15 s). Deleting the events before the match
+   therefore does not remove the failed attempt. A model whose answer is the
+   first strictly-longest chain of the search reproduces ClickHouse's events in
+   every case above; the extension returns the chain that matched (pinned by
+   `test_events_report_the_completing_chain_not_an_abandoned_attempt`).
 
-6. **ClickHouse reads past its action list** for a pattern ending in `.*`,
+6. **ClickHouse may read past its action list** for a pattern ending in `.*`,
    `(?t<…)`, `(?t<=…)` or `(?t>=0)` when the match consumes the last event
-   (`AggregateFunctionSequenceMatch.cpp`, the trailing-skip loop has no end
-   check). Its answer for such a group changed between runs; the extension's
-   does not.
+   (its loop that skips trailing items has no end check). On 26.9.8.3,
+   identical input gave different `sequenceMatch` and `sequenceCount` answers
+   between runs: 308 and 144 of 1,800,000 results in four runs of the A2 cases.
+   On 26.10.2.103 none of 1,800,000 results varied in four runs, and the model
+   predicts every A2 result; whether the fault was fixed or does not show in
+   this setup is not known. The extension's answer does not depend on memory
+   past the pattern.
 
 Other differences:
 

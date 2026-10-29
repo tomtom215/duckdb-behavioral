@@ -170,7 +170,7 @@ cargo build --release
 # Everything CI runs that works offline, in one command (tools that are not
 # installed are skipped): ./scripts/check.sh   (--quick skips docs and benches)
 
-# Run all tests (540 unit + 29 integration + 1 doc-test).
+# Run all tests (541 unit + 29 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
@@ -274,7 +274,11 @@ functions then return `TIMESTAMPTZ[]`).
   `setup-rust` composite action (`.github/actions/setup-rust`) runs
   "Re-fetch prebuilt libduckdb if the cache dropped it" after rust-cache for
   every job that sets `DUCKDB_DOWNLOAD_LIB=1`; bumping the cache key only
-  defers this.
+  defers this. The step must reach every build directory: cargo-llvm-cov
+  builds into `target/llvm-cov-target/debug`, one level deeper than
+  `target/debug`, and a `target/*/build/...` glob missed it (the Coverage job
+  failed on the first pull request after a cache existed: `quack-rs`'s build
+  script panicked for lack of `DEP_DUCKDB_INCLUDE`).
   Gotcha: libduckdb-sys's downloader (ureq/rustls with bundled roots) ignores
   a proxy CA. Behind a TLS-intercepting proxy, fetch
   `libduckdb-linux-amd64.zip` with curl into
@@ -308,7 +312,7 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **540 unit tests** covering all functions, edge cases, combine associativity,
+- **541 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
@@ -405,14 +409,19 @@ differentially tested against ClickHouse 26.10.2.103 (`clickhouse local`;
 `windowFunnel` also on 26.9.8.3, with identical results) on random event
 groups (ties, multi-condition events, every mode combination). The counts are
 in `docs/src/internals/clickhouse-compatibility.md`. Every remaining
-difference is listed below with its cause. One explanation is only partly
-verified: of 1,274 `sequence_match_events` differences triaged, 975 were
-reproduced as an abandoned attempt, and the other 299 were traced to the same
-cause for one case only (see that page). Treat any other difference as a bug. To re-check, download the ClickHouse static binary
+difference is listed below with its cause. For `sequence_match`, `sequence_count`
+and `sequence_match_events`, `scripts/clickhouse-sequence-diff.py` checks that a
+model of each engine predicts every result (8 case sets x 600,000 cells x 3
+functions x 2 engines, on each of two seeds, zero exceptions); the ClickHouse rules were found by
+running it, not from its source. Treat any other difference as a bug. To
+re-check, download the ClickHouse static binary
 (`clickhouse-common-static-<ver>-amd64.tgz` from the ClickHouse GitHub
-release) and compare per group; for `window_funnel`, an exhaustive reference
-(ClickHouse's algorithm keeping every chain, ties ordered canonically) must
-equal the extension in every case.
+release); for the `sequence_*` functions run
+`scripts/clickhouse-sequence-diff.py --clickhouse <bin> --duckdb <cli>
+--extension <ext>` (about 10 minutes for the default eight cases) after any
+change to the matcher, and compare per group for the other functions; for
+`window_funnel`, an exhaustive reference (ClickHouse's algorithm keeping every
+chain, ties ordered canonically) must equal the extension in every case.
 
 ### Scope
 
@@ -462,15 +471,21 @@ Deliberate (ClickHouse is defective or order-dependent):
    `(timestamp, conditions)` for `Event`, `(timestamp, value, base_condition,
    conditions)` for `sequence_next_node`.
 3. **Time-constraint anchor**: we measure `(?t op N)` from the event consumed
-   by the last `(?N)` or `.`; ClickHouse resets at `.*` to the next event (so
-   `(?1).*(?t>0)(?2)` never matches there). A constraint before any `(?N)`/`.`
-   is a parse error here.
-4. **`sequenceMatchEvents`** can report an abandoned attempt in ClickHouse
-   (also one that shares its first step with the successful match); we report
-   the matching events.
+   by the last `(?N)` or `.`; after `.*` ClickHouse measures from the event
+   where `.*` stopped consuming (so `(?1).*(?t>0)(?2)` never matches there),
+   and neither `.*` nor a skipping constraint can absorb the last event (a
+   trailing `.*(?t<0)` matches only if earlier steps consumed it). A constraint
+   before any `(?N)`/`.` is a parse error here.
+4. **`sequenceMatchEvents`** reports the first chain that reached the longest
+   length, even if that attempt then failed a later constraint and a later
+   attempt completed the pattern (also when it shares its first step with the
+   match); we report the chain that matched. Pinned by
+   `test_events_report_the_completing_chain_not_an_abandoned_attempt`.
 5. **ClickHouse UB**: its trailing-skip loop for patterns ending in `.*` /
-   `(?t<…)` / `(?t<=…)` / `(?t>=0)` reads past the action list; results vary
-   between runs.
+   `(?t<…)` / `(?t<=…)` / `(?t>=0)` may read past the action list. On 26.9.8.3
+   identical input gave different answers between runs (308 `sequenceMatch` and
+   144 `sequenceCount` of 1.8M results in 4 runs); on 26.10.2.103 none of
+   1.8M varied.
 
 Other:
 
@@ -530,7 +545,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   multi-step patterns, combine, NULL versus empty-string values, value sharing
   and range rebasing in the byte arena
 
-Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 540 unit tests take a few
+Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 541 unit tests take a few
 seconds (the doc-test about 1 s). The 29 in-process integration tests add
 20–35 s when the release `cdylib` must be rebuilt (they build and `LOAD` it)
 and about 5 s once it is cached. CI runs the same tests with

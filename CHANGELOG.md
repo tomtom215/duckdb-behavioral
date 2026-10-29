@@ -58,6 +58,12 @@ allocation failure is now a SQL error.
   crash which DuckDB release), `scripts/install-duckdb-cli.sh`,
   `scripts/release-notes.sh`, `RELEASING.md`, and `scheduled.yml` (weekly
   advisories, next stable and beta toolchains, `cargo update`, DuckDB nightly).
+- `scripts/clickhouse-sequence-diff.py`: runs `sequence_match`, `sequence_count`
+  and `sequence_match_events` against `clickhouse local` on random groups and
+  checks each engine against a Python model of it (57.6 million results over
+  two seeds, no exception). Test `test_events_report_the_completing_chain_not_an_abandoned_attempt`
+  pins the case where ClickHouse reports a failed attempt that shares its first
+  step with the match.
 - `scripts/check-stable-api.py`, run in CI: fails if the unstripped library
   calls a C API function outside the stable prefix (76 of 548 slots used,
   highest 306, limit 357), the mistake that once pinned the binary to one
@@ -82,6 +88,15 @@ allocation failure is now a SQL error.
   `docs/src/internals/clickhouse-compatibility.md`. ClickHouse's setting is
   `enable_funnel_functions`.
 - README rewritten; test, overload and CI descriptions corrected throughout.
+- The 299 `sequence_match_events` differences from ClickHouse that the first
+  parity run could not explain are explained: ClickHouse reports the first
+  chain that reached the longest length even if that attempt failed a later
+  time constraint. The compatibility page now states the rules of both engines
+  (time constraint after `.*`, ties, failed attempts). Two earlier statements
+  were wrong: 160 `sequence_match` differences blamed on ClickHouse's
+  out-of-bounds read were the empty-events `.*` case fixed in this release, and
+  that read changes answers between runs on ClickHouse 26.9.8.3 but not on
+  26.10.2.103.
 
 ## [0.10.1] - 2026-10-23
 
