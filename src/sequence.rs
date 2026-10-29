@@ -795,9 +795,6 @@ mod proptests {
 
     proptest! {
         #[test]
-
-
-        #[test]
         fn match_implies_count_at_least_one(
             num_events in 2..=30usize,
         ) {

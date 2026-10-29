@@ -844,7 +844,7 @@ fn issue_26109_query_shapes_work_on_duckdb_2() {
         .split('.')
         .next()
         .and_then(|m| m.parse().ok())
-        .unwrap_or_else(|| panic!("unparseable DuckDB version {version:?}"));
+        .unwrap_or_else(|| panic!("unparsable DuckDB version {version:?}"));
     if major < 2 {
         eprintln!("skipped: DuckDB {version} crashes on these shapes (duckdb/duckdb#26109)");
         return;

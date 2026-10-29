@@ -569,7 +569,6 @@ name = "duckdb-behavioral"
 version = "0.10.1"
 dependencies = [
  "criterion",
- "duckdb",
  "libduckdb-sys",
  "proptest",
  "quack-rs",
