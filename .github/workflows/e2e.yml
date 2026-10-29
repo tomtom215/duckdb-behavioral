@@ -40,14 +40,14 @@ jobs:
             platform: osx_arm64
             cli_platform: osx-universal
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: e2e-${{ matrix.platform }}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Build the extension
@@ -96,7 +96,7 @@ jobs:
         duckdb: ["v1.3.2", "v1.4.4", "v1.4.5", "v1.5.0", "v1.5.6"]
     steps:
       # No checkout of the code under test is needed beyond the scripts.
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: |
             scripts
