@@ -405,12 +405,16 @@ in 0.10.0:**
 | `sequence_next_node` | 10 million | 587 ms | 17 Melem/s |
 
 The 100M rows have 10 samples and wide intervals; PERF.md lists them. SQL
-timings come from `scripts/bench-sql.sh` (10M rows, 100,000 groups, 4 threads):
-1.5 to 1.9 s per aggregate query, `sequence_next_node` 3.3 s, `retention`
-0.46 s. Session 21 compared v0.10.1 and this branch on the same machine,
-alternating runs: no change beyond the run-to-run spread except
-`sequence_next_node`, about twice as fast. Compare against numbers measured on
-the same machine in the same session, never against the table above from a
+timings come from `scripts/bench-sql.sh` (10M rows, 100,000 groups, 4 threads).
+Session 21 (the machine above) measured 1.5 to 1.9 s per aggregate query,
+`sequence_next_node` 3.3 s, `retention` 0.46 s, and found no change beyond the
+run-to-run spread except `sequence_next_node`, about twice as fast. Session 22
+measured on another machine (Xeon @ 2.10 GHz) 1.0 to 1.4 s per aggregate query,
+`sequence_next_node` 2.6 s, `retention` 0.26 s, and again found no change
+beyond the spread between the build before this branch's changes and this
+branch (ratios 0.93 to 1.07, alternating runs); it also found and fixed the
+`strict_once` cliff (see PERF.md). Compare against numbers measured on the
+same machine in the same session, never against the table above from a
 different machine.
 
 Key optimizations: u32 bitmask conditions (eliminates per-event heap alloc),

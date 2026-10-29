@@ -60,3 +60,9 @@ builds the extension for every non-excluded platform and runs `test/sql/`.
 Fix the cause on `main`, delete the remote tag (`git push origin :refs/tags/vX.Y.Z`),
 and tag the fixed commit again. Re-running with `workflow_dispatch` and the tag
 name rebuilds that existing tag, not the fix.
+
+If only the last job, `update-description-ref`, failed (for example a branch
+ruleset refused its push to `main`), the release is already published. Set
+`repo.ref` in `description.yml` to the tagged commit by hand or in a pull
+request; re-running the workflow does not repeat that job, which runs only for
+tag pushes.

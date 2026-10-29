@@ -356,43 +356,33 @@ depend on thread count or row order.
 
 ## Performance
 
-Measured on a shared 4-vCPU Intel Xeon @ 2.80 GHz, Linux, Rust 1.97.0, DuckDB
-2.0.0, release build.
+Measured in [`PERF.md`](PERF.md) Session 22 on a shared 4-vCPU Intel Xeon
+@ 2.10 GHz, Linux, Rust 1.97.0, DuckDB 2.0.0, release build.
 
-**In SQL.** [`scripts/bench-sql.sh`](scripts/bench-sql.sh) builds 10 million
-rows in 100,000 groups of 100 events and runs each query in a fresh `duckdb`
-process with 4 threads (wall time in seconds, median [min-max] of 9 runs;
+[`scripts/bench-sql.sh`](scripts/bench-sql.sh) builds 10 million rows in 100,000
+groups of 100 events and runs each query in a fresh `duckdb` process with 4
+threads (wall time in seconds, median [min-max] of 9 runs, 25 for `sessionize`;
 includes DuckDB's scan and grouping):
 
 | Query | Time |
 |---|---|
-| `window_funnel`, 3 steps | 1.58 [1.49-1.63] |
-| `window_funnel_events` | 1.60 [1.49-1.67] |
-| `sequence_count('(?1).*(?2).*(?3)')` | 1.75 [1.63-1.81] |
-| `sequence_match_events('(?1).*(?2)')` | 1.61 [1.54-1.66] |
-| `sequence_next_node` | 3.33 [3.13-3.68] |
-| `retention`, 3 conditions | 0.46 [0.43-0.52] |
-| `sessionize` over `PARTITION BY u ORDER BY ts` | 1.92 [1.81-2.05] |
-| `window_funnel` over one 10-million-row group | 0.56 [0.54-0.64] |
+| `window_funnel`, 3 steps | 1.07 [0.99-1.41] |
+| `window_funnel_events` | 1.02 [0.96-1.09] |
+| `sequence_count('(?1).*(?2).*(?3)')` | 1.20 [1.06-1.47] |
+| `sequence_match_events('(?1).*(?2)')` | 1.10 [1.06-1.21] |
+| `sequence_next_node` | 2.60 [2.43-2.93] |
+| `retention`, 3 conditions | 0.26 [0.24-0.29] |
+| `sessionize` over `PARTITION BY u ORDER BY ts` | 1.42 [1.31-1.58] |
+| `window_funnel` over one 10-million-row group | 0.41 [0.39-0.48] |
 
-**The aggregates alone.** Criterion benchmarks of the Rust state functions,
-without DuckDB (95% confidence interval of the mean):
-
-| Function | Elements | Time | Throughput |
-|---|---|---|---|
-| `sessionize` update | 1 billion | 1.68 s [1.66-1.70] | 595 Melem/s |
-| `retention` combine | 100 million | 251 ms [246-256] | 398 Melem/s |
-| `window_funnel` finalize, 8 conditions | 100 million | 2.12 s [1.93-2.27] | 47 Melem/s |
-| `sequence_match` | 100 million | 1.49 s [1.26-1.70] | 67 Melem/s |
-| `sequence_count` | 100 million | 1.50 s [1.28-1.72] | 67 Melem/s |
-| `sequence_match_events` | 100 million | 1.30 s [1.18-1.52] | 77 Melem/s |
-
-The 100-million rows come from 10 samples each on a shared machine, hence the
-wide intervals. [`PERF.md`](PERF.md) has the full tables, the method, and the
-same-machine comparison with v0.10.1 (Session 21): no change within the spread
-of repeated runs, except `sequence_next_node`, which takes about half the time
-(6.85 s to 3.33 s above). Reproduce with `cargo bench` and
-`scripts/bench-sql.sh <duckdb> <extension>`.
+Run alternately with the build from before this release's changes on the same
+machine, no query differed beyond the spread of repeated runs (ratios 0.93 to
+1.07; `PERF.md` has both builds side by side). Compare only with numbers taken
+on one machine: a different machine gave faster times for the same queries
+despite a slower CPU. The Criterion microbenchmarks of the Rust state functions
+(a billion `sessionize` updates, 100 million events for the others, with their
+method and history) are in [`PERF.md`](PERF.md). Reproduce with `cargo bench`
+and `scripts/bench-sql.sh <duckdb> <extension>`.
 
 ## ClickHouse parity
 

@@ -30,6 +30,7 @@ reproducible via `cargo bench`.
 - [Session 19: Feasibility-Then-Greedy Sequence Matcher](#session-19-feasibility-then-greedy-sequence-matcher)
 - [Session 20: Per-Row Allocation and Run-Based Update](#session-20-per-row-allocation-and-run-based-update)
 - [Session 21: Same-Machine Check of the FFI Views, Edition 2024 and the `sequence_next_node` Store](#session-21-same-machine-check-of-the-ffi-views-edition-2024-and-the-sequence_next_node-store)
+- [Session 22: Same-Machine Check After the Audit, and the `strict_once` Cliff](#session-22-same-machine-check-after-the-audit-and-the-strict_once-cliff)
 - [Current Baseline](#current-baseline)
   - [Sessionize](#sessionize)
   - [Retention](#retention)
@@ -1089,6 +1090,61 @@ behind by an abandoned `GROUP BY ... LIMIT` scan (300,000 groups) fell from
 **Full-scale numbers** (Criterion, this branch; see Current Baseline): these
 replace the Session 15 headline table, which was recorded on a different
 machine and, for `window_funnel`, before the 0.10.0 engine.
+
+## Session 22: Same-Machine Check After the Audit, and the `strict_once` Cliff
+
+**Question.** This branch changed hot-path code after v0.10.1 plus the Session
+21 work: a shared `condition_mask` helper replaced three copies of the row
+bitmask loop, `sessionize` rejects out-of-order rows (a compare and a branch
+per row in `update`, one per state in `combine`), `sequence_next_node` keys its
+configuration strings on the 16-byte string slot, and the `strict_once` matcher
+caches on the excluded event's conditions. Did any SQL query get slower?
+
+**Method.** Base is the extension built from commit 0ef1858, the tip of `main`
+when this session began (v0.10.1 plus the unreleased Session 21 work); new is
+this branch at 2ab655a. One shared 4-vCPU
+Intel Xeon @ 2.10 GHz (a different machine from Session 21's 2.80 GHz: nothing
+below compares with the Session 21 tables), Linux, rustc 1.97.0, release
+profile, DuckDB 2.0.0. The workload is `scripts/bench-sql.sh`: 10M rows in
+100,000 groups, 4 threads, wall time of a fresh `duckdb` process per run. The
+two builds ran alternately (base, new, new, base, ...) so that drift in the
+shared machine hits both: 9 runs per query and build, 25 for the one query that
+moved in one direction (`sessionize`). Every pair of runs returned the same
+result.
+
+**SQL, seconds, median [min, max]:**
+
+| Query | Base | New | New / base |
+|---|---|---|---|
+| `window_funnel`, 100k groups | 1.159 [1.042, 1.392] | 1.073 [0.993, 1.406] | 0.93 |
+| `window_funnel_events`, 100k groups | 0.975 [0.967, 1.043] | 1.016 [0.961, 1.089] | 1.04 |
+| `sequence_count`, 100k groups | 1.170 [1.082, 1.314] | 1.198 [1.061, 1.465] | 1.02 |
+| `sequence_match_events`, 100k groups | 1.159 [1.024, 1.207] | 1.099 [1.061, 1.209] | 0.95 |
+| `sequence_next_node`, 100k groups | 2.516 [2.339, 2.942] | 2.600 [2.434, 2.933] | 1.03 |
+| `retention`, 100k groups | 0.266 [0.239, 0.312] | 0.259 [0.241, 0.289] | 0.97 |
+| `sessionize`, `PARTITION BY u ORDER BY ts` (9 runs) | 1.416 [1.349, 1.574] | 1.511 [1.390, 1.572] | 1.07 |
+| `sessionize`, same (25 runs) | 1.391 [1.296, 1.525] | 1.423 [1.305, 1.575] | 1.02 |
+| `window_funnel`, one 10M-row group | 0.405 [0.379, 0.464] | 0.413 [0.385, 0.483] | 1.02 |
+
+**Result.** No query changed beyond the spread of repeated runs. The 9-run
+`sessionize` median moved 7% with fully overlapping ranges; 25 runs put it at
+2%, also inside the ranges, so the ordering check costs less than the noise of
+this machine. Absolute times here are lower than Session 21's for the same
+queries although this CPU is slower: another reason not to compare across
+machines.
+
+**The cliff this session found.** `window_funnel` with `strict_once`, 64,000
+rows, 2,000 timestamps with 32 rows each, 31 conditions true, one thread:
+9.80, 10.58, 10.70 s before the change and 0.66, 0.65, 0.56 s after (three runs
+each, same machine, same result). The matcher answered "can steps lo..hi each
+get a distinct event of this timestamp group, none of them event e?" with one
+bipartite matching per (range, e), so the cost was about steps^4 regardless of
+the group size. Events with equal conditions inside the range are
+interchangeable, so the cache key is now (lo, hi, conditions of e within the
+range); `equal_events_share_cache_entries` counts 400 cache entries on the old
+key and 2 on the new one. Other modes took 0.2 to 0.4 s on the same input. The
+Criterion benchmarks never exercised `strict_once` with simultaneous events, which is
+why no earlier session saw it.
 
 ## Current Baseline
 

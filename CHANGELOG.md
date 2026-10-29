@@ -7,11 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No change to the SQL surface. Two results change: `sequence_match('.*')` over a
-group whose rows carry no true condition is now true, and a `sequence_next_node`
-allocation failure is now a SQL error.
+No change to the SQL surface (540 overloads). Four results change:
+`sequence_match('.*')` over a group whose rows carry no true condition is now
+true; a `sequence_next_node` allocation failure is now a SQL error;
+`sessionize` over a window that is not ordered by ascending timestamp is now an
+error instead of a silently wrong session ID; and the conflicting-mode error
+names `strict_deduplication` instead of its alias `strict`.
 
 ### Fixed
+
+- `window_funnel` with `strict_once` took seconds on a timestamp that many rows
+  share when their conditions overlap: every (step, excluded event) pair was
+  matched separately, so the cost was about steps^4 whatever the group size.
+  `window_funnel(INTERVAL 1 hour, 'strict_once', ts, <31 true>, false)` over
+  64,000 rows with 32 rows per timestamp, one thread: 9.8, 10.6, 10.7 s before,
+  0.66, 0.65, 0.56 s after (same result; shared 4-vCPU machine, three runs
+  each). Events whose conditions agree inside the step range are
+  interchangeable, so the cache is keyed on the excluded event's conditions.
+- `sessionize` with `OVER (ORDER BY ts DESC)`, or ordered by another column,
+  returned a session per row without an error. It now raises `sessionize: rows
+  must arrive in ascending timestamp order`. The same error replaces the wrong
+  counts of `sessionize` as a plain aggregate (no `OVER`), where DuckDB merges
+  per-thread states in any order: 1,000,000 sorted minutes with a 2-minute gap
+  returned 8 or 9 sessions at four threads instead of 1, and now returns 1 or
+  the error. All 28 window frames of an audit matrix (ROWS, RANGE, GROUPS, every
+  `EXCLUDE`) still match a list-based reference at 1 and 4 threads.
+- `sequence_next_node` compared its direction and base strings byte by byte on
+  every row (a 20 MB padded direction over 5,000 rows: 5-8.7 s); it now compares
+  the 16-byte string slot like the other functions.
+- The release workflow's "SQL logic tests" step set `DUCKDB_PLATFORM=linux_amd64`,
+  which extension-ci-tools turns into a no-op, so the release gate never ran
+  `test/sql` on its main platform.
+- The documentation said `TIMESTAMP_NS` is truncated to microseconds (DuckDB 2.0.0
+  rounds), that `(?1)(?2)` means no intervening events (rows matching no
+  condition are dropped first), that `SET allow_unsigned_extensions` works inside
+  a session (it errors), and showed two wrong results on the demo page.
 
 - `sequence_next_node` aborted the process (SIGABRT, "memory allocation of 24
   bytes failed") when it ran out of memory collecting events; every other
@@ -25,6 +55,25 @@ allocation failure is now a SQL error.
   months; it now says the value does not fit in 64-bit microseconds.
 
 ### Changed
+
+- The in-process extension-load tests are behind a new `e2e` feature, so a fresh
+  clone runs `cargo test --lib` (541 tests) with no libduckdb and no arrow build;
+  everything is `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`. The explicit
+  `duckdb` dev-dependency (named in no source file) is gone; `Cargo.lock`
+  changes by one line and the release dependency graph is unchanged.
+- CI: nextest runs `--lib --tests` (it ran the Criterion benchmarks as tests at
+  full scale), the benchmark-compile job is gone (clippy type-checks them), the
+  gate no longer waits for coverage, and `wasm-check` became `cross-check`
+  (also Windows x86_64, macOS x86_64, Linux ARM64). A stable release tag must be
+  a commit of `main` on which `CI Gate` passed, and a build that changes
+  `Cargo.lock` fails. `deny.toml` denies unknown registries and git sources.
+- DuckDB 1.4.5 joins the compat matrix (the community channel builds 1.4.5,
+  1.5.6 and 2.0.0). On it, as on 1.4.4, the duckdb/duckdb#26109 shapes crash;
+  the fix (duckdb/duckdb#26455) is on the 2.0 line only.
+- `FunnelMode::STRICT` is `STRICT_DEDUPLICATION` and the old
+  `STRICT_DEDUPLICATION` is `TIMESTAMP_DEDUP`, matching the SQL names (internal).
+- `SECURITY.md` and the security page ask for a private advisory, not a public
+  issue. The GitHub Linux archive needs glibc 2.34 (the community build, 2.28).
 
 - `sequence_next_node` keeps a state's values in one byte buffer, and each event
   is a 24-byte record with a range into it (a value equal to the previous
@@ -49,6 +98,21 @@ allocation failure is now a SQL error.
   zizmor findings 264 (39 high) to 25 (none medium or high).
 
 ### Added
+
+- `scripts/check-docs.py` (CI, `check.sh`): fails on a stale unit, integration,
+  property-test, directive or compat-query count, a CI release list that omits
+  a release in `e2e.yml`, a broken link or anchor, a page missing from
+  `SUMMARY.md`, a demo result that differs from `test/sql/git_mining.test`, or a
+  release version in a command-line example that differs from `Cargo.toml`.
+- `fuzz/`: cargo-fuzz targets for the parser, the sequence matcher and the funnel,
+  run weekly.
+- Tests: the duckdb/duckdb#26109 shapes on all eight functions in-process, in
+  `compat-check.sh` and in `nightly-smoke.py` (2.x only); `sessionize` against a
+  list reference in nine window frames over 3,000-row partitions; the plain-
+  aggregate `sessionize` invariant; awkward `sequence_next_node` values (NUL,
+  empty, multi-byte, 100 kB); long patterns (28-69 steps, 65-299 events) against
+  the backtracking reference; strict_once candidate truncation against brute
+  force; a guard that the Makefile's C API version equals quack-rs's.
 
 - `src/oracle_tests.rs`: `window_funnel` against an exhaustive reference, and
   order, split, combine-tree, fresh-target and double-finalize invariance for
