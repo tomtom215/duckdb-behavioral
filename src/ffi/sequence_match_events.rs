@@ -19,8 +19,9 @@ use quack_rs::types::{LogicalType, TypeId};
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
-/// Maximum number of boolean condition parameters for sequence functions.
-const MAX_CONDITIONS: usize = 32;
+/// Maximum number of boolean condition parameters: one per bit of an
+/// [`Event`](crate::common::event::Event)'s condition mask.
+const MAX_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 // Note: AggregateState for SequenceState is implemented in ffi/sequence.rs.
 
@@ -81,8 +82,10 @@ quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, coun
     combine_impl(call, "sequence_match_events");
 });
 
-// Each list entry holds the matched condition timestamps: empty on no match or
-// a NULL pattern; any other error (an invalid pattern) aborts the query.
+// Each list entry holds the matched condition timestamps: the longest partial
+// chain when the pattern does not match (empty when no step matched, and for
+// a group without usable rows or a NULL pattern); any other error (an invalid
+// pattern) aborts the query.
 quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
     // SAFETY: see above.
     let Finalize {

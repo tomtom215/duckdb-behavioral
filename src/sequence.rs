@@ -172,7 +172,8 @@ impl SequenceState {
     /// Executes `sequence_match_events` — returns timestamps of matched `(?N)` steps.
     ///
     /// Returns a vector of timestamps, one per `(?N)` condition step in the pattern.
-    /// If the pattern does not match, returns an empty vector.
+    /// If the pattern does not match, returns the longest partial chain the
+    /// search reached (empty when not even the first step matched).
     ///
     /// # Errors
     ///

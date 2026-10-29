@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
-/// Maximum number of boolean condition parameters for sequence functions.
-const MAX_CONDITIONS: usize = 32;
+/// Maximum number of boolean condition parameters: one per bit of an
+/// [`Event`](crate::common::event::Event)'s condition mask.
+const MAX_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 impl quack_rs::aggregate::AggregateState for SequenceState {}
 
@@ -198,8 +199,12 @@ fn quote_pattern(pattern: &str) -> String {
 /// Update shared by `sequence_match`, `sequence_count` and
 /// `sequence_match_events`: columns (VARCHAR pattern, TIMESTAMP, BOOLEAN...).
 ///
-/// A row with a `NULL` timestamp is skipped entirely, pattern included, so a
-/// group whose timestamps are all `NULL` finalizes like an empty group. The
+/// A row with a `NULL` timestamp is skipped entirely, so a group whose
+/// timestamps are all `NULL` finalizes like an empty group. A row with a
+/// `NULL` pattern still contributes its event: the pattern is configuration
+/// for the whole group, and `NULL` means "not given on this row", so one
+/// non-`NULL` pattern in the group applies to every row (a group with no
+/// pattern at all finalizes to `NULL`). The
 /// first pattern a state sees is parsed and validated (a malformed pattern
 /// aborts the query with the parser's position-annotated message); a
 /// different pattern later in the group is an error. `func` names the SQL

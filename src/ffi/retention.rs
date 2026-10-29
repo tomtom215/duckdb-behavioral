@@ -18,8 +18,9 @@ use quack_rs::types::{LogicalType, TypeId};
 
 /// Minimum number of boolean condition parameters for retention.
 const MIN_CONDITIONS: usize = 2;
-/// Maximum number of boolean condition parameters for retention.
-const MAX_CONDITIONS: usize = 32;
+/// Maximum number of boolean condition parameters: one per bit of the
+/// state's mask.
+const MAX_CONDITIONS: usize = crate::retention::MAX_CONDITIONS;
 
 impl quack_rs::aggregate::AggregateState for RetentionState {}
 

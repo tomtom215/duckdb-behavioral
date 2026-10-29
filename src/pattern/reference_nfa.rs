@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
-//! The original backtracking NFA matcher, kept verbatim as a test oracle.
+//! The original backtracking NFA matcher, kept as a test oracle.
 //!
 //! Production matching lives in [`super::executor`]; it replaced this search
 //! because the lazy depth-first exploration re-visits the same suffixes from
@@ -16,9 +16,6 @@ use crate::common::timestamp::MICROS_PER_SECOND;
 use crate::pattern::executor::MatchResult;
 use crate::pattern::parser::{CompiledPattern, PatternError, PatternStep, TimeOp};
 
-/// Maximum number of active NFA states before aborting execution.
-/// Prevents pathological patterns (e.g., `.*.*.*.*`) from consuming
-/// unbounded memory.
 /// Floor for the NFA exploration budget. The effective per-start budget
 /// scales with input size (see [`nfa_budget`]); this floor covers tiny
 /// inputs with adversarial patterns.
@@ -51,7 +48,8 @@ fn budget_error(num_events: usize, num_steps: usize) -> PatternError {
     }
 }
 
-/// (see the `TimeConstraint` arms): returns `(advance_pattern, skip_event)`.
+/// Evaluates one time gate for the `TimeConstraint` arms: returns
+/// `(advance_pattern, skip_event)`.
 ///
 /// Events are sorted, so the true elapsed time is non-negative and (even
 /// spanning ±infinity timestamps) fits in u64; `wrapping_sub` reinterpreted
@@ -276,9 +274,10 @@ fn try_match_from(
 /// Executes a compiled pattern and returns matched condition timestamps.
 ///
 /// Returns timestamps for `(?N)` condition steps only (not `.`, `.*`, or
-/// time constraints). Returns `Some(vec![ts1, ts2, ...])` if the pattern
-/// matches, `None` if no match is found. Events must be sorted by
-/// timestamp (ascending) before calling.
+/// time constraints). Returns the timestamps of the first completed match,
+/// or of the longest partial chain when none completes (empty when not even
+/// the first step matched). Events must be sorted by timestamp (ascending)
+/// before calling.
 pub fn execute_pattern_events(
     pattern: &CompiledPattern,
     events: &[Event],

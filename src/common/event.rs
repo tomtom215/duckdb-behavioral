@@ -3,8 +3,8 @@
 
 //! Event types shared across behavioral analytics functions.
 //!
-//! Several functions (`window_funnel`, `sequence_match`, `sequence_count`)
-//! accumulate timestamped events with boolean conditions during aggregation.
+//! Several functions (`window_funnel`, `window_funnel_events`, `sequence_match`,
+//! `sequence_count`, `sequence_match_events`) accumulate timestamped events with boolean conditions during aggregation.
 //! This module provides the shared event representation.
 //!
 //! # Bitmask Representation

@@ -17,8 +17,9 @@ use quack_rs::types::TypeId;
 
 /// Minimum number of event condition boolean parameters.
 const MIN_EVENT_CONDITIONS: usize = 1;
-/// Maximum number of event condition boolean parameters.
-const MAX_EVENT_CONDITIONS: usize = 32;
+/// Maximum number of event condition boolean parameters: one per bit of an
+/// [`Event`](crate::common::event::Event)'s condition mask.
+const MAX_EVENT_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 /// Number of fixed parameters before the variable boolean event conditions.
 ///
