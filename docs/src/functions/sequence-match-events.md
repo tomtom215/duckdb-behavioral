@@ -125,8 +125,8 @@ The last recorded benchmark (PERF.md Session 15) is 100 million events in
 1.07 s.
 
 When a pattern matches, the timestamps are those of the events that matched.
-ClickHouse's `sequenceMatchEvents` can instead report an earlier, abandoned
-attempt of the same length; see
+ClickHouse's `sequenceMatchEvents` can instead report an earlier attempt that
+matched every step but then failed a later time constraint; see
 [ClickHouse Compatibility](../internals/clickhouse-compatibility.md#known-semantic-differences).
 
 ## See Also

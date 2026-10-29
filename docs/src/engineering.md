@@ -25,7 +25,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | Feasibility-then-greedy pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 540 unit tests, 29 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
+| **Software quality** | 541 unit tests, 29 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -143,7 +143,7 @@ graph TB
 
 This architecture enables:
 
-- **Independent unit testing**: The 540 unit tests exercise Rust structs
+- **Independent unit testing**: The 541 unit tests exercise Rust structs
   directly and run in about two seconds, without loading the extension.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
@@ -164,7 +164,7 @@ graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>93.9% detected (570/607, 0.10.0 audit)<br/>cargo-mutants"]
         L2["Integration + E2E<br/>29 in-process LOAD tests<br/>8 sqllogictest files on the DuckDB CLI"]
-        L1["Unit Tests (540)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (37 proptest), mutation-guided (67)"]
+        L1["Unit Tests (541)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (37 proptest), mutation-guided (67)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -174,7 +174,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (540 tests)**
+**Level 1: Unit Tests (541 tests)**
 
 Organized by category within each module:
 
@@ -459,7 +459,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 540 |
+| Unit tests | 541 |
 | Doc-tests | 1 |
 | In-process integration tests | 29 (`tests/extension_load.rs`) |
 | SQL logic tests | 8 files: 44 `query` + 34 `statement` directives |
