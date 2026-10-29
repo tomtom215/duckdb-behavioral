@@ -917,6 +917,136 @@ fn issue_26109_query_shapes_work_on_duckdb_2() {
     }
 }
 
+/// `sequence_next_node` returns the next value byte for byte: an embedded NUL
+/// neither ends the string nor shortens it, an empty string is not `NULL`,
+/// multi-byte text survives, and a 100 kB value passes through the value
+/// buffer and into the result vector unchanged.
+#[test]
+fn sequence_next_node_returns_awkward_values_whole() {
+    let db = load_extension();
+    for value in [
+        "'a' || chr(0) || 'b'",
+        "''",
+        "'h\u{e9}llo \u{2713}'",
+        "repeat('x', 100000)",
+    ] {
+        let (same, bytes): (bool, i64) = db
+            .conn()
+            .query_row(
+                &format!(
+                    "SELECT r = ({value}), strlen(r) FROM (
+                         SELECT sequence_next_node('forward', 'head', ts, v, c, c) AS r
+                         FROM (VALUES (TIMESTAMP '2024-01-01 00:00:00', 'start', true),
+                                      (TIMESTAMP '2024-01-01 00:00:01', {value}, false))
+                              t(ts, v, c))"
+                ),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or_else(|e| panic!("value {value}: {e}"));
+        assert!(same, "value {value} was altered");
+        let expected: i64 = db.query_one(&format!("SELECT strlen({value})")).unwrap();
+        assert_eq!(bytes, expected, "value {value}");
+    }
+}
+
+/// A window ordered by descending timestamp, or by another column, used to
+/// give silently wrong session IDs (every step back in time read as a huge
+/// gap, so each row opened a session). It is now an error; ties and ascending
+/// order are not.
+#[test]
+fn sessionize_rejects_rows_out_of_timestamp_order() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE ord AS SELECT i, TIMESTAMP '2024-01-01' + to_seconds(i % 3 * 100 + i) AS ts
+         FROM range(6) t(i);",
+    )
+    .unwrap();
+    for order in ["ts DESC", "i DESC"] {
+        let err = db
+            .query_one::<i64>(&format!(
+                "SELECT sum(s) FROM (SELECT sessionize(ts, INTERVAL 10 SECOND)
+                     OVER (ORDER BY {order}) AS s FROM ord)"
+            ))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ascending timestamp order"), "{order}: {err}");
+    }
+    // Ascending order, with ties, is fine: three rows share each timestamp.
+    let sessions: i64 = db
+        .query_one(
+            "SELECT max(s) FROM (SELECT sessionize(ts, INTERVAL 10 SECOND)
+                 OVER (ORDER BY ts) AS s
+             FROM (VALUES (TIMESTAMP '2024-01-01'), (TIMESTAMP '2024-01-01'),
+                          (TIMESTAMP '2024-01-01 00:01:00')) t(ts))",
+        )
+        .unwrap();
+    assert_eq!(sessions, 2);
+}
+
+/// `sessionize` over every kind of window frame `DuckDB` offers, against a
+/// reference computed from the frame's own rows: the number of gaps above the
+/// threshold in the list of timestamps the frame holds, plus one. Running,
+/// sliding, forward-looking, `EXCLUDE`, `RANGE` and `GROUPS` frames take
+/// different paths through `DuckDB`'s window machinery (a running state, a
+/// segment tree whose nodes are combined in a different order); the
+/// partitions are large enough (3,000 rows) to need several tree levels.
+/// Timestamps are unique within a partition, so row order is not ambiguous.
+#[test]
+fn sessionize_matches_a_list_reference_in_every_window_frame() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET threads = 4;
+         CREATE TABLE ev AS SELECT i % 2 AS g,
+             TIMESTAMP '2024-01-01' + to_seconds((i * 7919) % 100003) AS ts
+         FROM range(6000) t(i);",
+    )
+    .unwrap();
+    let frames = [
+        "",
+        "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW",
+        "ROWS BETWEEN 5 PRECEDING AND CURRENT ROW",
+        "ROWS BETWEEN 10 PRECEDING AND 3 FOLLOWING",
+        "ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING",
+        "ROWS BETWEEN 2000 PRECEDING AND 1500 FOLLOWING",
+        "ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING EXCLUDE CURRENT ROW",
+        "RANGE BETWEEN INTERVAL 3000 SECOND PRECEDING AND CURRENT ROW",
+        "GROUPS BETWEEN 2 PRECEDING AND 1 FOLLOWING",
+    ];
+    for frame in frames {
+        let (mismatches, distinct): (i64, i64) = db
+            .conn()
+            .query_row(
+                &format!(
+                    "WITH got AS (
+                         SELECT g, ts, sessionize(ts, INTERVAL 30 SECOND)
+                             OVER (PARTITION BY g ORDER BY ts {frame}) AS v
+                         FROM ev),
+                     frames AS (
+                         SELECT g, ts, list(ts ORDER BY ts)
+                             OVER (PARTITION BY g ORDER BY ts {frame}) AS l
+                         FROM ev),
+                     expected AS (
+                         SELECT g, ts, CASE WHEN len(l) = 0 THEN NULL ELSE 1 + len(list_filter(
+                             range(2, len(l) + 1),
+                             lambda i: l[i] - l[i - 1] > INTERVAL 30 SECOND)) END AS e
+                         FROM frames)
+                     SELECT count(*) FILTER (WHERE got.v IS DISTINCT FROM expected.e),
+                            count(DISTINCT got.v)
+                     FROM got JOIN expected USING (g, ts)"
+                ),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or_else(|e| panic!("frame [{frame}] failed: {e}"));
+        assert_eq!(mismatches, 0, "frame [{frame}]");
+        assert!(
+            distinct > 3,
+            "frame [{frame}] produced one value: {distinct}"
+        );
+    }
+}
+
 /// The shipped release profile keeps panic containment working: every
 /// aggregate callback runs under quack-rs's `catch_unwind` guard, which
 /// `panic = "abort"` makes inert (a panic would then kill the user's `DuckDB`

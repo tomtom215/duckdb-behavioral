@@ -23,7 +23,7 @@ const VALID_MODES: &str = "'strict', 'strict_deduplication', 'strict_order', \
 /// Minimum number of boolean condition parameters for `window_funnel`.
 const MIN_CONDITIONS: usize = 1;
 /// Maximum number of boolean condition parameters: one per bit of an
-/// [`Event`](crate::common::event::Event)'s condition mask.
+/// an event's condition mask.
 const MAX_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 impl quack_rs::aggregate::AggregateState for WindowFunnelState {}

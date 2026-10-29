@@ -18,7 +18,7 @@ use quack_rs::types::{LogicalType, TypeId};
 /// Minimum number of boolean condition parameters for `window_funnel_events`.
 const MIN_CONDITIONS: usize = 1;
 /// Maximum number of boolean condition parameters: one per bit of an
-/// [`Event`](crate::common::event::Event)'s condition mask.
+/// an event's condition mask.
 const MAX_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 // Note: AggregateState for WindowFunnelState is implemented in ffi/window_funnel.rs.

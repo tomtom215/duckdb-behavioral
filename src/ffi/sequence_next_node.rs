@@ -18,7 +18,7 @@ use quack_rs::types::TypeId;
 /// Minimum number of event condition boolean parameters.
 const MIN_EVENT_CONDITIONS: usize = 1;
 /// Maximum number of event condition boolean parameters: one per bit of an
-/// [`Event`](crate::common::event::Event)'s condition mask.
+/// an event's condition mask.
 const MAX_EVENT_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 /// Number of fixed parameters before the variable boolean event conditions.
@@ -434,37 +434,5 @@ mod tests {
         // With forward/head and base_condition on A, next node after match should be B.
         let result = state.finalize();
         assert_eq!(result.as_deref(), Some("B"));
-    }
-
-    #[test]
-    fn test_next_node_null_value_handling() {
-        let mut harness = AggregateTestHarness::<SequenceNextNodeState>::new();
-        harness.update(|s| {
-            s.set_direction(Direction::Forward);
-            s.set_base(Base::Head);
-            s.num_steps = 1;
-            // Event with NULL value
-            s.update(NextNodeEvent {
-                timestamp_us: 1_000_000,
-                value: None,
-                base_condition: true,
-                conditions: 0b1,
-            });
-        });
-
-        let mut state = harness.finalize();
-        // NULL value should be preserved through the pipeline.
-        let result = state.finalize();
-        // With only a base match but no next node, result is None.
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_next_node_interior_null_bytes() {
-        // VectorWriter::write_varchar uses duckdb_vector_assign_string_element_len
-        // which copies exactly `len` bytes — interior null bytes are preserved
-        // transparently without needing CString sanitization.
-        let value_with_null = "hello\0world";
-        assert_eq!(value_with_null.len(), 11);
     }
 }

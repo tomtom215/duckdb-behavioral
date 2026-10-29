@@ -19,7 +19,7 @@ use std::sync::Arc;
 /// Minimum number of boolean condition parameters for sequence functions.
 const MIN_CONDITIONS: usize = 2;
 /// Maximum number of boolean condition parameters: one per bit of an
-/// [`Event`](crate::common::event::Event)'s condition mask.
+/// an event's condition mask.
 const MAX_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 impl quack_rs::aggregate::AggregateState for SequenceState {}

@@ -120,6 +120,19 @@ fn update(call: Update<SessionizeBoundaryState>) {
             }
         }
 
+        // Rows of one state arrive in window order. A timestamp below the
+        // previous one means the window is not ordered by ascending
+        // timestamp (`ORDER BY ts DESC`, or another column); the gap check
+        // would read every such step as a huge gap and open a session per
+        // row, silently. Ties are fine.
+        if state.last_ts.is_some_and(|prev| timestamp_us < prev) {
+            info.set_error(
+                "sessionize: rows must arrive in ascending timestamp order; use \
+                 OVER (... ORDER BY <timestamp column>) with an ascending order",
+            );
+            return;
+        }
+
         state.update(timestamp_us);
     }
 }

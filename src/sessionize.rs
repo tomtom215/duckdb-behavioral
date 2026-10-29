@@ -35,7 +35,10 @@
 //! an unsigned number; a descending order therefore reads every gap as huge and
 //! opens a session per row, and an unordered `GROUP BY` gives unspecified
 //! counts. A plain aggregate (`GROUP BY`) is not ordered by `DuckDB` and its
-//! result depends on scan order and thread count; use the window form.
+//! result depends on scan order and thread count; use the window form. The
+//! FFI `update` therefore rejects a row whose timestamp is below the previous
+//! row's in the same state (an error, not a wrong answer);
+//! [`SessionizeBoundaryState::update`] itself does not check.
 //!
 //! The `combine` operation is O(1) — it merges two adjacent segments by checking
 //! if the gap between `left.last_ts` and `right.first_ts` exceeds the threshold.
