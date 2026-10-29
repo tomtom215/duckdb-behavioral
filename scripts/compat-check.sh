@@ -157,8 +157,24 @@ check thread-determinism '997,0,0' "
          (SELECT count(*) FROM (SELECT * FROM r1 EXCEPT SELECT * FROM r4)),
          (SELECT count(*) FROM (SELECT * FROM r4 EXCEPT SELECT * FROM r1))"
 
+# Query shapes that crash every C API aggregate before DuckDB 2.0.0
+# (duckdb/duckdb#26109; fixed on the 2.0 line by duckdb/duckdb#26455, not on the
+# 1.4 and 1.5 branches). On those releases the shapes kill the process, so they
+# run only where the fix is present.
+duckdb_version="$(duckdb --version 2>&1 | head -1)"
+if [[ "$duckdb_version" =~ ^v([0-9]+)\. ]] && ((BASH_REMATCH[1] >= 2)); then
+    funnel="window_funnel(INTERVAL '1 hour', ts, e = 'a', e = 'b', e = 'c'"
+    check shape-order-by-in-call 3 "SELECT $funnel ORDER BY ts) FROM $events"
+    check shape-over-empty '"[3, 3, 3]"' \
+        "SELECT list(r) FROM (SELECT $funnel) OVER () AS r FROM $events)"
+    check shape-unbounded-frame '"[3, 3, 3]"' \
+        "SELECT list(r) FROM (SELECT $funnel) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS r FROM $events)"
+    check shape-partition-without-order '"[3, 3, 3]"' \
+        "SELECT list(r) FROM (SELECT $funnel) OVER (PARTITION BY 1) AS r FROM $events)"
+fi
+
 if [[ $failures -ne 0 ]]; then
-    printf '\n%d check(s) failed against %s\n' "$failures" "$(duckdb --version 2>&1 | head -1)"
+    printf '\n%d check(s) failed against %s\n' "$failures" "$duckdb_version"
     exit 1
 fi
-printf '\nall checks passed against %s\n' "$(duckdb --version 2>&1 | head -1)"
+printf '\nall checks passed against %s\n' "$duckdb_version"

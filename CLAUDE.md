@@ -687,9 +687,15 @@ Hard-won knowledge from developing this extension. Consult before making changes
   (every one is stored at init); CI runs it on Linux (`e2e.yml`) and
   `scripts/check.sh` runs it too. The FFI-view refactor left the figures
   unchanged (76, 306). A slot at or above
-  357 forces `USE_UNSTABLE_C_API=1`, which pins the binary to one DuckDB
-  release and is what dropped v0.9.1 from the community channel when DuckDB
-  v1.5.6 shipped. With the stable stamp, `-dv` is the C API version
+  357 cannot be called from a `C_STRUCT -dv v1.2.0` binary. Slots 357-403 are
+  APIs deprecated since v1.0.0; slots 404-547 became stable only in v1.5.6, so
+  using one means stamping `-dv v1.5.6`, which refuses 1.3.2 to 1.5.5.
+  `USE_UNSTABLE_C_API=1` is worse: it pins the binary to one DuckDB release
+  and is what dropped v0.9.1 from the community channel when DuckDB v1.5.6
+  shipped; on DuckDB 2.0.0 `C_STRUCT_UNSTABLE` always means the V2 C API, so
+  a V1-entry-point binary cannot load there at all (VERIFIED: stamped with
+  `-dv v2.0.0` it fails with `did not contain function
+  "behavioral_init_c_api_v2"`; `extension_load.cpp` in DuckDB 2.0.0). With the stable stamp, `-dv` is the C API version
   (`quack_rs::DUCKDB_API_VERSION`), set by `TARGET_DUCKDB_VERSION` in the
   `Makefile`. CI's `compat` job (`e2e.yml`) loads one binary into DuckDB
   v1.3.2, v1.4.4, v1.5.0, v1.5.6 and v2.0.0. Residual risk: libduckdb-sys's init
@@ -730,8 +736,15 @@ Hard-won knowledge from developing this extension. Consult before making changes
   `CAPIAggregateUpdate` does not flatten it. The extension cannot detect it
   (reading `states[1]` is the out-of-bounds read) or refuse it (no aggregate
   bind hook in the stable C API). Valgrind shows the invalid read; the process
-  usually exits 139. VALIDATED per release with `scripts/crash-shapes.sh`
-  (`window_funnel`, 10 rows):
+  usually exits 139. Fixed upstream by duckdb/duckdb#26455 (`CAPIAggregateUpdate`
+  now flattens the state vector, `aggregate_function-c.cpp` in DuckDB 2.0.0),
+  which landed on the 2.0 line only: the heads of the `v1.4-andium` and
+  `v1.5-variegata` branches still lack it as of 2026-10-29, and the community
+  channel builds v1.4.5, v1.5.6 and 2.0.0. VALIDATED per release with
+  `scripts/crash-shapes.sh` (`window_funnel`, 10 rows); on 2.0.0 the shapes are
+  also asserted by `issue_26109_query_shapes_work_on_duckdb_2`
+  (`tests/extension_load.rs`, all 8 functions, equal to `GROUP BY`),
+  `scripts/compat-check.sh` and `scripts/nightly-smoke.py`:
 
   | Query shape | 1.3.2 | 1.4.4 | 1.5.0 | 1.5.6 | 2.0.0 |
   |---|---|---|---|---|---|
@@ -745,11 +758,19 @@ Hard-won knowledge from developing this extension. Consult before making changes
   `GROUP BY .. LIMIT`, an interrupt) are never destroyed, so `sequence_next_node`
   leaks the bytes it held; the README records the measured sizes.
 
-- **DuckDB 2.0's C API v2 is not used**: it adds an aggregate bind callback
-  (`duckdb_v2_aggregate_function_*`, which would let the extension refuse the
-  shapes above), but it is marked unstable in 2.0.0. Using it would pin the
-  binary to one release (`C_STRUCT_UNSTABLE`), the failure that removed
-  v0.9.1 from the community channel. Revisit when it joins the stable prefix.
+- **DuckDB 2.0's C API v2 is not used**: it adds an aggregate bind callback,
+  function docs/examples, variadic and named parameters, and order/distinct
+  flags (`duckdb_v2_*`), but all 620 of its functions are `unstable: v2.0.0` and
+  DuckDB 2.0.0 loads a V2 extension only on the exact release it was built for
+  (`extension.cpp`: "no V2 function is stable yet"). quack-rs 0.19.0 does not
+  generate the `<name>_init_c_api_v2` entry point either. The bind callback
+  would not have refused the crash shapes anyway: it sees argument types and
+  constants, not `ORDER BY` or `OVER`. V2 has no "stable prefix"; stability is
+  a per-function lifecycle tag, so check for `stable` tags in a new
+  `duckdb_v2.h` before reconsidering. The V1 C API has no setter for function
+  descriptions, examples, categories or parameter names, so
+  `duckdb_functions()` shows `col0, col1, ...` and blank descriptions
+  (duckdb-behavioral#94); `COMMENT ON FUNCTION` fails for native functions.
 
 - **Window usage needs no special registration**: `sessionize` is registered as
   a plain aggregate (`AggregateFunctionBuilder`); DuckDB drives any aggregate

@@ -62,16 +62,45 @@ CHECKS = [
 ]
 
 
+# Query shapes that crashed every C API aggregate before DuckDB 2.0.0
+# (duckdb/duckdb#26109, fixed by duckdb/duckdb#26455). The nightly is 2.x, so
+# a regression of the fix would kill this process rather than fail a check.
+FUNNEL = "window_funnel(INTERVAL '1 hour', ts, e = 'a', e = 'b', e = 'c'"
+CRASH_SHAPES = [
+    ("shape-order-by-in-call", f"SELECT {FUNNEL} ORDER BY ts) FROM {EVENTS}", 3),
+    (
+        "shape-over-empty",
+        f"SELECT list(r) FROM (SELECT {FUNNEL}) OVER () AS r FROM {EVENTS})",
+        [3, 3, 3],
+    ),
+    (
+        "shape-unbounded-frame",
+        f"""SELECT list(r) FROM (SELECT {FUNNEL}) OVER (ORDER BY ts
+              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS r
+            FROM {EVENTS})""",
+        [3, 3, 3],
+    ),
+    (
+        "shape-partition-without-order",
+        f"SELECT list(r) FROM (SELECT {FUNNEL}) OVER (PARTITION BY 1) AS r FROM {EVENTS})",
+        [3, 3, 3],
+    ),
+]
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__)
         return 2
     extension = sys.argv[1]
     print(f"DuckDB {duckdb.__version__}")
+    checks = list(CHECKS)
+    if int(duckdb.__version__.split(".")[0]) >= 2:
+        checks += CRASH_SHAPES
     con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
     con.execute(f"LOAD '{extension}'")
     failures = 0
-    for name, sql, expected in CHECKS:
+    for name, sql, expected in checks:
         actual = con.execute(sql).fetchone()[0]
         status = "ok  " if actual == expected else "FAIL"
         failures += actual != expected

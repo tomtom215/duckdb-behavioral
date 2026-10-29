@@ -822,6 +822,101 @@ fn window_funnel_as_windowed_aggregate() {
     assert_eq!(running, vec![1, 2, 3]);
 }
 
+/// The query shapes that crashed every C API aggregate before `DuckDB` 2.0.0
+/// (duckdb/duckdb#26109, fixed by duckdb/duckdb#26455): `ORDER BY` inside the
+/// call, `OVER ()`, `UNBOUNDED PRECEDING .. UNBOUNDED FOLLOWING`, and
+/// `OVER (PARTITION BY g)` with no `ORDER BY`. Runs all eight aggregates through
+/// each shape in-process and requires the windowed result to equal the plain
+/// `GROUP BY` result. `sessionize` is only required not to crash: its value
+/// depends on the row's place in the order, so it has no `GROUP BY` equivalent.
+///
+/// The in-process `DuckDB` is the release `libduckdb-sys` links (2.0.0). The
+/// shapes still crash 1.x releases, so the test runs only when the linked
+/// library is 2.x or later; `scripts/crash-shapes.sh` maps the older releases.
+#[test]
+fn issue_26109_query_shapes_work_on_duckdb_2() {
+    let db = load_extension();
+    let version: String = db
+        .query_one("SELECT library_version FROM pragma_version()")
+        .unwrap();
+    let major: u32 = version
+        .trim_start_matches('v')
+        .split('.')
+        .next()
+        .and_then(|m| m.parse().ok())
+        .unwrap_or_else(|| panic!("unparseable DuckDB version {version:?}"));
+    if major < 2 {
+        eprintln!("skipped: DuckDB {version} crashes on these shapes (duckdb/duckdb#26109)");
+        return;
+    }
+    db.execute_batch(
+        "CREATE TABLE t AS SELECT i % 2 AS g, TIMESTAMP '2024-01-01' + to_seconds(i) AS ts,
+            i % 2 = 0 AS a, i % 3 = 0 AS b, 'v' || i AS v FROM range(10) r(i);",
+    )
+    .unwrap();
+    // (name, arguments). The ORDER BY shape appends `ORDER BY ts` to the arguments.
+    let calls: [(&str, &str); 8] = [
+        ("sessionize", "ts, INTERVAL 5 SECOND"),
+        ("retention", "a, b"),
+        ("window_funnel", "INTERVAL 1 HOUR, ts, a, b"),
+        ("window_funnel_events", "INTERVAL 1 HOUR, ts, a, b"),
+        ("sequence_match", "'(?1).*(?2)', ts, a, b"),
+        ("sequence_count", "'(?1).*(?2)', ts, a, b"),
+        ("sequence_match_events", "'(?1).*(?2)', ts, a, b"),
+        ("sequence_next_node", "'forward', 'head', ts, v, a, a"),
+    ];
+    let windows = [
+        "OVER ()",
+        "OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)",
+        "OVER (PARTITION BY g)",
+    ];
+    for (name, args) in calls {
+        let plain = format!("{name}({args})");
+        // `ORDER BY` inside the call: one row per group, equal to the plain result.
+        let ordered: i64 = db
+            .query_one(&format!(
+                "SELECT count(*) FROM (SELECT g, {name}({args} ORDER BY ts) AS r FROM t GROUP BY g) o
+                 JOIN (SELECT g, {plain} AS r FROM t GROUP BY g) p USING (g)
+                 WHERE o.r IS NOT DISTINCT FROM p.r"
+            ))
+            .unwrap_or_else(|e| panic!("{name}: ORDER BY inside the call failed: {e}"));
+        assert_eq!(ordered, 2, "{name}: ORDER BY inside the call");
+        for window in windows {
+            let sql = format!("SELECT count(r) FROM (SELECT {plain} {window} AS r FROM t)");
+            let rows: i64 = db
+                .query_one(&sql)
+                .unwrap_or_else(|e| panic!("{name} {window} failed: {e}"));
+            // `count` skips NULL; a sessionize id is never NULL here.
+            if name == "sessionize" {
+                assert_eq!(rows, 10, "{name} {window}");
+                continue;
+            }
+            // Rows whose windowed result differs from the GROUP BY result of
+            // their partition (the whole table for the unpartitioned shapes).
+            let partitioned = window.contains("PARTITION BY g");
+            let check = if partitioned {
+                format!(
+                    "SELECT count(*) FROM (SELECT g, {plain} {window} AS r FROM t) w
+                     JOIN (SELECT g, {plain} AS r FROM t GROUP BY g) a USING (g)
+                     WHERE w.r IS DISTINCT FROM a.r"
+                )
+            } else {
+                format!(
+                    "SELECT count(*) FROM (SELECT {plain} {window} AS r FROM t) w
+                     WHERE w.r IS DISTINCT FROM (SELECT {plain} FROM t)"
+                )
+            };
+            let mismatches: i64 = db
+                .query_one(&check)
+                .unwrap_or_else(|e| panic!("{name} {window} comparison failed: {e}"));
+            assert_eq!(
+                mismatches, 0,
+                "{name} {window}: rows differing from GROUP BY"
+            );
+        }
+    }
+}
+
 /// The shipped release profile keeps panic containment working: every
 /// aggregate callback runs under quack-rs's `catch_unwind` guard, which
 /// `panic = "abort"` makes inert (a panic would then kill the user's `DuckDB`
