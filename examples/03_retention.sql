@@ -3,7 +3,7 @@
 -- Measure week-over-week retention for signup cohorts.
 -- =============================================================================
 
-CREATE OR REPLACE TABLE activity AS SELECT * FROM (VALUES
+CREATE OR REPLACE TEMP TABLE demo_activity AS SELECT * FROM (VALUES
   -- User A: active weeks 0, 1, 3
   ('alice', DATE '2024-01-01', DATE '2024-01-01'),
   ('alice', DATE '2024-01-09', DATE '2024-01-01'),
@@ -32,7 +32,7 @@ SELECT user_id, cohort_week,
     activity_date >= cohort_week + INTERVAL '14 days' AND activity_date < cohort_week + INTERVAL '21 days',
     activity_date >= cohort_week + INTERVAL '21 days' AND activity_date < cohort_week + INTERVAL '28 days'
   ) as retained
-FROM activity
+FROM demo_activity
 GROUP BY user_id, cohort_week
 ORDER BY cohort_week, user_id;
 
@@ -46,7 +46,7 @@ WITH user_retention AS (
       activity_date >= cohort_week + INTERVAL '14 days' AND activity_date < cohort_week + INTERVAL '21 days',
       activity_date >= cohort_week + INTERVAL '21 days' AND activity_date < cohort_week + INTERVAL '28 days'
     ) as r
-  FROM activity GROUP BY user_id, cohort_week
+  FROM demo_activity GROUP BY user_id, cohort_week
 )
 SELECT
   cohort_week,
@@ -64,5 +64,3 @@ SELECT
 FROM user_retention
 GROUP BY cohort_week
 ORDER BY cohort_week;
-
-DROP TABLE activity;

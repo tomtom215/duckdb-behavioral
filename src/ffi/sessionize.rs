@@ -3,9 +3,10 @@
 
 //! FFI registration for the `sessionize` aggregate/window function.
 //!
-//! `sessionize` is registered as a plain aggregate function via
-//! [`quack_rs::aggregate::AggregateFunctionBuilder`] (single fixed signature,
-//! unlike the variadic function sets used by the other modules). `DuckDB`'s
+//! `sessionize` is registered as a plain aggregate function set via
+//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`]: two overloads with the
+//! same fixed arguments, one for `TIMESTAMP` and one for `TIMESTAMPTZ` (the
+//! other modules add one overload per condition count). `DuckDB`'s
 //! windowing machinery drives any aggregate through the same
 //! update/combine/finalize callbacks when it appears in an `OVER` clause —
 //! there is no window-specific registration. The segment-tree evaluation is
@@ -13,10 +14,10 @@
 //! `current_row_null` flag propagates from the right-hand segment.
 //!
 //! Historical note: this module was hand-rolled on raw `libduckdb-sys` until
-//! quack-rs grew `AggregateFunctionBuilder` + `Registrar::register_aggregate`,
-//! whose registration performs the identical C-API call sequence (including
-//! default NULL handling, i.e. no `duckdb_aggregate_function_set_special_handling`).
-//! See `LESSONS.md` for context on the original decision.
+//! quack-rs grew its aggregate builders, whose registration performs the
+//! identical C-API call sequence (including default NULL handling, i.e. no
+//! `duckdb_aggregate_function_set_special_handling`). See `LESSONS.md` for
+//! context on the original decision.
 
 use super::view::{Combine, Finalize, I64Kind, States, Update};
 use crate::common::config::invalid_interval_message;
@@ -29,7 +30,7 @@ impl quack_rs::aggregate::AggregateState for SessionizeBoundaryState {}
 
 /// Registers the `sessionize` function with `DuckDB`.
 ///
-/// Signature: `sessionize(TIMESTAMP, INTERVAL) → BIGINT`
+/// Signature: `sessionize(TIMESTAMP | TIMESTAMPTZ, INTERVAL) → BIGINT`
 ///
 /// Used as a window function:
 /// ```sql

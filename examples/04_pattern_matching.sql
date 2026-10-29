@@ -4,7 +4,7 @@
 -- sequence_match_events.
 -- =============================================================================
 
-CREATE OR REPLACE TABLE events AS SELECT * FROM (VALUES
+CREATE OR REPLACE TEMP TABLE demo_events AS SELECT * FROM (VALUES
   -- User 1: view → cart → purchase (happy path)
   (1, TIMESTAMP '2024-01-15 10:00:00', 'page_view'),
   (1, TIMESTAMP '2024-01-15 10:05:00', 'add_to_cart'),
@@ -31,7 +31,7 @@ SELECT user_id,
     event_type = 'page_view',
     event_type = 'purchase'
   ) as viewed_then_purchased
-FROM events GROUP BY user_id ORDER BY user_id;
+FROM demo_events GROUP BY user_id ORDER BY user_id;
 
 -- Pattern 2: View then purchase within 1 hour
 SELECT '--- Within 1 Hour ---' as section;
@@ -40,7 +40,7 @@ SELECT user_id,
     event_type = 'page_view',
     event_type = 'purchase'
   ) as converted_within_hour
-FROM events GROUP BY user_id ORDER BY user_id;
+FROM demo_events GROUP BY user_id ORDER BY user_id;
 
 -- Pattern 3: Count view→cart cycles
 SELECT '--- Browse-Cart Cycles ---' as section;
@@ -49,7 +49,7 @@ SELECT user_id,
     event_type = 'page_view',
     event_type = 'add_to_cart'
   ) as browse_cart_cycles
-FROM events GROUP BY user_id ORDER BY user_id;
+FROM demo_events GROUP BY user_id ORDER BY user_id;
 
 -- Pattern 4: Get timestamps of matched 3-step sequence
 SELECT '--- Matched Timestamps ---' as section;
@@ -59,6 +59,4 @@ SELECT user_id,
     event_type = 'add_to_cart',
     event_type = 'purchase'
   ) as step_timestamps
-FROM events GROUP BY user_id ORDER BY user_id;
-
-DROP TABLE events;
+FROM demo_events GROUP BY user_id ORDER BY user_id;

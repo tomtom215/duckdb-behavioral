@@ -73,8 +73,7 @@ Conditions are tracked as a `u32` bitmask, where bit `i` is set when condition
 | Finalize | O(k) |
 | Space | O(1) -- a single `u32` bitmask |
 
-At benchmark scale, `retention` combines **100 million states in 274 ms**
-(365 Melem/s).
+Measured throughput is on the [Performance](../internals/performance.md) page.
 
 ## See Also
 

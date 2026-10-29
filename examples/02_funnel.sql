@@ -3,7 +3,7 @@
 -- Track user progress through a purchase funnel and generate a drop-off report.
 -- =============================================================================
 
-CREATE OR REPLACE TABLE events AS SELECT * FROM (VALUES
+CREATE OR REPLACE TEMP TABLE demo_events AS SELECT * FROM (VALUES
   -- User 1: completes full funnel
   (1, TIMESTAMP '2024-01-15 10:00:00', 'page_view'),
   (1, TIMESTAMP '2024-01-15 10:05:00', 'add_to_cart'),
@@ -37,7 +37,7 @@ SELECT user_id,
     event_type = 'checkout',
     event_type = 'purchase'
   ) as furthest_step
-FROM events
+FROM demo_events
 GROUP BY user_id
 ORDER BY user_id;
 
@@ -51,7 +51,7 @@ WITH funnels AS (
       event_type = 'checkout',
       event_type = 'purchase'
     ) as step
-  FROM events GROUP BY user_id
+  FROM demo_events GROUP BY user_id
 )
 SELECT
   step as reached_step,
@@ -70,8 +70,6 @@ SELECT user_id,
     event_type = 'checkout',
     event_type = 'purchase'
   ) as step_strict
-FROM events
+FROM demo_events
 GROUP BY user_id
 ORDER BY user_id;
-
-DROP TABLE events;

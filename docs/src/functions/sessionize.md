@@ -23,8 +23,11 @@ sessionize(timestamp TIMESTAMP, gap INTERVAL) -> BIGINT
 `sessionize` is an aggregate designed to be used as a window function with
 `OVER (PARTITION BY ... ORDER BY timestamp)`. Order the window by the
 timestamp, ascending, and keep the default frame (or any frame ending at
-`CURRENT ROW`). Descending order is not supported: every gap reads as enormous
-and every row opens a session. On DuckDB before 2.0.0 do not use `OVER ()`, a
+`CURRENT ROW`): the ID counts sessions from the start of the frame, so a frame
+that starts at `UNBOUNDED PRECEDING` gives IDs that are stable across the
+partition. A descending order, or an order by another column, is an error
+(`sessionize: rows must arrive in ascending timestamp order`); it used to
+return a session per row without a word. On DuckDB before 2.0.0 do not use `OVER ()`, a
 `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frame, or a window with
 only a `PARTITION BY`: DuckDB crashes on those for every C API aggregate
 ([FAQ](../faq.md#which-query-shapes-crash-duckdb)). Without `OVER` it is an
@@ -48,8 +51,8 @@ FROM events;
   must strictly exceed the threshold.
 - The threshold may differ per row: each row is compared with its own gap.
 - Gaps touching DuckDB's `±infinity` timestamps are computed exactly.
-- With a descending `ORDER BY`, gaps are never positive and every row starts
-  a new session; order ascending.
+- A row whose timestamp is below the previous row's in the same window raises
+  an error; order ascending. Equal timestamps are fine.
 
 ### Example
 
@@ -75,9 +78,13 @@ silently sessionizing with a zero threshold:
 
 With a frame ending at the current row (the default), a `NULL` timestamp
 produces a `NULL` session ID for that row. The rule follows the frame's last
-row, so with a frame that ends elsewhere (`... AND 1 FOLLOWING`) it applies to
-that row instead. A row whose gap is `NULL` is left out of the session chain
-and receives the current session ID (`NULL` if no earlier row counted).
+row, so with a frame that ends elsewhere it applies to that row instead: over
+`ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` with the `NULL`
+timestamps sorted last (`NULLS LAST`) every row of the partition is `NULL`, and
+sorted first every row, the `NULL` ones too, gets the last session's ID. Keep
+`NULL` timestamps out of such windows (`WHERE ts IS NOT NULL`). A row whose gap
+is `NULL` is left out of the session chain and receives the current session ID
+(`NULL` if no earlier row counted).
 
 
 ### Timestamp types
@@ -87,8 +94,9 @@ the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
 session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
 local time, which can reorder events around a daylight-saving change.
 `TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
-`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
-microsecond apart become ties.
+`TIMESTAMP_NS` is too, converted to microseconds by DuckDB's cast (truncated
+up to 1.5.6, rounded to the nearest microsecond in 2.0.0): events less than a
+microsecond apart can become ties.
 
 ## Implementation
 
@@ -103,8 +111,7 @@ which enables efficient evaluation via DuckDB's segment tree windowing machinery
 | Finalize | O(1) |
 | Space | O(1) per partition segment |
 
-At benchmark scale, `sessionize` processes **1 billion rows in 1.20 seconds**
-(830 Melem/s).
+Measured throughput is on the [Performance](../internals/performance.md) page.
 
 ## See Also
 

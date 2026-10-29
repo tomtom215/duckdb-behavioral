@@ -105,6 +105,7 @@ optional "Shell scripts" shellcheck shellcheck scripts/*.sh
 optional "Workflow lint" actionlint actionlint
 optional "Workflow security" zizmor zizmor --offline --no-progress --min-severity medium .github
 check "License headers" scripts/add-spdx-headers.sh --check
+check "Documentation consistency" python3 -I scripts/check-docs.py
 
 echo
 printf 'Results: %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"

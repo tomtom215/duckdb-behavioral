@@ -87,7 +87,7 @@ the call, and `GROUP BY` is the normal way to use all but `sessionize`.
 
 One binary serves every DuckDB release: it uses only DuckDB's stable C API
 (stamped `C_STRUCT`, C API v1.2.0), and CI loads the same build into DuckDB 1.3.2,
-1.4.4, 1.5.0, 1.5.6 and 2.0.0 and asserts the results. To build from source:
+1.4.4, 1.4.5, 1.5.0, 1.5.6 and 2.0.0 and asserts the results. To build from source:
 
 ```bash
 git submodule update --init --recursive
@@ -260,8 +260,9 @@ extensions:
   aggregate first; a long-lived process that runs such queries repeatedly will
   grow. This is DuckDB's behaviour for every aggregate that owns heap memory.
 - **`sessionize` needs an ordered window.** Use `OVER (… ORDER BY ts)` with an
-  ascending order: a descending order opens a session on every row, and as a
-  plain `GROUP BY` aggregate the result depends on scan order and thread count.
+  ascending order: a descending order, or another column, is an error
+  (`rows must arrive in ascending timestamp order`), and as a plain `GROUP BY`
+  aggregate the result depends on scan order and thread count.
 - **Running window frames are quadratic.** In `OVER (ORDER BY ts)` every row is a
   separate aggregate over all earlier rows, and DuckDB holds about 2,048 such
   frames at once: one 40,000-row partition took 11–12 s and 1.2 GB for
@@ -359,7 +360,7 @@ microseconds with `(?t)` thresholds in seconds, windows are `INTERVAL`s, and
 |---|---|
 | Unit tests | 541, plus 1 doc-test, including 37 property tests (proptest). The `window_funnel` engine is compared with an exhaustive reference and every state with order- and combine-tree-invariance checks (`src/oracle_tests.rs`) |
 | Integration tests | 29, in process: the release library is loaded into a real DuckDB and every function runs through SQL, including error paths, `±infinity` timestamps, and parallel determinism |
-| End-to-end | `make test_release` (8 SQL logic files in `test/sql/`) and 21 asserted queries (`scripts/compat-check.sh`) on Linux and macOS, then the same build in DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
+| End-to-end | `make test_release` (8 SQL logic files in `test/sql/`) and 21 asserted queries (`scripts/compat-check.sh`) on Linux and macOS, then the same build in DuckDB 1.3.2, 1.4.4, 1.4.5, 1.5.0 and 1.5.6 |
 | Differential | Against ClickHouse, see above |
 | Mutation testing | cargo-mutants: 93.9% of viable mutants detected across the 9 non-FFI modules (0.10.0 audit, before the test changes in this release) |
 | Lints | Clippy pedantic + nursery + cargo groups with `-D warnings`; `unsafe_code` denied outside `src/ffi`, every `unsafe` block one operation with a `// SAFETY:` note (lint-enforced) |
@@ -369,7 +370,8 @@ microseconds with `(?t)` thresholds in seconds, windows are `INTERVAL`s, and
 ## Building and contributing
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test    # tests link a prebuilt libduckdb, no C++ build
+cargo test --lib                    # unit tests: no libduckdb, no C++ build
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features   # + loads the build into a real DuckDB
 ./scripts/check.sh                  # everything CI runs that works offline
 make configure release test_release # the extension, as the community CI builds it
 ```

@@ -18,7 +18,7 @@ Brief description of what this PR does and why.
 
 ## Testing
 
-- [ ] `cargo test` passes (541 unit + 29 integration + 1 doc-test)
+- [ ] `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features` passes (541 unit + 33 integration + 1 doc-test)
 - [ ] `cargo clippy --all-targets` produces zero warnings
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo doc --no-deps` builds without warnings

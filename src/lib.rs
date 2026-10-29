@@ -61,10 +61,10 @@ quack_rs::entry_point_v2!(behavioral_init_c_api, |con| {
 #[cfg(test)]
 mod build_metadata_tests {
     /// The community Makefile stamps the binary with `TARGET_DUCKDB_VERSION`,
-    /// the C API version DuckDB checks at `LOAD`; quack-rs asks DuckDB for
-    /// `DUCKDB_API_VERSION` when the extension initialises. A mismatch makes
-    /// DuckDB refuse or mis-handle the binary, and nothing else notices
-    /// until a release is loaded.
+    /// the C API version `DuckDB` checks at `LOAD`; `quack_rs` asks `DuckDB`
+    /// for `DUCKDB_API_VERSION` when the extension initialises. A mismatch
+    /// makes `DuckDB` refuse or mis-handle the binary, and nothing else
+    /// notices until a release is loaded.
     #[test]
     fn makefile_stamps_the_c_api_version_quack_rs_requests() {
         let makefile = include_str!("../Makefile");

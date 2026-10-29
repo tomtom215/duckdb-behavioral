@@ -210,21 +210,12 @@ page for the full parity matrix.
 
 ## Performance
 
-The numbers below are
-[Criterion.rs](https://bheisler.github.io/criterion.rs/book/) microbenchmarks
-of the Rust aggregate state (update/combine/finalize), not end-to-end SQL
-queries, with 95% confidence intervals. They are the PERF.md Session 15
-headline numbers, recorded before v0.8.0 and not re-measured since.
-
-| Function | Scale | Wall Clock | Throughput |
-|---|---|---|---|
-| **`sessionize_update`** | **1 billion events** | **1.20 s** | **830 Melem/s** |
-| **`retention_combine`** | **100 million states** | **274 ms** | **365 Melem/s** |
-| `window_funnel_finalize` | 100 million events | 791 ms | 126 Melem/s |
-| `sequence_match` | 100 million events | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million events | 1.18 s | 85 Melem/s |
-| `sequence_match_events` | 100 million events | 1.07 s | 93 Melem/s |
-| `sequence_next_node` | 10 million events | 546 ms | 18 Melem/s |
+The [Performance](./internals/performance.md) page has the measured numbers:
+Criterion.rs microbenchmarks of the Rust aggregate state (update, combine,
+finalize) with 95% confidence intervals, and end-to-end SQL timings from
+`scripts/bench-sql.sh` (10 million rows in 100,000 groups), each with the
+machine and the build. They are quoted there and in the README and nowhere
+else, so they cannot disagree.
 
 Key design choices that enable this performance:
 
@@ -255,11 +246,11 @@ For a comprehensive technical overview, see the
 | Area | Highlights |
 |---|---|
 | **Language & Safety** | Pure Rust core with `unsafe` confined to the FFI bridge (`src/ffi/`, 10 files). Aggregate callbacks wrapped by quack-rs `aggregate_*_callback!` macros, which turn a panic into a SQL error. Zero clippy warnings under pedantic, nursery, and cargo lint groups. |
-| **Testing Rigor** | 541 unit tests, 29 in-process integration tests that `LOAD` the built extension, 78 sqllogictest directives (44 `query` + 34 `statement`) across 8 SQL test files run against the DuckDB CLI, 37 property-based tests (proptest), 88.4% mutation kill rate (cargo-mutants, measured on v0.4.x and not re-measured since). |
+| **Testing Rigor** | 541 unit tests, 33 in-process integration tests that `LOAD` the built extension, 78 sqllogictest directives (44 `query` + 34 `statement`) across 8 SQL test files run against the DuckDB CLI, 37 property-based tests (proptest), 88.4% mutation kill rate (cargo-mutants, measured on v0.4.x and not re-measured since). |
 | **Performance** | Optimization sessions recorded in [PERF.md](https://github.com/tomtom215/duckdb-behavioral/blob/main/PERF.md) with before/after Criterion.rs measurements and 95% confidence intervals, including a 1-billion-event `sessionize_update` benchmark and five documented negative results. |
 | **Algorithm Design** | Custom pattern engine with recursive descent parser, fast-path classification, and a feasibility-then-greedy matcher differentially tested against a backtracking reference. Bitmask-based retention with O(1) combine. |
 | **Database Internals** | DuckDB C API integration via [quack-rs](https://crates.io/crates/quack-rs) SDK with safe builders, state management, and vector I/O. Variadic signatures registered as function sets (31 overloads for `retention`, 62 each for `sequence_match`/`sequence_count`/`sequence_match_events`, 128 each for `window_funnel`/`window_funnel_events`, 64 for `sequence_next_node`; every timestamp argument takes `TIMESTAMP` or `TIMESTAMPTZ`). Stable C API (v1.2.0): one binary loads into DuckDB 1.3.2 through 2.0.0. Correct combine semantics for segment tree windowing. |
-| **CI/CD** | 14 CI jobs (incl. a DuckDB-WASM compile check), 4-platform release builds, SemVer validation, artifact attestation, MSRV verification. |
+| **CI/CD** | 11 CI jobs (incl. compile checks for Windows, macOS x86_64, Linux ARM64 and DuckDB-WASM), 4-platform release builds that must come from a CI-green commit of `main`, SemVer validation, artifact attestation, MSRV verification. |
 | **Feature Completeness** | All six ClickHouse behavioral functions (source-verified semantics) plus `sessionize` and `window_funnel_events`: 6 combinable funnel modes, 32-condition support, time-constrained pattern syntax. |
 
 ---
@@ -285,7 +276,7 @@ For a comprehensive technical overview, see the
 
 ## Requirements
 
-- **DuckDB 1.3.2 or later** (built against 2.0.0; stable C API, so one binary serves every release CI checks: 1.3.2, 1.4.4, 1.5.0, 1.5.6, 2.0.0)
+- **DuckDB 1.3.2 or later** (built against 2.0.0; stable C API, so one binary serves every release CI checks: 1.3.2, 1.4.4, 1.4.5, 1.5.0, 1.5.6, 2.0.0)
 - **Rust 1.88+** (MSRV) for building from source
 - Python 3 and `make` for `make configure release` (stamps the metadata footer)
 

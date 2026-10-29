@@ -134,8 +134,8 @@ and time constraints.
 | Pattern | Description |
 |---|---|
 | `(?N)` | Match an event where condition N (1-indexed) is true |
-| `.` | Match exactly one event (any conditions) |
-| `.*` | Match zero or more events (any conditions) |
+| `.` | Match exactly one stored event (a row with at least one true condition) |
+| `.*` | Match zero or more stored events |
 | `(?t>=N)` | At least N seconds since previous match |
 | `(?t<=N)` | At most N seconds since previous match |
 | `(?t>N)` | More than N seconds since previous match |
@@ -149,7 +149,8 @@ and time constraints.
 -- User viewed then purchased (any events in between)
 '(?1).*(?2)'
 
--- User viewed then purchased with no intervening events
+-- User viewed then purchased with no stored event in between (rows with no
+-- true condition are dropped first; add a final `true` condition to count them)
 '(?1)(?2)'
 
 -- User viewed, then purchased within 1 hour (3600 seconds)
@@ -238,7 +239,8 @@ aggregate with `OVER (PARTITION BY ... ORDER BY ...)`.
 ### Do I need to set any experimental flags?
 
 No. In ClickHouse, `sequenceNextNode` requires
-`SET allow_experimental_funnel_functions = 1`. In `duckdb-behavioral`, all eight
+`SET enable_funnel_functions = 1` (formerly `allow_experimental_funnel_functions`,
+which is still accepted). In `duckdb-behavioral`, all eight
 functions are available immediately after loading the extension, with no
 experimental flags required.
 
@@ -354,19 +356,17 @@ GROUP BY user_id;
 
 ### How much data can the extension handle?
 
-The Rust aggregate state has been benchmarked at scale with Criterion.rs.
-These are microbenchmarks of update/combine/finalize, not end-to-end SQL
-queries, taken from PERF.md Session 15 (before v0.8.0, not re-measured since):
+Memory is what bounds a group, and it is linear in the events of one group:
 
-| Benchmark | Tested Scale | Throughput | Memory Model |
-|---|---|---|---|
-| `sessionize_update` | 1 billion events | 830 Melem/s | O(1) per partition segment |
-| `retention_combine` | 100 million states | 365 Melem/s | O(1) -- single `u32` bitmask |
-| `window_funnel_finalize` | 100 million events | 126 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_match` | 100 million events | 95 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_count` | 100 million events | 85 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_match_events` | 100 million events | 93 Melem/s | O(n) -- 16 bytes per event |
-| `sequence_next_node` | 10 million events | 18 Melem/s | O(n) -- 32 bytes per event |
+| Function | Memory per group |
+|---|---|
+| `sessionize` | O(1) per partition segment |
+| `retention` | O(1) -- a single `u32` bitmask |
+| `window_funnel`, `window_funnel_events`, `sequence_match`, `sequence_count`, `sequence_match_events` | O(n) -- 16 bytes per event |
+| `sequence_next_node` | O(n) -- 24 bytes per event plus the bytes of its value |
+
+Throughput, measured with Criterion.rs on the Rust aggregate state and end to
+end in SQL, is on the [Performance](./internals/performance.md) page.
 
 In practice, real-world datasets with billions of rows are easily handled because
 the functions operate on partitioned groups (e.g., per-user), not the entire table
@@ -489,10 +489,9 @@ correctness. However, it affects performance:
 - `sessionize` and `retention` have O(1) combine (constant time regardless of
   data size), making them extremely fast even at billion-row scale.
 - Event-collecting functions have O(m) combine where m is the number of events
-  in the source state. For scale: in the Criterion microbenchmarks, updating
-  and finalizing a single 100-million-event state takes 791 ms for
-  `window_funnel` and 1.05-1.18 s for the `sequence_*` functions; with many
-  partial states, combine becomes the dominant cost.
+  in the source state. With many partial states, combine becomes the dominant
+  cost; the [Performance](./internals/performance.md) page has the measured
+  figures.
 
 ### Can I use these functions with PARTITION BY (window functions)?
 
@@ -617,15 +616,16 @@ the `LIMIT` (the scan then reaches every group), filter first
 `LIMIT` that. A process that runs many such queries and lives long, such as a
 notebook, will grow.
 
-### Why does `sessionize` give odd results with `GROUP BY` or a descending order?
+### Why does `sessionize` give odd results with `GROUP BY`, or an error with a descending order?
 
 `sessionize` compares each row with the previous one in window order, so it
 needs `OVER (... ORDER BY ts)` with an ascending order. A plain `GROUP BY`
 aggregate sees rows in whatever order and thread split DuckDB chooses (the
-result changes with `threads` and with `preserve_insertion_order`), and a
-descending order reads every gap as enormous and opens a new session on every
-row. Within an ascending window the result is exact, including across
-`±infinity` timestamps.
+result changes with `threads` and with `preserve_insertion_order`, and a row
+that arrives before an earlier one raises `rows must arrive in ascending
+timestamp order`). A descending order is that same error: it used to read every
+gap as enormous and open a session on every row. Within an ascending window
+the result is exact, including across `±infinity` timestamps.
 
 ### How many conditions can I pass?
 
@@ -790,19 +790,9 @@ backing the connection.
 
 ### How fast is the extension?
 
-Headline microbenchmarks of the Rust aggregate state (Criterion.rs, 95% CI,
-PERF.md Session 15, recorded before v0.8.0 and not re-measured; these are not
-end-to-end SQL timings):
-
-| Benchmark | Scale | Throughput |
-|---|---|---|
-| `sessionize_update` | 1 billion events | 830 Melem/s |
-| `retention_combine` | 100 million states | 365 Melem/s |
-| `window_funnel_finalize` | 100 million | 126 Melem/s |
-| `sequence_match` | 100 million | 95 Melem/s |
-| `sequence_count` | 100 million | 85 Melem/s |
-| `sequence_match_events` | 100 million | 93 Melem/s |
-| `sequence_next_node` | 10 million | 18 Melem/s |
+The current numbers, with their intervals, the machine and the build, are on
+the [Performance](./internals/performance.md) page: Criterion.rs microbenchmarks
+of the Rust aggregate state, and end-to-end SQL timings for 10 million rows.
 
 See the [Performance](./internals/performance.md) page for full methodology and
 optimization history.

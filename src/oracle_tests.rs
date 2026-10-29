@@ -15,6 +15,9 @@
 //! - **Invariance**: the result does not depend on the order rows arrive in,
 //!   on how they are split across partial states, on the shape of the combine
 //!   tree, on combining into a fresh default target, or on finalizing twice.
+//!   `sessionize` is the exception to the first: it reads rows in window
+//!   order (ascending timestamps), so its test sorts first and checks the
+//!   split, the tree, the fresh target and the double finalize.
 //!
 //! The pattern matcher is checked against its own oracle in
 //! `pattern::reference_nfa`; the invariance of the `sequence_*` states is

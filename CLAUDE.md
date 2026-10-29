@@ -48,7 +48,7 @@ src/
 └── ffi/
     ├── mod.rs              # register_all() — dispatches to all FFI modules via Registrar trait
     ├── view.rs             # Safe views over DuckDB's raw handles (Chunk/columns, States<T>, Output<K>): the only unsafe constructors
-    ├── sessionize.rs       # FFI via quack-rs AggregateFunctionBuilder (single fixed signature)
+    ├── sessionize.rs       # FFI via quack-rs AggregateFunctionSetBuilder (fixed arguments, 2 overloads)
     ├── version.rs          # behavioral_version() scalar via quack-rs ScalarFunctionBuilder
     ├── retention.rs        # FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     ├── window_funnel.rs    # FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
@@ -86,8 +86,9 @@ src/
    the seven variadic functions via `AggregateFunctionSetBuilder` (including
    `retention` and `sequence_match_events`, which use
    `returns_logical(LogicalType::list(...))` for their `LIST(T)` return types),
-   and `sessionize` via `AggregateFunctionBuilder` (single fixed signature;
-   DuckDB windows any aggregate, so no window-specific registration exists).
+   and `sessionize` via the same builder with a fixed argument list (2
+   overloads, one per timestamp type; DuckDB windows any aggregate, so no
+   window-specific registration exists).
    The `bundled-test-prebuilt` dev-feature additionally provides `testing::InMemoryDb`,
    used by the in-process extension-load integration test (see [Testing](#testing)).
 
@@ -168,17 +169,26 @@ cargo build
 cargo build --release
 
 # Everything CI runs that works offline, in one command (tools that are not
-# installed are skipped): ./scripts/check.sh   (--quick skips docs and benches)
+# installed are skipped): ./scripts/check.sh   (--quick skips docs and the
+# stable-API check)
 
-# Run all tests (541 unit + 29 integration + 1 doc-test).
-# DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
-# (downloaded once, cached in target/duckdb-download/) instead of compiling
-# DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
-# (plus LD_LIBRARY_PATH=<dir> on Linux). Never set these for release builds.
-DUCKDB_DOWNLOAD_LIB=1 cargo test
+# Unit tests (541): nothing to install, no libduckdb.
+cargo test --lib
+
+# All tests (541 unit + 33 integration + 1 doc-test). The integration tests
+# (`tests/extension_load.rs`, feature `e2e`) LOAD the release library into a
+# real DuckDB, which needs a libduckdb to link. DUCKDB_DOWNLOAD_LIB=1 makes
+# libduckdb-sys download a prebuilt one (cached in target/duckdb-download/)
+# instead of compiling DuckDB's C++ tree. Offline alternative:
+# DUCKDB_LIB_DIR=<dir> (plus LD_LIBRARY_PATH=<dir> on Linux). Never set these
+# for release builds.
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features
 
 # Run clippy (must produce zero warnings; CI adds --locked -- -D warnings)
-cargo clippy --all-targets
+cargo clippy --all-targets --all-features
+
+# Documentation agrees with the repository (test counts, CI releases, links)
+python3 -I scripts/check-docs.py
 
 # Format check
 cargo fmt -- --check
@@ -251,12 +261,18 @@ functions then return `TIMESTAMPTZ[]`).
   stable C API and loads into DuckDB 1.3.2+ (see "Stable C API" below).
 
 **Dev-only** (unit tests and benchmarks):
-- `duckdb = "=1.20000.1"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
-  for `Connection::open_in_memory()`. Not linked into the release extension.
-  Dev/test builds link a **prebuilt libduckdb** downloaded by `libduckdb-sys`
+- Feature `e2e = ["quack-rs/bundled-test-prebuilt"]` — gates the in-process
+  extension-load tests (`[[test]] extension_load`, `required-features`). It
+  makes quack-rs depend on the `duckdb` crate (and with it the arrow stack) for
+  `testing::InMemoryDb`; there is no explicit `duckdb` dependency, because no
+  source file names the crate (a dev-dependency kept only to pin it was dead
+  weight, and `cargo machete --with-metadata` flags that). Without the feature
+  a fresh clone runs `cargo test --lib` with no libduckdb. Not linked into the
+  release extension; never enable it for a release build.
+  `e2e` builds link a **prebuilt libduckdb** downloaded by `libduckdb-sys`
   (`DUCKDB_DOWNLOAD_LIB=1`, cached in `target/duckdb-download/`) instead of
   compiling DuckDB's C++ tree from source. `ci.yml` sets the env var workflow-wide;
-  locally run `DUCKDB_DOWNLOAD_LIB=1 cargo test`, or set
+  locally run `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`, or set
   `DUCKDB_LIB_DIR=/path/to/libduckdb` (plus `LD_LIBRARY_PATH` on Linux) to use
   an already-downloaded library. Never set either variable for release builds.
   Gotcha: with the unified `loadable-extension` feature set, libduckdb-sys only
@@ -284,11 +300,10 @@ functions then return `TIMESTAMPTZ[]`).
   `libduckdb-linux-amd64.zip` with curl into
   `target/duckdb-download/<target-triple>/<duckdb-version>/`; the build script
   skips the download when the archive exists.
-- `quack-rs` v0.19.0 with `bundled-test-prebuilt` feature — Provides
-  `testing::InMemoryDb` (incl. `open_unsigned()`) for the in-process
-  extension-load integration test (`tests/extension_load.rs`). Links the same
-  prebuilt libduckdb as the `duckdb` dev-dependency above (no DuckDB C++
-  build); dev-only, never in the release `.so`.
+- `quack-rs` v0.19.0 with `bundled-test-prebuilt` feature (via `e2e`) —
+  Provides `testing::InMemoryDb` (incl. `open_unsigned()`) for the in-process
+  extension-load integration test (`tests/extension_load.rs`). Links the
+  prebuilt libduckdb (no DuckDB C++ build); never in the release `.so`.
 - `criterion = "0.8"` with `html_reports` feature — Statistical benchmarking
 - `proptest = "1"` — Property-based testing
 
@@ -298,14 +313,17 @@ functions then return `TIMESTAMPTZ[]`).
 
 Every change MUST meet these requirements:
 
-1. **`cargo test`** — ALL tests pass. Zero failures. Zero ignored.
-2. **`cargo clippy --all-targets`** — Zero warnings (CI: `--locked -- -D warnings`),
+1. **`DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`** — ALL tests pass. Zero
+   failures. Zero ignored.
+2. **`cargo clippy --all-targets --all-features`** — Zero warnings (CI: `--locked -- -D warnings`),
    including the `unsafe_code`, `undocumented_unsafe_blocks` and
    `multiple_unsafe_ops_per_block` denials.
 3. **`cargo fmt -- --check`** — Zero formatting violations.
 4. **`cargo doc --no-deps`** — Builds without errors or warnings (CI adds
    `--document-private-items` with `RUSTDOCFLAGS=-Dwarnings`).
-5. **Test count verified** — Actual test count matches documented count.
+5. **Test count verified** — `python3 -I scripts/check-docs.py` fails when a
+   documented test count, the list of DuckDB releases CI checks, a link or the
+   demo page disagrees with its source.
 6. **Documentation accurate** — All claims in CLAUDE.md, PERF.md, docs/ are
    verifiable and match current code state.
 
@@ -321,7 +339,7 @@ Every change MUST meet these requirements:
   checks `window_funnel` against an exhaustive reference and every state for
   order/split/combine-tree invariance (below).
 - **1 doc-test** for the pattern parser
-- **29 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **33 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
@@ -334,7 +352,7 @@ Every change MUST meet these requirements:
   and `scripts/compat-check.sh`: 21 asserted queries (all functions,
   `TIMESTAMPTZ`, NULLs, error messages, the 540-overload count, a 1- vs
   4-thread determinism check), run on Linux and macOS in DuckDB 2.0.0 and on
-  Linux in 1.3.2, 1.4.4, 1.5.0 and 1.5.6
+  Linux in 1.3.2, 1.4.4, 1.4.5, 1.5.0 and 1.5.6
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
   cardinality benchmarks, and throughput reporting up to 1B elements
@@ -522,9 +540,11 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   (`src/pattern/reference_nfa.rs`, test-only) result for result
 - **Oracle and invariance tests** (`src/oracle_tests.rs`): `window_funnel` is
   compared with an exhaustive reference over every mode combination, and every
-  state (`window_funnel`, `sequence_*`, `retention`, `sequence_next_node`,
-  `sessionize`) must give the same answer under input permutation, any split
-  into partial states, any combine tree, and combine into a fresh target
+  state (`window_funnel`, `sequence_*`, `retention`, `sequence_next_node`)
+  must give the same answer under input permutation, any split into partial
+  states, any combine tree, and combine into a fresh target; `sessionize`,
+  which reads rows in window order, is checked on sorted input for the split,
+  the tree and the fresh target
 - **Parser never panics**: `pattern::parser::fuzz_tests` feeds random byte
   strings and pattern-like strings to the parser
 - **Mutation-testing-guided tests**: 51 tests from the v0.4.x cargo-mutants
@@ -545,13 +565,16 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   multi-step patterns, combine, NULL versus empty-string values, value sharing
   and range rebasing in the byte arena
 
-Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 541 unit tests take a few
-seconds (the doc-test about 1 s). The 29 in-process integration tests add
+Run with `cargo test --lib` (unit tests) or `DUCKDB_DOWNLOAD_LIB=1 cargo test
+--all-features` (everything). The 541 unit tests take a few
+seconds (the doc-test about 1 s). The 33 in-process integration tests add
 20–35 s when the release `cdylib` must be rebuilt (they build and `LOAD` it)
 and about 5 s once it is cached. CI runs the same tests with
-`cargo nextest run --all-targets` plus `cargo test --doc`.
+`cargo nextest run --lib --tests --all-features` plus `cargo test --doc`
+(not `--all-targets`: that would run the Criterion benchmarks as tests, at
+full scale).
 
-**In-process integration tests** (`tests/extension_load.rs`, run by `cargo test`):
+**In-process integration tests** (`tests/extension_load.rs`, run by `cargo test --all-features`):
 - Build the release `cdylib`, append the DuckDB metadata footer (a Rust port of
   `append_extension_metadata.py`), and `LOAD` it via
   `quack_rs::testing::InMemoryDb::open_unsigned()` (quack-rs 0.19.0), with
@@ -579,14 +602,17 @@ GitHub Actions workflows in `.github/workflows/` (details:
 `cargo` call is `--locked`, and the toolchain, cache and libduckdb handling is
 the composite action `.github/actions/setup-rust`.
 
-- **ci.yml**: fmt, clippy, test (Linux + macOS, nextest + doc-test), doc, msrv,
-  wasm-check (compile for `wasm32-unknown-emscripten`), bench-compile, deny,
-  hygiene (machete, typos, actionlint, zizmor, shellcheck, SPDX headers),
-  coverage (informational), e2e (calls `e2e.yml`), and `ci-gate`, the only
-  required status check
+- **ci.yml**: fmt, clippy, test (Linux + macOS, nextest `--lib --tests` +
+  doc-test), doc, msrv, cross-check (`cargo check --lib` for
+  `wasm32-unknown-emscripten`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`
+  and `aarch64-unknown-linux-gnu`), deny, hygiene (machete, typos, actionlint,
+  zizmor, shellcheck, SPDX headers), coverage (informational, not a `ci-gate`
+  need), e2e (calls `e2e.yml`), and `ci-gate`, the only required status check.
+  There is no benchmark-compile job: `clippy --all-targets` type-checks them
 - **e2e.yml**: reusable; builds the stamped extension on Linux and macOS, runs
   `test/sql` and `scripts/compat-check.sh`, then a `compat` job loads the same
-  binary into DuckDB v1.3.2, v1.4.4, v1.5.0 and v1.5.6 and asserts the results
+  binary into DuckDB v1.3.2, v1.4.4, v1.4.5, v1.5.0 and v1.5.6 (v2.0.0 runs in
+  the build job) and asserts the results
 - **scheduled.yml**: weekly canaries (RustSec advisories, stable and beta
   toolchains, `cargo update`, DuckDB nightly); red means look, not blocked
 - **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
@@ -642,7 +668,7 @@ stamped for the stable C API, v1.2.0). To build against the new headers:
 6. Check whether the new `libduckdb-sys`/`duckdb`/`criterion` MSRVs raise
    the project MSRV; if so, update `rust-version` in `Cargo.toml`,
    `MSRV (X.Y)` in `.github/workflows/ci.yml`, and badges/text in docs
-7. Run full unit test suite (`cargo test`)
+7. Run the full suite (`DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`)
 8. **MANDATORY**: E2E test -- `make configure release test_release`, then load
    `build/release/behavioral.duckdb_extension` (stamped `C_STRUCT`, `-dv
    v1.2.0`) into the new DuckDB CLI and at least one older one, and verify all
@@ -698,7 +724,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
   "behavioral_init_c_api_v2"`; `extension_load.cpp` in DuckDB 2.0.0). With the stable stamp, `-dv` is the C API version
   (`quack_rs::DUCKDB_API_VERSION`), set by `TARGET_DUCKDB_VERSION` in the
   `Makefile`. CI's `compat` job (`e2e.yml`) loads one binary into DuckDB
-  v1.3.2, v1.4.4, v1.5.0, v1.5.6 and v2.0.0. Residual risk: libduckdb-sys's init
+  v1.3.2, v1.4.4, v1.4.5, v1.5.0, v1.5.6 and v2.0.0. Residual risk: libduckdb-sys's init
   copies all 548 slot pointers (`if let Some(fun) = (*p_api).<slot>` per
   slot), and an older DuckDB's struct is shorter, so the copy reads past it;
   the extra values are never called. VALIDATED benign in practice: under
@@ -773,7 +799,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
   (duckdb-behavioral#94); `COMMENT ON FUNCTION` fails for native functions.
 
 - **Window usage needs no special registration**: `sessionize` is registered as
-  a plain aggregate (`AggregateFunctionBuilder`); DuckDB drives any aggregate
+  a plain aggregate (`AggregateFunctionSetBuilder`, 2 overloads); DuckDB drives any aggregate
   through update/combine/finalize when it appears in an `OVER` clause. The
   window-specific care lives in the state, not the registration: O(1) combine
   for segment trees, and `current_row_null` propagating from the right-hand

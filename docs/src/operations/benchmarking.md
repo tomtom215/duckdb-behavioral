@@ -30,7 +30,7 @@ are microbenchmarks of update/combine/finalize, not end-to-end SQL queries:
 | `window_funnel_bench` | finalize, combine, `window_funnel_events` finalize | 100 million | 16 bytes/event |
 | `sequence_bench` | match, count, combine, time constraint | 100 million | 16 bytes/event |
 | `sort_bench` | reverse-ordered with jitter, presorted | 100 million | 16 bytes/event + clone |
-| `sequence_next_node_bench` | update, combine, realistic | 10 million | 32 bytes/event |
+| `sequence_next_node_bench` | update, combine, realistic | 10 million | 24 bytes/event plus the value bytes |
 | `sequence_match_events_bench` | update, combine | 100 million | 16 bytes/event |
 
 ### Scale Limits

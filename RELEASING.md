@@ -17,7 +17,7 @@ DuckDB Community Extensions repository then needs one pull request.
 3. Run the checks a contributor runs, plus the ones only a release needs:
 
    ```bash
-   DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh
+   ./scripts/check.sh
    make configure release test_release
    scripts/compat-check.sh "$(command -v duckdb)" build/release/behavioral.duckdb_extension
    ```

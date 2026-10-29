@@ -56,10 +56,10 @@ Patterns are composed of the following elements:
 -- View then purchase (any events in between)
 '(?1).*(?2)'
 
--- View then purchase with no intervening events
+-- View then purchase with no stored event in between (see "Which events count")
 '(?1)(?2)'
 
--- View, exactly one event, then purchase
+-- View, exactly one stored event, then purchase
 '(?1).(?2)'
 
 -- View, then purchase within 1 hour
@@ -96,12 +96,22 @@ elapsed time floored to whole seconds, so `(?t==N)` means "within `[N, N+1)`
 seconds" (the faithful generalization of ClickHouse's whole-second `DateTime`
 comparison to microsecond timestamps).
 
+### Which events count
+
+Matching sees only *stored* events: rows for which at least one of the
+conditions you passed is true. The others are dropped first (as in
+ClickHouse), so `.` and `.*` never consume them and they do not break
+adjacency. With `sequence_match(p, ts, e = 'view', e = 'purchase')` over a
+view, a cart event and a purchase, `'(?1)(?2)'` is **true**: the cart row
+satisfies neither condition and is not there. To make every row count, pass one
+more condition that is always true:
+`sequence_match(p, ts, e = 'view', e = 'purchase', true)` gives **false** for
+`'(?1)(?2)'` and true for `'(?1).(?2)'` on the same rows.
+
 ### Determinism
 
 Events sort by `(timestamp, conditions)` before matching, so results are
-deterministic regardless of thread count or physical row order. Events that
-satisfy no condition are dropped before matching (as in ClickHouse), so `.`
-and `.*` never consume them and they do not break adjacency.
+deterministic regardless of thread count or physical row order.
 
 ## Errors
 
@@ -136,8 +146,9 @@ the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
 session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
 local time, which can reorder events around a daylight-saving change.
 `TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
-`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
-microsecond apart become ties.
+`TIMESTAMP_NS` is too, converted to microseconds by DuckDB's cast (truncated
+up to 1.5.6, rounded to the nearest microsecond in 2.0.0): events less than a
+microsecond apart can become ties.
 
 ## Implementation
 
@@ -148,8 +159,7 @@ microsecond apart become ties.
 | Finalize | O(n log n) sort; then O(n) for patterns of conditions and `.*` / adjacent conditions only (fast paths), otherwise O(s · n log n) for s pattern steps |
 | Space | O(n) -- all collected events |
 
-The last recorded benchmark (PERF.md Session 15) is 100 million events in
-1.05 s for the fast-path pattern `(?1).*(?2).*(?3)`.
+Measured throughput is on the [Performance](../internals/performance.md) page.
 
 Patterns outside the fast paths are matched in two passes: a backward pass
 marks, for each `(?N)` or `.` step, the events from which the rest of the

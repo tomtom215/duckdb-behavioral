@@ -73,10 +73,13 @@ runs, same machine. These include DuckDB's scan and grouping.
 | `sequence_match` | O(1) | O(m) | O(n*s) | O(n) |
 | `sequence_count` | O(1) | O(m) | O(n*s) | O(n) |
 | `sequence_match_events` | O(1) | O(m) | O(n*s) | O(n) |
-| `sequence_next_node` | O(1) | O(m) | O(n*k) | O(n) |
+| `sequence_next_node` | O(1) | O(m) | O(n log n) | O(n) |
 
 Where n = events, m = events in other state, k = conditions (up to 32),
-s = pattern steps.
+s = pattern steps. Finalize of every event-collecting function starts by
+sorting its events: O(n log n), or O(n) when they already arrive in order,
+which DuckDB often provides. For `sequence_next_node` the sort dominates: the
+anchor scan is O(n) and the chain check O(k).
 
 ## Optimization History
 
