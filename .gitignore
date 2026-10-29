@@ -46,3 +46,8 @@ mutants.out.old/
 
 # mdBook build output
 docs/book/
+
+# cargo-fuzz
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
