@@ -51,3 +51,7 @@ docs/book/
 /fuzz/target/
 /fuzz/corpus/
 /fuzz/artifacts/
+
+# Leftovers of patch(1)
+*.orig
+*.rej
