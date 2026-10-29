@@ -329,6 +329,17 @@ duckdb --version
 The binary was stamped `C_STRUCT_UNSTABLE`, which pins it to one DuckDB
 release. Re-append the metadata as shown above, without `--abi-type`.
 
+**"... did not contain function "behavioral_init_c_api_v2" ..."**
+
+The same stamp, seen by DuckDB 2.0.0: there `C_STRUCT_UNSTABLE` means the V2 C
+API, whose entry point this extension does not have. Re-append the metadata
+without `--abi-type`.
+
+**"... did not contain function "xyz_init_c_api" ... undefined symbol"**
+
+DuckDB derives the entry point from the file name up to the first dot, so the
+stamped file must be named `behavioral.duckdb_extension`.
+
 **"... could not be loaded because its signature is either missing or invalid and unsigned extensions are disabled by configuration."**
 
 This only applies to locally-built extensions. If you installed via
@@ -336,14 +347,14 @@ This only applies to locally-built extensions. If you installed via
 this error should not occur.
 
 For locally-built extensions, DuckDB rejects unsigned extensions by default.
-Use one of these approaches:
+The setting can only be chosen when the database is opened; DuckDB 2.0.0 answers
+`SET allow_unsigned_extensions = true` inside a session with `Cannot change
+allow_unsigned_extensions setting while database is running`. Use one of these
+approaches:
 
 ```bash
 # CLI flag
 duckdb -unsigned
-
-# Or set inside a session (before LOAD)
-SET allow_unsigned_extensions = true;
 ```
 
 ```python
