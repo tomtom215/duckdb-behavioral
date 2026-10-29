@@ -9,26 +9,27 @@ composite action, `.github/actions/setup-rust`.
 
 ### CI (`ci.yml`)
 
-Runs on every push to `main` and every pull request. Twelve jobs cover code
+Runs on every push to `main` and every pull request. Eleven jobs cover code
 quality across several dimensions, and the single **CI Gate** job is the only
-required status check: it fails if any other job (apart from the informational
-`coverage`) did not succeed, without listing job names, so a new job cannot be
-forgotten. The workflow sets `DUCKDB_DOWNLOAD_LIB=1` so test builds link a
-prebuilt libduckdb instead of compiling DuckDB from source, and every `cargo`
-call uses `--locked`.
+required status check: it fails if any job in its `needs` list did not succeed.
+A new job must be added to that list (the informational `coverage` job is
+deliberately not in it, so the required check does not wait for it). The
+workflow sets `DUCKDB_DOWNLOAD_LIB=1` so the extension-load tests (feature
+`e2e`) link a prebuilt libduckdb instead of compiling DuckDB from source, and
+every `cargo` call uses `--locked`. A push to `main` is never cancelled by a
+later one; a pull request's superseded run is.
 
 | Job | Purpose | Tool |
 |-----|---------|------|
 | **fmt** | Formatting verification | `cargo fmt --all -- --check` |
-| **clippy** | Zero-warning lint enforcement, including the unsafe-code lints; also type-checks every target | `cargo clippy --all-targets -- -D warnings` |
-| **test** | 541 unit tests + 29 in-process integration tests, then the doc-test, on Linux and macOS | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
+| **clippy** | Zero-warning lint enforcement, including the unsafe-code lints; also type-checks every target, benchmarks included | `cargo clippy --all-targets --all-features -- -D warnings` |
+| **test** | 541 unit tests + 34 in-process integration tests, then the doc-test, on Linux and macOS (`--lib --tests`, not `--all-targets`, which would run the Criterion benchmarks as tests at full scale) | `cargo nextest run --lib --tests --all-features --profile ci`, then `cargo test --doc` |
 | **doc** | Documentation builds without warnings | `cargo doc --no-deps --document-private-items` with `-Dwarnings` |
-| **msrv** | Minimum Supported Rust Version (1.88) | the `setup-rust` action with `toolchain: "1.88"`, then `cargo check --all-targets` |
-| **wasm-check** | Library compiles for DuckDB-WASM | `cargo check --target wasm32-unknown-emscripten --lib` |
-| **bench-compile** | Benchmarks compile (no execution) | `cargo bench --no-run` |
+| **msrv** | Minimum Supported Rust Version (1.88) | the `setup-rust` action with `toolchain: "1.88"`, then `cargo check --all-targets --all-features` |
+| **cross-check** | The library compiles for platforms CI does not execute: DuckDB-WASM (not shipped), Windows x86_64 (served by the community channel), macOS x86_64 and Linux ARM64 (built, not run, by the release workflow) | `cargo check --target <target> --lib` for `wasm32-unknown-emscripten`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu` |
 | **deny** | License, advisory, and source auditing | `cargo-deny` |
-| **hygiene** | Unused dependencies, spelling, workflow lint and security audit, shell scripts, license headers | `cargo machete`, `typos`, `actionlint`, `zizmor`, `shellcheck`, `scripts/add-spdx-headers.sh --check` |
-| **coverage** | Code coverage reporting (informational, not in the gate) | `cargo llvm-cov nextest` + Codecov |
+| **hygiene** | Unused dependencies, spelling, workflow lint and security audit, shell scripts, license headers, documentation consistency | `cargo machete --with-metadata`, `typos`, `actionlint`, `zizmor`, `shellcheck`, `scripts/add-spdx-headers.sh --check`, `scripts/check-docs.py` |
+| **coverage** | Code coverage reporting (informational, not in the gate) | `cargo llvm-cov nextest --all-features` + Codecov |
 | **e2e** | The reusable `e2e.yml` below | |
 | **ci-gate** | Required status check gate | `jq` over `toJSON(needs)` |
 
@@ -55,11 +56,11 @@ community-extensions CI does, then asserts results.
 | `make configure release` | The extension builds and is stamped for the stable C API (`C_STRUCT`, C API v1.2.0) |
 | `make test_release` | The SQL logic tests in `test/sql/` pass in DuckDB 2.0.0 |
 | `scripts/check-stable-api.py` (Linux) | The unstripped library calls only C API functions inside the stable prefix of `duckdb_ext_api_v1` (76 of 548 slots, highest 306, limit 357), so the C API v1.2.0 stamp stays true |
-| `scripts/compat-check.sh` | 21 asserted queries covering all 8 functions, `TIMESTAMPTZ`, NULLs, error messages, the exact overload count (540), and one `GROUP BY` run at 1 and 4 threads that must give identical rows |
+| `scripts/compat-check.sh` | 21 asserted queries (25 on DuckDB 2.x, where the crash shapes of duckdb/duckdb#26109 also run) covering all 8 functions, `TIMESTAMPTZ`, NULLs, error messages, the exact overload count (540), and one `GROUP BY` run at 1 and 4 threads that must give identical rows |
 
 `build` runs these on Linux x86_64 and macOS ARM64. The `compat` job then loads
-the Linux binary into DuckDB v1.3.2, v1.4.4, v1.5.0, and v1.5.6 and runs the
-same script, so one binary is shown to answer identically on every release with
+the Linux binary into DuckDB v1.3.2, v1.4.4, v1.4.5, v1.5.0, and v1.5.6 (v2.0.0
+runs in the build job) and runs the same script, so one binary is shown to answer identically on every release with
 that C API. `scripts/install-duckdb-cli.sh` downloads the CLIs (DuckDB 2.0.0
 renamed its assets: `.tar.gz` for 2.x, `.zip` before).
 
@@ -74,6 +75,7 @@ merge:
 | **toolchain** (stable, beta) | Would the next Rust release break clippy or the tests? |
 | **latest-deps** | Do the tests pass after `cargo update` (what a build without `--locked` gets)? |
 | **duckdb-nightly** | Does the stamped binary still load and answer in the DuckDB nightly (`pip install --pre duckdb`, `scripts/nightly-smoke.py`)? |
+| **fuzz** (parse, sequence, funnel) | Does coverage-guided fuzzing (`fuzz/`, two minutes per target) find a panic, a hang or a broken invariant? A crashing input is kept as an artifact |
 
 ### CodeQL (`codeql.yml`)
 
@@ -107,11 +109,16 @@ the follow-up pull request to the community repository are in
 [`RELEASING.md`](https://github.com/tomtom215/duckdb-behavioral/blob/main/RELEASING.md).
 
 1. **validate**: the tag is SemVer, and `Cargo.toml`, `description.yml` and a
-   `CHANGELOG.md` section all carry the same version.
-2. **build** (4 platforms): the community Makefile, an architecture check with
-   `file`, then on the platforms that can run the binary the SQL logic tests and
-   `scripts/compat-check.sh`. Builds use no cargo cache, so a cache written by a
-   pull request cannot influence an attested binary.
+   `CHANGELOG.md` section all carry the same version. A stable tag must also be
+   a commit of `main` on which the `CI Gate` check passed (pre-release tags are
+   exempt), so a tag on a feature branch cannot publish.
+2. **build** (4 platforms): the community Makefile, a check that the build left
+   `Cargo.lock` unchanged (the Makefile's `cargo build` is not `--locked`), an
+   architecture check with `file`, then on the platforms that can run the
+   binary the SQL logic tests and `scripts/compat-check.sh`. The tests step
+   must not set `DUCKDB_PLATFORM`: extension-ci-tools turns the test targets
+   into no-ops for `linux_amd64` when it is set. Builds use no cargo cache, so
+   a cache written by a pull request cannot influence an attested binary.
 3. **release**: a GitHub release whose notes are the `CHANGELOG.md` section,
    with `SHA256SUMS.txt` and a build-provenance attestation per archive.
 4. **update-description-ref**: commits the tagged commit's SHA into
@@ -149,8 +156,9 @@ version" in `CLAUDE.md`.
 ./scripts/check.sh
 
 # Or one at a time
-DUCKDB_DOWNLOAD_LIB=1 cargo test --locked   # 541 unit + 29 integration + 1 doc-test
-cargo clippy --all-targets --locked -- -D warnings
+cargo test --lib --locked                                  # 541 unit tests, no libduckdb
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features --locked   # 541 unit + 34 integration + 1 doc-test
+cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo fmt --all -- --check
 RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --document-private-items --locked
 cargo deny check advisories bans licenses sources

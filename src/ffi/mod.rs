@@ -28,13 +28,13 @@
 //! - [`quack_rs::types::LogicalType::list()`] — RAII construction of `LIST(T)`
 //!   types for `returns_logical()` and function registration.
 //!
-//! All 8 aggregate functions use quack-rs builders for registration: the seven
-//! variadic functions use `AggregateFunctionSetBuilder` (including `retention`,
-//! `window_funnel_events`, and `sequence_match_events`, which use
+//! All 8 aggregate functions use quack-rs builders for registration, as
+//! function sets (`AggregateFunctionSetBuilder`): the seven variadic functions
+//! have one overload per condition count (and per timestamp type), including
+//! `retention`, `window_funnel_events`, and `sequence_match_events`, which use
 //! `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return
-//! types), and [`sessionize`] uses
-//! [`quack_rs::aggregate::AggregateFunctionBuilder`] for its single fixed
-//! signature. [`version`] registers the `behavioral_version()` scalar through
+//! types; [`sessionize`] has a fixed argument list and two overloads, one per
+//! timestamp type. [`version`] registers the `behavioral_version()` scalar through
 //! quack-rs's scalar builder. No module in this crate registers through raw
 //! `libduckdb-sys` calls.
 //!

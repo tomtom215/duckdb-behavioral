@@ -15,6 +15,9 @@
 //! - **Invariance**: the result does not depend on the order rows arrive in,
 //!   on how they are split across partial states, on the shape of the combine
 //!   tree, on combining into a fresh default target, or on finalizing twice.
+//!   `sessionize` is the exception to the first: it reads rows in window
+//!   order (ascending timestamps), so its test sorts first and checks the
+//!   split, the tree, the fresh target and the double finalize.
 //!
 //! The pattern matcher is checked against its own oracle in
 //! `pattern::reference_nfa`; the invariance of the `sequence_*` states is
@@ -89,7 +92,7 @@ struct RefChain {
 }
 
 /// The five behaviour switches of `window_funnel`'s modes. `dedup` is
-/// `FunnelMode::STRICT` (SQL `'strict_deduplication'`); `increase` is either
+/// `FunnelMode::STRICT_DEDUPLICATION` (SQL `'strict_deduplication'`); `increase` is either
 /// of the two increasing-timestamp flags, which behave alike.
 #[derive(Clone, Copy)]
 #[allow(clippy::struct_excessive_bools)] // one bool per mode switch, by design
@@ -104,10 +107,10 @@ struct Flags {
 impl Flags {
     fn from_bits(bits: u8) -> Self {
         Self {
-            dedup: bits & FunnelMode::STRICT.bits() != 0,
+            dedup: bits & FunnelMode::STRICT_DEDUPLICATION.bits() != 0,
             order: bits & FunnelMode::STRICT_ORDER.bits() != 0,
             increase: bits
-                & (FunnelMode::STRICT_INCREASE.bits() | FunnelMode::STRICT_DEDUPLICATION.bits())
+                & (FunnelMode::STRICT_INCREASE.bits() | FunnelMode::TIMESTAMP_DEDUP.bits())
                 != 0,
             once: bits & FunnelMode::STRICT_ONCE.bits() != 0,
             reentry: bits & FunnelMode::ALLOW_REENTRY.bits() != 0,
@@ -210,7 +213,7 @@ fn funnel_reference(
 /// beside `strict_order` (the combination `ClickHouse` accepts).
 fn mode_bits() -> impl Strategy<Value = u8> {
     (0u8..32, any::<bool>()).prop_map(|(switches, reentry)| {
-        // The low five bits are STRICT, STRICT_ORDER, STRICT_DEDUPLICATION
+        // The low five bits are STRICT_DEDUPLICATION, STRICT_ORDER, TIMESTAMP_DEDUP
         // (`timestamp_dedup`), STRICT_INCREASE and STRICT_ONCE.
         let mut bits = switches;
         if bits & FunnelMode::STRICT_ORDER.bits() != 0 && reentry {

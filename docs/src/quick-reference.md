@@ -146,8 +146,8 @@ combinations. Takes a base condition plus 1–32 event conditions.
 | Element | Syntax | Meaning |
 |---|---|---|
 | Condition match | `(?N)` | Event where condition N is true (1-indexed) |
-| Any one event | `.` | Exactly one event, any conditions |
-| Any events | `.*` | Zero or more events |
+| Any one event | `.` | Exactly one stored event (a row with at least one true condition) |
+| Any events | `.*` | Zero or more stored events |
 | Time ≤ | `(?t<=N)` | At most N seconds since previous match |
 | Time ≥ | `(?t>=N)` | At least N seconds since previous match |
 | Time < | `(?t<N)` | Less than N seconds |
@@ -160,9 +160,9 @@ combinations. Takes a base condition plus 1–32 event conditions.
 | Pattern | Description |
 |---|---|
 | `(?1).*(?2)` | Condition 1 then 2, any gap |
-| `(?1)(?2)` | Condition 1 immediately followed by 2 |
+| `(?1)(?2)` | Condition 1 immediately followed by 2, with no stored event between (rows matching no condition are dropped first) |
 | `(?1).*(?t<=3600)(?2)` | Condition 1 then 2 within 1 hour |
-| `(?1).(?2)` | Condition 1, exactly one event, then 2 |
+| `(?1).(?2)` | Condition 1, exactly one stored event, then 2 |
 | `(?1).*(?2).*(?3)` | Three-step sequence, any gaps |
 | `(?1).*(?t<=300)(?2).*(?t<=300)(?3)` | Three steps, each within 5 minutes |
 
@@ -198,7 +198,7 @@ install, and a local build could serve different versions.
 |---|---|
 | Boolean conditions | `window_funnel`, `window_funnel_events`: 1 – 32; `retention`, `sequence_match`, `sequence_count`, `sequence_match_events`: 2 – 32; `sequence_next_node`: base condition + 1 – 32 |
 | Interval type | No month-based intervals (days, hours, minutes, seconds only) |
-| Timestamp type | `TIMESTAMP` or `TIMESTAMPTZ` (`*_events` then return `TIMESTAMPTZ[]`); `TIMESTAMP_NS` is truncated to microseconds |
+| Timestamp type | `TIMESTAMP` or `TIMESTAMPTZ` (`*_events` then return `TIMESTAMPTZ[]`); `TIMESTAMP_NS` is converted to microseconds by DuckDB's cast (truncated up to 1.5.6, rounded in 2.0.0) |
 | Pattern length | At most 1024 steps |
 | Configuration arguments | Pattern, window, mode, direction and base must be the same for every row of a group |
 | `sessionize` | Aggregate used with `OVER (... ORDER BY ...)` for per-row session IDs |

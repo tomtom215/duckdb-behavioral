@@ -97,8 +97,8 @@ pub struct PatternError {
 
 impl PatternError {
     /// Sentinel position for errors that are not tied to a position in the
-    /// pattern string (no current error uses it; the test-only reference
-    /// matcher's exploration-budget error did).
+    /// pattern string (the executor's out-of-memory error uses it, and the
+    /// test-only reference matcher's exploration-budget error did).
     pub const NO_POSITION: usize = usize::MAX;
 }
 

@@ -20,7 +20,10 @@
 //!
 //! - **Inputs are flat.** `CAPIAggregateUpdate` flattens the input chunk, so a
 //!   `VARCHAR` literal argument arrives as one string per row, not as a
-//!   constant vector.
+//!   constant vector. This is load-bearing: in `DuckDB` 2.0.0
+//!   `duckdb_vector_get_data` throws a C++ exception on a non-flat vector,
+//!   and an exception through these `extern "C"` frames would abort the
+//!   process.
 //! - **Argument types are the declared ones.** The binder casts each argument
 //!   to the parameter type of the overload that was registered, so a column
 //!   registered as `BOOLEAN` holds `BOOLEAN` data.
@@ -269,12 +272,6 @@ pub struct Varchars {
 }
 
 impl Varchars {
-    /// Whether row `i` is non-`NULL`.
-    #[inline]
-    pub fn is_valid(&self, i: usize) -> bool {
-        is_valid(&self.reader, i)
-    }
-
     /// The string at row `i`, or `None` for `NULL`.
     #[inline]
     pub fn get(&self, i: usize) -> Option<&str> {
@@ -287,36 +284,51 @@ impl Varchars {
         Some(unsafe { self.reader.read_str(i) })
     }
 
-    /// The bytes of the string at row `i`, or `None` for `NULL`. Unlike
-    /// [`Varchars::get`] this does not validate UTF-8, so it is the cheap way
-    /// to compare a value against the previous row's.
-    #[inline]
-    pub fn bytes(&self, i: usize) -> Option<&[u8]> {
-        if !is_valid(&self.reader, i) {
-            return None;
-        }
-        // SAFETY: as for `get`; a `VARCHAR` uses the blob layout.
-        Some(unsafe { self.reader.read_blob(i) })
-    }
-
-    /// The raw 16-byte `duckdb_string_t` slot of row `i`: the length plus
-    /// either the whole string (at most 12 bytes) or a prefix and a pointer.
+    /// The raw 16-byte `duckdb_string_t` slot of row `i`, or `None` for `NULL`:
+    /// the length plus either the whole string (at most 12 bytes) or a prefix
+    /// and a pointer.
     ///
     /// Within one chunk, equal slots imply equal strings, because equal
     /// slots have equal lengths and equal bytes or point at the same bytes.
     /// Unequal slots prove nothing, so callers compare the strings next.
     /// Slots must not be compared across chunks: a pointer can be reused.
-    /// A `NULL` row's slot may hold stale bytes; it is copied, never read
-    /// through.
+    /// A `NULL` row's slot may hold stale or uninitialised bytes, so it is
+    /// never read.
     #[inline]
-    pub fn slot(&self, i: usize) -> [u8; 16] {
-        check(&self.reader, i);
+    pub fn slot(&self, i: usize) -> Option<[u8; 16]> {
+        if !is_valid(&self.reader, i) {
+            return None;
+        }
         let slot = self.slots.wrapping_add(i);
         // SAFETY: `slots` is the data buffer of a live `VARCHAR` vector with
-        // one 16-byte slot per row, and `i < row_count` (checked above), so
-        // `wrapping_add` stayed inside the buffer; `[u8; 16]` has alignment 1.
-        unsafe { *slot }
+        // one 16-byte slot per row, `i < row_count` and row `i` is non-NULL
+        // (checked above), so `wrapping_add` stayed inside the buffer and the
+        // slot is initialised; `[u8; 16]` has alignment 1.
+        Some(unsafe { *slot })
     }
+}
+
+/// Packs the conditions that are true at `row` into a bitmask: bit `c` is
+/// condition `c`, and `NULL` counts as false.
+///
+/// The registered overloads pass at most 32 conditions (the width of the
+/// mask, `common::event::MAX_EVENT_CONDITIONS`); more would shift past the
+/// mask and, in a release build, wrap silently, so tests (debug builds)
+/// assert it.
+#[inline]
+pub fn condition_mask(conditions: &[Bools], row: usize) -> u32 {
+    debug_assert!(
+        conditions.len() <= u32::BITS as usize,
+        "{} conditions do not fit a 32-bit mask",
+        conditions.len()
+    );
+    let mut mask = 0;
+    for (bit, condition) in conditions.iter().enumerate() {
+        if condition.is_true(row) {
+            mask |= 1 << bit;
+        }
+    }
+    mask
 }
 
 // ── Aggregate states ─────────────────────────────────────────────────────
@@ -334,8 +346,8 @@ impl<T: AggregateState> States<T> {
     ///
     /// # Safety
     ///
-    /// `ptr` must point to `len` state pointers that `DuckDB` passed to the
-    /// callback that is running, each created by `FfiState::<T>`'s init
+    /// `ptr` must point to `len` non-null state pointers that `DuckDB` passed
+    /// to the callback that is running, each created by `FfiState::<T>`'s init
     /// callback (every overload registers it through `ffi_state::<T>()`), and
     /// the `States` must not be used after the callback returns.
     pub unsafe fn from_raw(ptr: *mut duckdb_aggregate_state, len: idx_t) -> Self {
@@ -363,27 +375,28 @@ impl<T: AggregateState> States<T> {
         unsafe { *slot }
     }
 
-    /// The state at index `i`, or `None` if its pointer is null.
+    /// The state at index `i`, or `None` if the slot holds no `T` (its
+    /// `Default` panicked, and `DuckDB` is about to fail the query).
     #[inline]
     pub fn get(&self, i: usize) -> Option<&T> {
         let handle = self.handle(i);
-        // SAFETY: a non-null pointer is an initialised `FfiState<T>`
-        // (constructor contract). The returned borrow is tied to `&self`,
-        // and no `&mut` to this array's states exists while it lives.
+        // SAFETY: the pointer is an initialised `FfiState<T>` (constructor
+        // contract, which includes non-null). The returned borrow is tied to
+        // `&self`, and no `&mut` to this array's states exists while it lives.
         unsafe { FfiState::<T>::with_state(handle) }
     }
 
-    /// The state at index `i` as a mutable reference, or `None` if its
-    /// pointer is null. Rows of one group repeat a pointer, so the borrow is
+    /// The state at index `i` as a mutable reference, or `None` if the slot
+    /// holds no `T`, as for [`States::get`]. Rows of one group repeat a pointer, so the borrow is
     /// tied to `&mut self`: two references to one state cannot coexist.
     // `&mut self` is the point: it stops two `&mut T` to one state coexisting.
     #[allow(clippy::needless_pass_by_ref_mut)]
     #[inline]
     pub fn get_mut(&mut self, i: usize) -> Option<&mut T> {
         let handle = self.handle(i);
-        // SAFETY: a non-null pointer is an initialised `FfiState<T>`
-        // (constructor contract), and `&mut self` makes this the only live
-        // reference obtained through this array.
+        // SAFETY: the pointer is an initialised `FfiState<T>` (constructor
+        // contract, which includes non-null), and `&mut self` makes this the
+        // only live reference obtained through this array.
         unsafe { FfiState::<T>::with_state_mut(handle) }
     }
 
@@ -416,8 +429,8 @@ impl<T: AggregateState> States<T> {
     ) -> Option<(&'a T, &'a mut T)> {
         let (src, tgt) = (source.handle(i), target.handle(i));
         assert!(src != tgt, "DuckDB combined a state into itself");
-        // SAFETY: both pointers are initialised `FfiState<T>`s when non-null
-        // (constructor contract) and are distinct (asserted above), so the
+        // SAFETY: both pointers are initialised `FfiState<T>`s (constructor
+        // contract, which includes non-null) and are distinct (asserted above), so the
         // shared and mutable references do not alias. Their lifetimes are
         // tied to the borrows of the two arrays.
         let src = unsafe { FfiState::<T>::with_state(src) }?;

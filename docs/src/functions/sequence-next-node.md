@@ -114,7 +114,7 @@ ClickHouse 26.9.8.3 found no difference for events with distinct
 | Function name | camelCase | snake_case |
 | Parameters | Two-level call syntax | Flat parameter list |
 | Return type | `Nullable(String)` | `VARCHAR` (nullable) |
-| Experimental flag | Requires `allow_experimental_funnel_functions = 1` | Always available |
+| Experimental flag | Requires `enable_funnel_functions = 1` (formerly `allow_experimental_funnel_functions`) | Always available |
 
 ## Errors
 
@@ -148,8 +148,9 @@ the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
 session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
 local time, which can reorder events around a daylight-saving change.
 `TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
-`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
-microsecond apart become ties.
+`TIMESTAMP_NS` is too, converted to microseconds by DuckDB's cast (truncated
+up to 1.5.6, rounded to the nearest microsecond in 2.0.0): events less than a
+microsecond apart can become ties.
 
 ## Implementation
 
@@ -157,7 +158,7 @@ microsecond apart become ties.
 |---|---|
 | Update | O(1) amortized (event append, plus the value's bytes) |
 | Combine | O(m) where m = events and value bytes in the other state |
-| Finalize | O(n * k) sequential scan, where n = events, k = event conditions |
+| Finalize | O(n log n) sort (O(n) when the events arrive ordered), then an O(n) scan for the anchor and an O(k) chain check, where n = events, k = event conditions |
 | Space | O(n) -- one 24-byte record per event, plus the value bytes |
 
 Note: Unlike the other event-collecting functions, which store a 16-byte `Copy`

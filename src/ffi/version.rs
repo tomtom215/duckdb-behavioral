@@ -32,7 +32,7 @@ scalar_callback!(version_callback, |_info, input, output| {
 /// Signature: `behavioral_version() → VARCHAR`
 ///
 /// ```sql
-/// SELECT behavioral_version();  -- e.g. '0.8.0'
+/// SELECT behavioral_version();  -- the crate version, e.g. '0.10.1'
 /// ```
 ///
 /// # Errors

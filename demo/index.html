@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DuckDB Behavioral Analytics - Interactive Demo</title>
 <link rel="icon" type="image/svg+xml" href="https://raw.githubusercontent.com/tomtom215/duckdb-behavioral/main/assets/logo-64.svg">
-<meta name="description" content="Interactive demo of duckdb-behavioral: ClickHouse-compatible behavioral analytics functions for DuckDB.">
+<meta name="description" content="Interactive demo of duckdb-behavioral: behavioral analytics functions for DuckDB, inspired by ClickHouse.">
 <meta property="og:title" content="DuckDB Behavioral Analytics">
 <meta property="og:description" content="Session analysis, conversion funnels, retention cohorts, and event sequence pattern matching for DuckDB.">
 <meta property="og:type" content="website">
@@ -113,7 +113,7 @@
   <img src="https://raw.githubusercontent.com/tomtom215/duckdb-behavioral/main/assets/logo-64.svg" alt="" width="48" height="48">
   <div>
     <h1><span>behavioral</span> DuckDB Extension</h1>
-    <p class="subtitle" style="margin-bottom: 0;">ClickHouse-compatible behavioral analytics functions for DuckDB</p>
+    <p class="subtitle" style="margin-bottom: 0;">Behavioral analytics functions for DuckDB, inspired by ClickHouse</p>
   </div>
 </div>
 
@@ -217,11 +217,11 @@
     <p class="result-label">Result</p>
     <table class="result-table">
       <tr><th>author</th><th>pr_funnel_step</th></tr>
-      <tr><td>alice</td><td class="val-num">4</td></tr>
+      <tr><td>alice</td><td class="val-num">2</td></tr>
       <tr><td>bob</td><td class="val-num">2</td></tr>
       <tr><td>carol</td><td class="val-num">1</td></tr>
     </table>
-    <p class="description" style="margin-top:12px">Supports 6 combinable modes: <code>strict</code>, <code>strict_order</code>, <code>strict_deduplication</code>, <code>strict_increase</code>, <code>strict_once</code>, <code>allow_reentry</code>.</p>
+    <p class="description" style="margin-top:12px">Supports 6 combinable modes: <code>strict_deduplication</code>, <code>strict_order</code>, <code>strict_increase</code>, <code>strict_once</code>, <code>allow_reentry</code>, <code>timestamp_dedup</code>.</p>
   </div>
 </div>
 </div>
@@ -258,7 +258,7 @@
   <div class="example-header">
     <h3>CI/CD Failure Cycle Count</h3>
     <span class="badge badge-fn">sequence_count</span>
-    <span class="badge badge-ref">Vasilescu et al., ICSE 2014</span>
+    <span class="badge badge-ref">Vasilescu et al., ICSME 2014</span>
   </div>
   <div class="example-body">
     <p class="description">Count non-overlapping occurrences of push &rarr; ci_failure &rarr; push cycles per developer.</p>
@@ -308,7 +308,7 @@
       <tr><th>pr_id</th><th>lifecycle_timestamps</th></tr>
       <tr><td>1001</td><td>[03-15 10:00, 03-15 14:30, 03-16 09:00, 03-16 10:00]</td></tr>
       <tr><td>1002</td><td>[03-15 11:00, 03-15 11:30, 03-15 12:00, 03-15 12:15]</td></tr>
-      <tr><td>1003</td><td>[]</td></tr>
+      <tr><td>1003</td><td>[03-17 08:00]</td></tr>
     </table>
   </div>
 </div>
@@ -353,7 +353,7 @@
       <tr><td><code>retention</code></td><td>Contributor cohorts</td><td>Casalnuovo et al. ESEC/FSE 2015</td></tr>
       <tr><td><code>window_funnel</code></td><td>Onboarding funnels</td><td>Casalnuovo et al. ESEC/FSE 2015</td></tr>
       <tr><td><code>sequence_match</code></td><td>Bug pattern detection</td><td>Eyolfson et al. MSR 2011</td></tr>
-      <tr><td><code>sequence_count</code></td><td>CI/CD failure cycles</td><td>Vasilescu et al. ICSE 2014</td></tr>
+      <tr><td><code>sequence_count</code></td><td>CI/CD failure cycles</td><td>Vasilescu et al. ICSME 2014</td></tr>
       <tr><td><code>sequence_match_events</code></td><td>PR lifecycle mining</td><td>Gousios et al. ICSE 2014</td></tr>
       <tr><td><code>sequence_next_node</code></td><td>File co-change patterns</td><td>Gall, Hajek, Jazayeri. ICSM 1998</td></tr>
     </table>
@@ -406,7 +406,7 @@ duckdb -unsigned
 
 <footer>
   <a href="https://github.com/tomtom215/duckdb-behavioral">github.com/tomtom215/duckdb-behavioral</a>
-  &mdash; ClickHouse-compatible behavioral analytics for DuckDB
+  &mdash; behavioral analytics for DuckDB, inspired by ClickHouse
 </footer>
 
 <script>

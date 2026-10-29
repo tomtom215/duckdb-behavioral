@@ -86,7 +86,7 @@ GROUP BY day
 ORDER BY day;
 ```
 
-### Strict Funnel (No Repeated Steps)
+### Strictly Increasing Funnel (No Shared Timestamps)
 
 Use `strict_increase` mode to require strictly increasing timestamps between
 steps — no duplicate timestamps allowed:

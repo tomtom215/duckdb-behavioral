@@ -9,7 +9,6 @@
 <p align="center">
   <a href="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml"><img src="https://github.com/tomtom215/duckdb-behavioral/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/MSRV-1.88-blue.svg" alt="MSRV: 1.88"></a>
   <a href="https://tomtom215.github.io/duckdb-behavioral/"><img src="https://img.shields.io/badge/docs-mdBook-blue.svg" alt="Documentation"></a>
 </p>
 
@@ -26,9 +25,10 @@
 
 Funnels, retention, sessions and "what happens next" over an event table, as
 SQL aggregate and window functions in a loadable [DuckDB](https://duckdb.org/)
-extension written in Rust. Six of the eight functions follow ClickHouse's
-[parametric behavioral functions](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions)
-and were compared with `clickhouse local` on random event groups; the
+extension written in Rust. No ClickHouse knowledge is needed. If you do know
+its [parametric behavioral functions](https://clickhouse.com/docs/en/sql-reference/aggregate-functions/parametric-functions),
+six of the eight functions here follow them and were compared with
+`clickhouse local` on random event groups; the
 [few deliberate differences](#clickhouse-parity) are listed. `sessionize` and
 `window_funnel_events` are additions.
 
@@ -71,23 +71,16 @@ User 3 stops at step 1 because the cart came 3 hours after the view.
 The functions sort by timestamp themselves: no `ORDER BY` is needed inside
 the call, and `GROUP BY` is the normal way to use all but `sessionize`.
 
-> **Personal Project Disclaimer**: This is a personal project developed on my own
-> time. It is not affiliated with, endorsed by, or related to my employer or
-> professional role in any way.
-
-> **AI-Assisted Development**: Built with Claude (Anthropic). Correctness is
-> validated by automated testing — not assumed from AI output. See [Quality](#quality).
-
 ### Installing
 
 | | |
 |---|---|
 | **Community channel** (`INSTALL behavioral FROM community`) | DuckDB 1.4.4 and later; Linux x86_64 and ARM64, macOS x86_64 and ARM64, Windows x86_64 |
-| **Build from source or a release archive** | DuckDB 1.3.2 and later; Linux and macOS |
+| **Build from source or a release archive** | DuckDB 1.3.2 and later; Linux and macOS. The Linux release archive needs glibc 2.34 or later (Ubuntu 22.04, Debian 12, RHEL 9); the community build needs only 2.28. On an older system, build from source |
 
 One binary serves every DuckDB release: it uses only DuckDB's stable C API
 (stamped `C_STRUCT`, C API v1.2.0), and CI loads the same build into DuckDB 1.3.2,
-1.4.4, 1.5.0, 1.5.6 and 2.0.0 and asserts the results. To build from source:
+1.4.4, 1.4.5, 1.5.0, 1.5.6 and 2.0.0 and asserts the results. To build from source:
 
 ```bash
 git submodule update --init --recursive
@@ -103,14 +96,14 @@ a C compiler and Python 3.
 
 | Function | Signature | Returns | Description |
 |---|---|---|---|
-| `sessionize` | `(TIMESTAMP, INTERVAL)` | `BIGINT` | Window function: session IDs from inactivity gaps |
-| `retention` | `(BOOLEAN, BOOLEAN, ...)` | `BOOLEAN[]` | Cohort retention: was condition *i* met, given condition 1? |
-| `window_funnel` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `INTEGER` | Furthest funnel step reached, with [6 combinable modes](https://tomtom215.github.io/duckdb-behavioral/functions/window-funnel.html) |
-| `window_funnel_events` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `TIMESTAMP[]` | Timestamps of the best funnel chain |
+| `sessionize` | `(TIMESTAMP, INTERVAL)` | `BIGINT` | Which session is each event in? Window function: a new session after an inactivity gap |
+| `retention` | `(BOOLEAN, BOOLEAN, ...)` | `BOOLEAN[]` | Who came back? Was condition *i* met, given condition 1? |
+| `window_funnel` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `INTEGER` | How far did each user get through ordered steps within a time limit? Furthest step reached, with [6 combinable modes](https://tomtom215.github.io/duckdb-behavioral/functions/window-funnel.html) |
+| `window_funnel_events` | `(INTERVAL [, VARCHAR], TIMESTAMP, BOOLEAN, ...)` | `TIMESTAMP[]` | When did each of those steps happen? The best funnel chain's timestamps |
 | `sequence_match` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BOOLEAN` | Did an [event pattern](https://tomtom215.github.io/duckdb-behavioral/functions/sequence-match.html) occur? |
-| `sequence_count` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BIGINT` | How many non-overlapping times? |
+| `sequence_count` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `BIGINT` | How many times, without overlap? |
 | `sequence_match_events` | `(VARCHAR, TIMESTAMP, BOOLEAN, ...)` | `TIMESTAMP[]` | When did each pattern step happen? |
-| `sequence_next_node` | `(VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, ...)` | `VARCHAR` | The value of the event right after (or before) a pattern |
+| `sequence_next_node` | `(VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, ...)` | `VARCHAR` | What did the user do right after (or before) a pattern? |
 
 Every `TIMESTAMP` argument also accepts `TIMESTAMPTZ`. `behavioral_version()`
 returns the loaded version. `window_funnel` and `window_funnel_events` take 1 to
@@ -138,73 +131,140 @@ Reference pages, with edge cases per function:
 
 ## Examples
 
-The examples below use `events(user_id, event_time, event_type, page)`. The
-[SQL Cookbook](https://tomtom215.github.io/duckdb-behavioral/cookbook.html) and
-[Use Cases](https://tomtom215.github.io/duckdb-behavioral/use-cases.html) have
-many more, and [`examples/`](examples/) holds runnable scripts.
+The examples share one table. The [SQL Cookbook](https://tomtom215.github.io/duckdb-behavioral/cookbook.html)
+and [Use Cases](https://tomtom215.github.io/duckdb-behavioral/use-cases.html)
+have many more, [`examples/`](examples/) holds runnable scripts, and a
+[static tour](https://tomtom215.github.io/duckdb-behavioral/demo.html) applies
+the functions to a git history.
 
-**Sessions** — a new session after 30 minutes of silence:
+```sql
+CREATE TABLE events AS SELECT * FROM (VALUES
+  (1, TIMESTAMP '2024-01-15 09:00', 'page_view',   'Home'),
+  (1, TIMESTAMP '2024-01-15 09:05', 'page_view',   'Product'),
+  (1, TIMESTAMP '2024-01-15 09:08', 'add_to_cart', 'Product'),
+  (1, TIMESTAMP '2024-01-15 09:12', 'checkout',    'Cart'),
+  (1, TIMESTAMP '2024-01-15 09:15', 'purchase',    'Checkout'),
+  (2, TIMESTAMP '2024-01-15 10:00', 'page_view',   'Home'),
+  (2, TIMESTAMP '2024-01-15 10:10', 'page_view',   'Product'),
+  (2, TIMESTAMP '2024-01-15 10:20', 'add_to_cart', 'Product'),
+  (2, TIMESTAMP '2024-01-15 14:00', 'page_view',   'Home'),
+  (2, TIMESTAMP '2024-01-15 14:05', 'page_view',   'Product'),
+  (3, TIMESTAMP '2024-01-15 11:00', 'page_view',   'Home'),
+  (3, TIMESTAMP '2024-01-15 11:30', 'page_view',   'Blog'),
+  (3, TIMESTAMP '2024-01-15 12:00', 'page_view',   'Home')
+) AS t(user_id, event_time, event_type, page);
+```
+
+**Funnel** — how far did each user get through four steps, with an hour from
+the first? (Count users per step with `GROUP BY step` over this result.)
+
+```sql
+SELECT user_id,
+       window_funnel(INTERVAL '1 hour', event_time,
+                     event_type = 'page_view', event_type = 'add_to_cart',
+                     event_type = 'checkout',  event_type = 'purchase') AS furthest_step
+FROM events GROUP BY user_id ORDER BY user_id;
+```
+
+| user_id | furthest_step |
+|---|---|
+| 1 | 4 |
+| 2 | 2 |
+| 3 | 1 |
+
+**Step timestamps** — when was each step reached? This is the best chain: the
+latest start that still completes the furthest step, which is why user 1's
+chain starts at 09:05 (the second page view), not 09:00.
+
+```sql
+SELECT user_id,
+       window_funnel_events(INTERVAL '1 hour', event_time,
+                     event_type = 'page_view', event_type = 'add_to_cart',
+                     event_type = 'checkout',  event_type = 'purchase') AS step_times
+FROM events GROUP BY user_id ORDER BY user_id;
+```
+
+| user_id | step_times |
+|---|---|
+| 1 | [2024-01-15 09:05:00, 2024-01-15 09:08:00, 2024-01-15 09:12:00, 2024-01-15 09:15:00] |
+| 2 | [2024-01-15 10:10:00, 2024-01-15 10:20:00] |
+| 3 | [2024-01-15 12:00:00] |
+
+**Sessions** — a new session after 30 minutes of silence (user 2 shown):
 
 ```sql
 SELECT user_id, event_time,
        sessionize(event_time, INTERVAL '30 minutes') OVER (
          PARTITION BY user_id ORDER BY event_time) AS session_id
-FROM events;
+FROM events WHERE user_id = 2 ORDER BY event_time;
 ```
 
-**Funnel drop-off** — how many users stop at each step:
+| user_id | event_time | session_id |
+|---|---|---|
+| 2 | 2024-01-15 10:00:00 | 1 |
+| 2 | 2024-01-15 10:10:00 | 1 |
+| 2 | 2024-01-15 10:20:00 | 1 |
+| 2 | 2024-01-15 14:00:00 | 2 |
+| 2 | 2024-01-15 14:05:00 | 2 |
 
-```sql
-WITH funnels AS (
-  SELECT user_id,
-         window_funnel(INTERVAL '1 hour', event_time,
-           event_type = 'page_view', event_type = 'add_to_cart',
-           event_type = 'checkout',  event_type = 'purchase') AS step
-  FROM events GROUP BY user_id)
-SELECT step AS reached_step, count(*) AS users,
-       round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS pct
-FROM funnels GROUP BY step ORDER BY step;
-```
-
-**Weekly retention** — signup cohorts that came back in weeks 1 and 2:
-
-```sql
-SELECT cohort_week, count(*) AS cohort_size,
-       count(*) FILTER (WHERE r[2]) AS week_1, count(*) FILTER (WHERE r[3]) AS week_2
-FROM (SELECT user_id, cohort_week,
-             retention(
-               activity_date >= cohort_week AND activity_date < cohort_week + INTERVAL 7 DAY,
-               activity_date >= cohort_week + INTERVAL 7 DAY AND activity_date < cohort_week + INTERVAL 14 DAY,
-               activity_date >= cohort_week + INTERVAL 14 DAY AND activity_date < cohort_week + INTERVAL 21 DAY) AS r
-      FROM activity GROUP BY user_id, cohort_week)
-GROUP BY cohort_week ORDER BY cohort_week;
-```
-
-**Pattern with a time limit** — a view followed by a purchase within an hour
-(thresholds in `(?t…)` are seconds):
+**Patterns** — did a view lead to a purchase within an hour (thresholds in
+`(?t…)` are seconds), and how many times did a view lead to an add-to-cart?
 
 ```sql
 SELECT user_id,
        sequence_match('(?1).*(?t<=3600)(?2)', event_time,
-         event_type = 'page_view', event_type = 'purchase') AS converted_within_hour
-FROM events GROUP BY user_id;
+                      event_type = 'page_view', event_type = 'purchase') AS bought_within_an_hour,
+       sequence_count('(?1).*(?2)', event_time,
+                      event_type = 'page_view', event_type = 'add_to_cart') AS view_then_cart
+FROM events GROUP BY user_id ORDER BY user_id;
 ```
 
-**What comes next** — the page after Home → Product, per user, then counted
-(group by user first, or all users' events form one sequence):
+| user_id | bought_within_an_hour | view_then_cart |
+|---|---|---|
+| 1 | true | 1 |
+| 2 | false | 1 |
+| 3 | false | 0 |
+
+**What comes next** — the page after Home → Product, per user (group by user
+first, or all users' events form one sequence):
 
 ```sql
-SELECT next_page, count(*) AS users
-FROM (SELECT sequence_next_node('forward', 'first_match', event_time, page,
-               page = 'Home', page = 'Home', page = 'Product') AS next_page
-      FROM events GROUP BY user_id)
-GROUP BY next_page ORDER BY users DESC;
+SELECT user_id,
+       sequence_next_node('forward', 'first_match', event_time, page,
+                          page = 'Home', page = 'Home', page = 'Product') AS page_after_home_product
+FROM events GROUP BY user_id ORDER BY user_id;
 ```
+
+| user_id | page_after_home_product |
+|---|---|
+| 1 | Product |
+| 2 | Product |
+| 3 | NULL |
+
+**Retention** — on which of days 0, 1 and 7 was each user active (a separate
+table of activity dates)?
+
+```sql
+SELECT user_id,
+       retention(d = DATE '2024-01-01', d = DATE '2024-01-02', d = DATE '2024-01-08') AS day0_day1_day7
+FROM (VALUES (1, DATE '2024-01-01'), (1, DATE '2024-01-02'), (2, DATE '2024-01-01'),
+             (2, DATE '2024-01-08'), (3, DATE '2024-01-02')) t(user_id, d)
+GROUP BY user_id ORDER BY user_id;
+```
+
+| user_id | day0_day1_day7 |
+|---|---|
+| 1 | [true, true, false] |
+| 2 | [true, false, true] |
+| 3 | [false, false, false] |
 
 Pattern syntax: `(?N)` an event satisfying condition *N*; `.` exactly one
 event; `.*` any number; `(?t>=S)`, `(?t<=S)`, `(?t>S)`, `(?t<S)`, `(?t==S)` a
 time constraint of *S* seconds between the neighbouring steps. Events that
-satisfy none of the passed conditions are dropped before matching.
+satisfy none of the passed conditions are dropped before matching, so with
+conditions for a view and a purchase only, a cart event between them is
+invisible and `(?1)(?2)` still matches (add a final always-true condition to
+make every row count; see [Which events count](https://tomtom215.github.io/duckdb-behavioral/functions/sequence-match.html#which-events-count)).
 
 From Python, Node.js, dbt, or files:
 
@@ -230,27 +290,43 @@ extensions:
     repo: community
 ```
 
+## Why not plain SQL?
+
+Sessions are easy in plain SQL: `lag()` and a running `sum()` give the same
+answer as `sessionize`. Funnels are where hand-written SQL goes wrong. The usual
+query takes each step's first timestamp and compares them, which scores a user
+who viewed at 09:00 and again at 10:30, added to cart at 10:40 and bought at
+10:50 as 1: the 09:00 view is too early and nothing tries the second one.
+`window_funnel(INTERVAL '1 hour', …)` tries every start and returns 3. Time
+limits between steps, repeated steps and "what happened next" take self-joins or
+recursive queries in SQL; here each is one aggregate call whose result does not
+depend on thread count or row order.
+
 ## Known limitations
 
-- **Crashes in DuckDB's C API aggregate path on older releases.** Some query
-  shapes make DuckDB read out of bounds for *every* C API aggregate, not just
-  this extension ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109)):
-  `ORDER BY` inside the call, `OVER ()`, a frame written `BETWEEN UNBOUNDED
-  PRECEDING AND UNBOUNDED FOLLOWING`, and, on 1.3.2 and 1.4.4, `OVER (PARTITION
-  BY g)` with no `ORDER BY`. Which releases crash was tested per shape:
+- **Crashes in DuckDB's C API aggregate path before 2.0.** Some query shapes
+  make DuckDB read out of bounds for *every* C API aggregate, not just this
+  extension ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109),
+  fixed by [#26455](https://github.com/duckdb/duckdb/pull/26455) on the 2.0 line
+  only): `ORDER BY` inside the call, `OVER ()`, a frame written `BETWEEN
+  UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`, and, on 1.3.2 through 1.4.5,
+  `OVER (PARTITION BY g)` with no `ORDER BY`. **The community channel builds
+  this extension for DuckDB 1.4.5 and 1.5.6 as well as 2.0.0, so on those two
+  releases these crashes are yours.** Which releases crash was tested per shape:
 
-  | Query shape | 1.3.2 | 1.4.4 | 1.5.0 | 1.5.6 | 2.0.0 |
-  |---|---|---|---|---|---|
-  | `f(.. ORDER BY ts)`, `OVER ()`, `UNBOUNDED..UNBOUNDED` | crash | crash | crash | crash | works |
-  | `OVER (PARTITION BY g)` or `OVER (PARTITION BY 1)` (no `ORDER BY`) | **crash** | **crash** | works | works | works |
-  | `OVER (PARTITION BY g ORDER BY ts)` with any bounded frame | works | works | works | works | works |
+  | Query shape | 1.3.2 | 1.4.4 | 1.4.5 | 1.5.0 | 1.5.6 | 2.0.0 |
+  |---|---|---|---|---|---|---|
+  | `f(.. ORDER BY ts)`, `OVER ()`, `UNBOUNDED..UNBOUNDED` | crash | crash | crash | crash | crash | works |
+  | `OVER (PARTITION BY g)` or `OVER (PARTITION BY 1)` (no `ORDER BY`) | **crash** | **crash** | **crash** | works | works | works |
+  | `OVER (PARTITION BY g ORDER BY ts)` with any bounded frame | works | works | works | works | works | works |
 
   Run for `window_funnel` on every release shown (`scripts/crash-shapes.sh`
   prints this table); the first two rows were also run for the other seven
-  functions on 1.3.2 and 2.0.0. None of these shapes is needed: the functions
-  sort by timestamp themselves, so on DuckDB older
-  than 2.0 use `GROUP BY` (and a join to put the result back on each row) or a
-  bounded frame. Details: [FAQ](https://tomtom215.github.io/duckdb-behavioral/faq.html#which-query-shapes-crash-duckdb).
+  functions on 1.3.2 and 2.0.0, and on 2.0.0 CI asserts all eight functions on
+  these shapes. None of these shapes is needed: the functions sort by timestamp
+  themselves, so on DuckDB older than 2.0 use `GROUP BY` (and a join to put the
+  result back on each row) or a bounded frame. Details:
+  [FAQ](https://tomtom215.github.io/duckdb-behavioral/faq.html#which-query-shapes-crash-duckdb).
 - **`GROUP BY … LIMIT n` without `ORDER BY` leaks memory.** When DuckDB stops a
   grouped scan early (`LIMIT`, an interrupt) it never destroys the aggregate
   states it did not reach, so each unreached group's collected events stay
@@ -260,8 +336,9 @@ extensions:
   aggregate first; a long-lived process that runs such queries repeatedly will
   grow. This is DuckDB's behaviour for every aggregate that owns heap memory.
 - **`sessionize` needs an ordered window.** Use `OVER (… ORDER BY ts)` with an
-  ascending order: a descending order opens a session on every row, and as a
-  plain `GROUP BY` aggregate the result depends on scan order and thread count.
+  ascending order: a descending order, or another column, is an error
+  (`rows must arrive in ascending timestamp order`), and as a plain aggregate
+  (no `OVER`) a run is correct or that error, depending on thread scheduling.
 - **Running window frames are quadratic.** In `OVER (ORDER BY ts)` every row is a
   separate aggregate over all earlier rows, and DuckDB holds about 2,048 such
   frames at once: one 40,000-row partition took 11–12 s and 1.2 GB for
@@ -279,43 +356,33 @@ extensions:
 
 ## Performance
 
-Measured on a shared 4-vCPU Intel Xeon @ 2.80 GHz, Linux, Rust 1.97.0, DuckDB
-2.0.0, release build.
+Measured in [`PERF.md`](PERF.md) Session 22 on a shared 4-vCPU Intel Xeon
+@ 2.10 GHz, Linux, Rust 1.97.0, DuckDB 2.0.0, release build.
 
-**In SQL.** [`scripts/bench-sql.sh`](scripts/bench-sql.sh) builds 10 million
-rows in 100,000 groups of 100 events and runs each query in a fresh `duckdb`
-process with 4 threads (wall time in seconds, median [min-max] of 9 runs;
+[`scripts/bench-sql.sh`](scripts/bench-sql.sh) builds 10 million rows in 100,000
+groups of 100 events and runs each query in a fresh `duckdb` process with 4
+threads (wall time in seconds, median [min-max] of 9 runs, 25 for `sessionize`;
 includes DuckDB's scan and grouping):
 
 | Query | Time |
 |---|---|
-| `window_funnel`, 3 steps | 1.58 [1.49-1.63] |
-| `window_funnel_events` | 1.60 [1.49-1.67] |
-| `sequence_count('(?1).*(?2).*(?3)')` | 1.75 [1.63-1.81] |
-| `sequence_match_events('(?1).*(?2)')` | 1.61 [1.54-1.66] |
-| `sequence_next_node` | 3.33 [3.13-3.68] |
-| `retention`, 3 conditions | 0.46 [0.43-0.52] |
-| `sessionize` over `PARTITION BY u ORDER BY ts` | 1.92 [1.81-2.05] |
-| `window_funnel` over one 10-million-row group | 0.56 [0.54-0.64] |
+| `window_funnel`, 3 steps | 1.07 [0.99-1.41] |
+| `window_funnel_events` | 1.02 [0.96-1.09] |
+| `sequence_count('(?1).*(?2).*(?3)')` | 1.20 [1.06-1.47] |
+| `sequence_match_events('(?1).*(?2)')` | 1.10 [1.06-1.21] |
+| `sequence_next_node` | 2.60 [2.43-2.93] |
+| `retention`, 3 conditions | 0.26 [0.24-0.29] |
+| `sessionize` over `PARTITION BY u ORDER BY ts` | 1.42 [1.31-1.58] |
+| `window_funnel` over one 10-million-row group | 0.41 [0.39-0.48] |
 
-**The aggregates alone.** Criterion benchmarks of the Rust state functions,
-without DuckDB (95% confidence interval of the mean):
-
-| Function | Elements | Time | Throughput |
-|---|---|---|---|
-| `sessionize` update | 1 billion | 1.68 s [1.66-1.70] | 595 Melem/s |
-| `retention` combine | 100 million | 251 ms [246-256] | 398 Melem/s |
-| `window_funnel` finalize, 8 conditions | 100 million | 2.12 s [1.93-2.27] | 47 Melem/s |
-| `sequence_match` | 100 million | 1.49 s [1.26-1.70] | 67 Melem/s |
-| `sequence_count` | 100 million | 1.50 s [1.28-1.72] | 67 Melem/s |
-| `sequence_match_events` | 100 million | 1.30 s [1.18-1.52] | 77 Melem/s |
-
-The 100-million rows come from 10 samples each on a shared machine, hence the
-wide intervals. [`PERF.md`](PERF.md) has the full tables, the method, and the
-same-machine comparison with v0.10.1 (Session 21): no change within the spread
-of repeated runs, except `sequence_next_node`, which takes about half the time
-(6.85 s to 3.33 s above). Reproduce with `cargo bench` and
-`scripts/bench-sql.sh <duckdb> <extension>`.
+Run alternately with the build from before this release's changes on the same
+machine, no query differed beyond the spread of repeated runs (ratios 0.93 to
+1.07; `PERF.md` has both builds side by side). Compare only with numbers taken
+on one machine: a different machine gave faster times for the same queries
+despite a slower CPU. The Criterion microbenchmarks of the Rust state functions
+(a billion `sessionize` updates, 100 million events for the others, with their
+method and history) are in [`PERF.md`](PERF.md). Reproduce with `cargo bench`
+and `scripts/bench-sql.sh <duckdb> <extension>`.
 
 ## ClickHouse parity
 
@@ -357,19 +424,21 @@ microseconds with `(?t)` thresholds in seconds, windows are `INTERVAL`s, and
 
 | | |
 |---|---|
-| Unit tests | 541, plus 1 doc-test, including 37 property tests (proptest). The `window_funnel` engine is compared with an exhaustive reference and every state with order- and combine-tree-invariance checks (`src/oracle_tests.rs`) |
-| Integration tests | 29, in process: the release library is loaded into a real DuckDB and every function runs through SQL, including error paths, `±infinity` timestamps, and parallel determinism |
-| End-to-end | `make test_release` (8 SQL logic files in `test/sql/`) and 21 asserted queries (`scripts/compat-check.sh`) on Linux and macOS, then the same build in DuckDB 1.3.2, 1.4.4, 1.5.0 and 1.5.6 |
+| Unit tests | 541, plus 1 doc-test, including 39 property tests (proptest). The `window_funnel` engine is compared with an exhaustive reference and every state with order- and combine-tree-invariance checks (`src/oracle_tests.rs`) |
+| Integration tests | 34, in process: the release library is loaded into a real DuckDB and every function runs through SQL, including error paths, `±infinity` timestamps, and parallel determinism |
+| End-to-end | `make test_release` (8 SQL logic files in `test/sql/`) and 21 asserted queries (`scripts/compat-check.sh`; 25 on DuckDB 2.x, where the crash shapes above also run) on Linux and macOS, then the same build in DuckDB 1.3.2, 1.4.4, 1.4.5, 1.5.0 and 1.5.6 |
 | Differential | Against ClickHouse, see above |
 | Mutation testing | cargo-mutants: 93.9% of viable mutants detected across the 9 non-FFI modules (0.10.0 audit, before the test changes in this release) |
 | Lints | Clippy pedantic + nursery + cargo groups with `-D warnings`; `unsafe_code` denied outside `src/ffi`, every `unsafe` block one operation with a `// SAFETY:` note (lint-enforced) |
-| CI | Format, clippy, tests on 2 OSes, docs, MSRV 1.88, WASM compile check, benchmarks compile, `cargo deny`, workflow and shell lint, coverage; weekly toolchain, dependency and DuckDB-nightly canaries |
-| Releases | 4 platforms, SHA-256 checksums and build-provenance attestations |
+| CI | Format, clippy, tests on 2 OSes, docs, MSRV 1.88, compile checks for Windows, macOS x86_64, Linux ARM64 and WASM, `cargo deny`, workflow and shell lint, a documentation-consistency check, coverage; weekly toolchain, dependency, DuckDB-nightly and fuzzing canaries |
+| Fuzzing | cargo-fuzz targets for the parser, the sequence matcher and the funnel (`fuzz/`), run weekly |
+| Releases | 4 platforms, SHA-256 checksums and build-provenance attestations; a stable release must be a CI-green commit of `main` |
 
 ## Building and contributing
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test    # tests link a prebuilt libduckdb, no C++ build
+cargo test --lib                    # unit tests: no libduckdb, no C++ build
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features   # + loads the build into a real DuckDB
 ./scripts/check.sh                  # everything CI runs that works offline
 make configure release test_release # the extension, as the community CI builds it
 ```
@@ -391,6 +460,16 @@ applies it to SQL signatures.
 [Engineering Overview](https://tomtom215.github.io/duckdb-behavioral/engineering.html) ·
 [Performance](https://tomtom215.github.io/duckdb-behavioral/internals/performance.html) ·
 [ClickHouse Compatibility](https://tomtom215.github.io/duckdb-behavioral/internals/clickhouse-compatibility.html)
+
+## Project status
+
+> **Personal project.** This is a personal project developed on my own time. It
+> is not affiliated with, endorsed by, or related to my employer or
+> professional role in any way.
+>
+> **AI-assisted development.** Built with Claude (Anthropic). Correctness is
+> validated by automated testing — not assumed from AI output. See
+> [Quality](#quality).
 
 ## License
 

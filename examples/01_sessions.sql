@@ -5,7 +5,7 @@
 -- =============================================================================
 
 -- Sample data: web page views with timestamps
-CREATE OR REPLACE TABLE page_views AS SELECT * FROM (VALUES
+CREATE OR REPLACE TEMP TABLE demo_page_views AS SELECT * FROM (VALUES
   (1, TIMESTAMP '2024-01-15 10:00:00', '/home'),
   (1, TIMESTAMP '2024-01-15 10:05:00', '/products'),
   (1, TIMESTAMP '2024-01-15 10:08:00', '/product/shoes'),
@@ -30,7 +30,7 @@ SELECT user_id, event_time, page_url,
   sessionize(event_time, INTERVAL '30 minutes') OVER (
     PARTITION BY user_id ORDER BY event_time
   ) as session_id
-FROM page_views
+FROM demo_page_views
 ORDER BY user_id, event_time;
 
 -- Step 2: Session-level metrics
@@ -40,7 +40,7 @@ WITH sessionized AS (
     sessionize(event_time, INTERVAL '30 minutes') OVER (
       PARTITION BY user_id ORDER BY event_time
     ) as session_id
-  FROM page_views
+  FROM demo_page_views
 )
 SELECT
   user_id,
@@ -61,7 +61,7 @@ WITH sessionized AS (
     sessionize(event_time, INTERVAL '30 minutes') OVER (
       PARTITION BY user_id ORDER BY event_time
     ) as session_id
-  FROM page_views
+  FROM demo_page_views
 ),
 session_stats AS (
   SELECT user_id, session_id,
@@ -79,5 +79,3 @@ SELECT
 FROM session_stats
 GROUP BY user_id
 ORDER BY user_id;
-
-DROP TABLE page_views;

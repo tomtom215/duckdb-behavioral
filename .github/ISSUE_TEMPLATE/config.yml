@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/tomtom215/duckdb-behavioral/security/advisories/new
+    about: Vulnerabilities go through a private advisory, not a public issue. See SECURITY.md.

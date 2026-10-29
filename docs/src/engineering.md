@@ -25,7 +25,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | Feasibility-then-greedy pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 541 unit tests, 29 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
+| **Software quality** | 541 unit tests, 34 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -149,7 +149,7 @@ This architecture enables:
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
   is decoupled from the database.
 - **Auditable unsafe scope**: The `unsafe` boundary is confined to `src/ffi/`
-  (9 files: `mod.rs`, 7 aggregate modules, `version.rs`). Reviewers can audit the safety-critical code without
+  (10 files: `mod.rs`, `view.rs`, 7 aggregate modules, `version.rs`). Reviewers can audit the safety-critical code without
   reading the entire codebase.
 
 ---
@@ -207,8 +207,8 @@ missed:
    configuration)
 
 This same load → register → execute chain also runs **in-process inside
-`cargo test`** (`tests/extension_load.rs`, 29 tests; run with
-`DUCKDB_DOWNLOAD_LIB=1 cargo test`). It
+`cargo test`** (`tests/extension_load.rs`, 34 tests; run with
+`DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`). It
 builds the real release `cdylib`, appends the DuckDB metadata footer, and
 `LOAD`s it via `quack_rs::testing::InMemoryDb::open_unsigned()` — so the entire
 class of FFI-registration bugs above is now caught by the regular test suite,
@@ -239,8 +239,9 @@ tests by definition cannot exercise.
 
 ### Methodology
 
-Every performance claim in this project is a Criterion microbenchmark of the
-Rust aggregate state (not an end-to-end SQL query), backed by:
+A performance claim in this project is either a Criterion microbenchmark of the
+Rust aggregate state (not an end-to-end SQL query) or an end-to-end timing from
+`scripts/bench-sql.sh`, backed by:
 
 - **Criterion.rs benchmarks** with 95% confidence intervals
 - **Multiple runs** (minimum 3) to establish baselines
@@ -332,9 +333,9 @@ aggregations cannot express efficiently:
 These problems are inherently large-scale. A mid-sized SaaS application
 generates millions of events per day. An e-commerce platform during a sale
 event can produce hundreds of millions of events per hour. The ability to
-update a `sessionize` state with one billion events in 1.20 seconds on a
-single core (a Criterion microbenchmark of the Rust state, not a SQL query)
-suggests these analyses can run as interactive queries rather than batch jobs.
+update a `sessionize` state with a billion events in under two seconds on a
+single core (a Criterion microbenchmark of the Rust state, not a SQL query; see
+[Performance](./internals/performance.md)) suggests these analyses can run as interactive queries rather than batch jobs.
 
 ---
 
@@ -349,10 +350,10 @@ SDK (v0.19.0) which wraps the raw C API with safe builders
 state management, vector I/O, LIST output helpers, and the
 `aggregate_{update,combine,finalize}_callback!` macros that turn a panic into
 a SQL error. All 8 aggregate functions use quack-rs builders for
-registration: the seven variadic functions via `AggregateFunctionSetBuilder`,
-and `sessionize` via
-`AggregateFunctionBuilder` (a single fixed signature — DuckDB windows any
-aggregate, so no window-specific registration exists).
+registration, all as function sets (`AggregateFunctionSetBuilder`): the seven
+variadic functions with one overload per condition count, and `sessionize` with
+a fixed argument list and one overload per timestamp type. DuckDB windows any
+aggregate, so no window-specific registration exists.
 Each aggregate implements five callback functions:
 
 ```mermaid
@@ -471,7 +472,7 @@ incorrect results that passed all unit tests but failed E2E validation.
 | MSRV | Rust 1.88 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements (`sessionize_update`) |
-| CI jobs | 14 (check, wasm-check, test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage, cross-platform, extension-build, ci-gate) |
+| CI jobs | 11 (fmt, clippy, test, doc, MSRV, cross-check, deny, hygiene, coverage, e2e, ci-gate) |
 | Documented negative results | 5 (radix sort, branchless, string pool, compiled pattern, first-condition pre-check) |
 | ClickHouse parity | Complete (all 6 ClickHouse behavioral functions, all modes, 32 conditions) + 2 extension-only functions |
 

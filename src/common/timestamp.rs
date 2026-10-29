@@ -13,7 +13,7 @@ pub const MICROS_PER_SECOND: i64 = 1_000_000;
 /// Microseconds per day (`24 * 60 * 60 * 1_000_000`).
 pub const MICROS_PER_DAY: i64 = 86_400_000_000;
 
-/// Extracts the microseconds component from a `DuckDB` interval.
+/// Converts a `DuckDB` interval to microseconds.
 ///
 /// `DuckDB` intervals have three components: months, days, microseconds.
 /// For behavioral analytics, we only support intervals expressible in exact

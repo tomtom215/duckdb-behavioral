@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
-//! Pattern parsing and matching for `sequence_match` and `sequence_count`.
+//! Pattern parsing and matching for `sequence_match`, `sequence_count` and
+//! `sequence_match_events`.
 //!
 //! Implements a mini-regex language over event conditions, compatible with
 //! `ClickHouse`'s `sequenceMatch`/`sequenceCount` pattern syntax.
@@ -10,8 +11,8 @@
 //!
 //! ```text
 //! (?N)      — Match an event where condition N (1-indexed) is true
-//! .         — Match exactly one event (any conditions)
-//! .*        — Match zero or more events (any conditions)
+//! .         — Match exactly one event (any stored event)
+//! .*        — Match zero or more events (any stored events)
 //! (?t>=N)   — Time constraint: at least N seconds since previous match
 //! (?t<=N)   — Time constraint: at most N seconds since previous match
 //! (?t>N)    — Time constraint: more than N seconds since previous match
@@ -41,9 +42,9 @@
 //! elapsed time floored to whole seconds (`ClickHouse` compares raw
 //! timestamp-column units, which equals whole seconds for `DateTime`; the
 //! floor generalizes that to microsecond timestamps, so `(?t==N)` means
-//! "within `[N, N+1)` seconds"). And constraints are anchored at the last
-//! **matched condition** — `ClickHouse` re-anchors at wildcard positions,
-//! which makes `(?t<=N)` after `.*` vacuous there.
+//! "within `[N, N+1)` seconds"). And constraints are anchored at the event
+//! consumed by the last `(?N)` or `.` — `ClickHouse` re-anchors at wildcard
+//! positions, which makes `(?t<=N)` after `.*` vacuous there.
 
 pub mod executor;
 pub mod parser;

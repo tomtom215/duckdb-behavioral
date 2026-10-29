@@ -2,7 +2,8 @@
 
 Standalone SQL scripts demonstrating `duckdb-behavioral` functions. Each script
 is self-contained with sample data — copy and paste into any DuckDB session with
-the extension loaded.
+the extension loaded. The data goes into temporary `demo_*` tables, so a script
+never replaces or drops a table of yours.
 
 ## Running
 

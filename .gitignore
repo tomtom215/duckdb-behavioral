@@ -46,3 +46,12 @@ mutants.out.old/
 
 # mdBook build output
 docs/book/
+
+# cargo-fuzz
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+
+# Leftovers of patch(1)
+*.orig
+*.rej

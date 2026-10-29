@@ -6,8 +6,7 @@
 //! `window_funnel_events` shares [`WindowFunnelState`] and the update/combine
 //! callbacks with `window_funnel` (see [`super::window_funnel`]) — it differs
 //! only in finalize, which returns the winning chain's step timestamps as
-//! `LIST(TIMESTAMP)` via [`quack_rs::vector::complex::ListVector`] instead of
-//! the step count.
+//! `LIST(TIMESTAMP)` through [`super::view::Output`] instead of the step count.
 
 use super::view::{Combine, Finalize, TimestampListKind, Update};
 use super::window_funnel::{combine_impl, update_impl};
@@ -17,8 +16,9 @@ use quack_rs::types::{LogicalType, TypeId};
 
 /// Minimum number of boolean condition parameters for `window_funnel_events`.
 const MIN_CONDITIONS: usize = 1;
-/// Maximum number of boolean condition parameters for `window_funnel_events`.
-const MAX_CONDITIONS: usize = 32;
+/// Maximum number of boolean condition parameters: one per bit of an
+/// an event's condition mask.
+const MAX_CONDITIONS: usize = crate::common::event::MAX_EVENT_CONDITIONS;
 
 // Note: AggregateState for WindowFunnelState is implemented in ffi/window_funnel.rs.
 

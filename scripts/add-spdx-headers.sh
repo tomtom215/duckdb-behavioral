@@ -113,7 +113,7 @@ add_header_html() {
 echo "Adding SPDX headers..."
 
 # Rust source files
-for f in $(find src benches -name '*.rs' | sort); do
+for f in $(find src benches tests fuzz -name '*.rs' -not -path 'fuzz/target/*' | sort); do
     add_header_rust "$f"
 done
 
@@ -123,15 +123,15 @@ for f in $(find .github -name '*.yml' -o -name '*.yaml' | sort) description.yml;
 done
 
 # TOML files
-for f in Cargo.toml deny.toml rust-toolchain.toml; do
+for f in Cargo.toml fuzz/Cargo.toml deny.toml rust-toolchain.toml; do
     [ -f "$f" ] && add_header_hash "$f"
 done
 
 # Makefile
 [ -f Makefile ] && add_header_hash "Makefile"
 
-# Shell scripts
-for f in $(find scripts -name '*.sh' | sort); do
+# Shell and Python scripts
+for f in $(find scripts \( -name '*.sh' -o -name '*.py' \) | sort); do
     add_header_hash "$f"
 done
 

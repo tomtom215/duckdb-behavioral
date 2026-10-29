@@ -8,14 +8,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Run the whole pipeline on any branch by hand, before a pull request exists.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Cancel redundant runs on the same branch/PR
+# Cancel redundant runs on the same pull request. A push to main is never
+# cancelled: back-to-back merges would otherwise cancel the run that warms the
+# cache for the pull requests after it.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,8 +49,9 @@ jobs:
           cache: "false"
       - run: cargo fmt --all -- --check
 
-  # `cargo clippy --all-targets` also type-checks every target, so there is no
-  # separate `cargo check` job.
+  # `cargo clippy --all-targets` also type-checks every target (benchmarks
+  # included), so there is no separate `cargo check` or benchmark-compile job.
+  # `--all-features` brings in `e2e`, which gates tests/extension_load.rs.
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -58,7 +63,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
-      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -77,8 +82,10 @@ jobs:
         with:
           tool: cargo-nextest
       # Unit tests, proptests, and tests/extension_load.rs (which builds the
-      # release cdylib and LOADs it into an in-memory DuckDB).
-      - run: cargo nextest run --all-targets --locked --profile ci
+      # release cdylib and LOADs it into an in-memory DuckDB). Not
+      # `--all-targets`: that would also run the Criterion benchmarks as tests,
+      # at full scale (a billion elements), for nothing a unit test does not.
+      - run: cargo nextest run --lib --tests --all-features --locked --profile ci
       # nextest does not run doc-tests.
       - run: cargo test --doc --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -117,35 +124,37 @@ jobs:
         with:
           toolchain: "1.88"
           cache-key: msrv
-      - run: cargo check --all-targets --locked
+      - run: cargo check --all-targets --all-features --locked
 
-  wasm-check:
-    name: WASM check (wasm32-unknown-emscripten)
+  # The library must compile for every platform it ships on or may ship on, not
+  # only the two CI executes. The community channel serves Windows x86_64 and
+  # the release workflow builds osx_amd64 and linux_arm64 without running them
+  # on this tree; wasm is not shipped (description.yml) but compiles.
+  cross-check:
+    name: Cross check (${{ matrix.target }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # No prebuilt libduckdb exists for wasm; the loadable-extension build
-      # uses pregenerated bindings and needs no library at all.
+      # The loadable-extension build uses pregenerated bindings and needs no
+      # library to link, so nothing is downloaded (none exists for wasm).
       DUCKDB_DOWNLOAD_LIB: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - wasm32-unknown-emscripten
+          - x86_64-pc-windows-msvc
+          - x86_64-apple-darwin
+          - aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          targets: wasm32-unknown-emscripten
-      - run: cargo check --target wasm32-unknown-emscripten --lib --locked
-
-  bench-compile:
-    name: Benchmarks compile
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-      - run: cargo bench --no-run --locked
+          targets: ${{ matrix.target }}
+          cache-key: cross-${{ matrix.target }}
+      - run: cargo check --target "${{ matrix.target }}" --lib --locked
 
   # ── Supply chain and hygiene ─────────────────────────────────────────
   deny:
@@ -171,8 +180,10 @@ jobs:
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-machete,typos,zizmor,shellcheck
+      # `--with-metadata` asks cargo for the real dependency graph, which finds
+      # a dependency that is declared but only named in a comment or a path.
       - name: Unused dependencies
-        run: cargo machete
+        run: cargo machete --with-metadata
       - name: Spelling
         run: typos
       # install-action has no actionlint manifest: fetch the release and
@@ -194,6 +205,10 @@ jobs:
         run: shellcheck scripts/*.sh
       - name: License headers
         run: scripts/add-spdx-headers.sh --check
+      # Test counts, the DuckDB releases CI checks, links and anchors, and the
+      # demo page's results must agree with their sources.
+      - name: Documentation consistency
+        run: python3 -I scripts/check-docs.py
 
   # ── Coverage (informational) ─────────────────────────────────────────
   coverage:
@@ -212,7 +227,7 @@ jobs:
         with:
           tool: cargo-llvm-cov,cargo-nextest
       - name: Generate coverage report
-        run: cargo llvm-cov nextest --locked --lcov --output-path lcov.info
+        run: cargo llvm-cov nextest --all-features --locked --lcov --output-path lcov.info
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         if: always()
         with:
@@ -234,12 +249,10 @@ jobs:
       - test
       - doc
       - msrv
-      - wasm-check
-      - bench-compile
+      - cross-check
       - deny
       - hygiene
       - e2e
-      - coverage
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -248,5 +261,6 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | jq -r '"| Job | Result |", "|---|---|", (to_entries[] | "| \(.key) | \(.value.result) |")' >> "$GITHUB_STEP_SUMMARY"
-          # Coverage is informational. Every other job must succeed.
-          echo "$NEEDS" | jq -e 'del(.coverage) | all(.[]; .result == "success")' > /dev/null
+          # Coverage is informational and not a need: the required check does
+          # not wait up to 40 minutes for it. Every listed job must succeed.
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null

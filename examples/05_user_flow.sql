@@ -4,7 +4,7 @@
 -- after/before specific page sequences.
 -- =============================================================================
 
-CREATE OR REPLACE TABLE navigation AS SELECT * FROM (VALUES
+CREATE OR REPLACE TEMP TABLE demo_navigation AS SELECT * FROM (VALUES
   -- User A: Home → Product → Cart → Checkout → Confirmation
   ('alice', TIMESTAMP '2024-01-15 10:00:00', 'Home'),
   ('alice', TIMESTAMP '2024-01-15 10:02:00', 'Product'),
@@ -33,7 +33,7 @@ SELECT user_id,
   sequence_next_node('forward', 'first_match', event_time, page,
     page = 'Home', page = 'Home', page = 'Product'
   ) as next_page
-FROM navigation GROUP BY user_id ORDER BY user_id;
+FROM demo_navigation GROUP BY user_id ORDER BY user_id;
 
 -- Aggregate forward flow distribution
 SELECT '--- Forward Flow Distribution ---' as section;
@@ -42,7 +42,7 @@ WITH flows AS (
     sequence_next_node('forward', 'first_match', event_time, page,
       page = 'Home', page = 'Home', page = 'Product'
     ) as next_page
-  FROM navigation GROUP BY user_id
+  FROM demo_navigation GROUP BY user_id
 )
 SELECT
   COALESCE(next_page, '(end)') as next_page,
@@ -58,9 +58,7 @@ SELECT user_id,
   sequence_next_node('backward', 'first_match', event_time, page,
     page = 'Checkout', page = 'Checkout'
   ) as page_before_checkout
-FROM navigation
+FROM demo_navigation
 WHERE user_id IN ('alice', 'dave')
 GROUP BY user_id
 ORDER BY user_id;
-
-DROP TABLE navigation;

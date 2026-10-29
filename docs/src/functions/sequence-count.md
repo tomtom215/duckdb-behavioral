@@ -44,7 +44,7 @@ GROUP BY user_id;
    ends with a time constraint, at the event that satisfied it.
 4. Matches are non-overlapping: once a set of events is consumed by a match,
    those events cannot participate in another match. A match that consumes no
-   events (for example `.*`, or `(?t<=6).*`) still advances one event, as in
+   events (only a pattern made of `.*` alone) still advances one event, as in
    ClickHouse, so `sequence_count('.*', ...)` counts one match per event.
 
 ### Example
@@ -97,8 +97,9 @@ the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
 session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
 local time, which can reorder events around a daylight-saving change.
 `TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
-`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
-microsecond apart become ties.
+`TIMESTAMP_NS` is too, converted to microseconds by DuckDB's cast (truncated
+up to 1.5.6, rounded to the nearest microsecond in 2.0.0): events less than a
+microsecond apart can become ties.
 
 ## Implementation
 
@@ -109,8 +110,7 @@ microsecond apart become ties.
 | Finalize | As [`sequence_match`](./sequence-match.md#implementation) |
 | Space | O(n) -- all collected events |
 
-At benchmark scale, `sequence_count` processes **100 million events in 1.18 s**
-(85 Melem/s).
+Measured throughput is on the [Performance](../internals/performance.md) page.
 
 ## See Also
 

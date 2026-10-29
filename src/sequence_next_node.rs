@@ -26,9 +26,9 @@
 //! Mirrors `ClickHouse`'s `sequenceNextNode` exactly (verified against
 //! `AggregateFunctionSequenceNextNode.cpp`):
 //!
-//! 1. Events are sorted by `(timestamp, value)` — the value tie-break matches
-//!    `ClickHouse`'s comparator and makes results deterministic under
-//!    parallel combines.
+//! 1. Events are sorted by `(timestamp, value, base_condition, conditions)` —
+//!    the value tie-break matches `ClickHouse`'s comparator, and the rest make
+//!    the order total, so results are deterministic under parallel combines.
 //! 2. A single base (anchor) index is selected per [`Base`]: `head`/`tail`
 //!    are the literal first/last events (which must satisfy the base
 //!    condition), `first_match`/`last_match` scan for an event satisfying
@@ -347,11 +347,11 @@ impl SequenceNextNodeState {
         // `other`'s values are appended after `self`'s, so its events' ranges
         // move by the buffer length `self` has now.
         let shift = u32::try_from(self.values.len()).map_err(|_| StoreError::TooLarge)?;
-        let total = u32::try_from(other.values.len())
+        // The combined buffer must stay addressable by a `u32` offset.
+        u32::try_from(other.values.len())
             .ok()
             .and_then(|extra| shift.checked_add(extra))
             .ok_or(StoreError::TooLarge)?;
-        debug_assert!(total >= shift);
         self.events
             .try_reserve(other.events.len())
             .map_err(|_| StoreError::OutOfMemory)?;
@@ -1313,26 +1313,6 @@ mod tests {
         assert_eq!(state.finalize(), None);
     }
 
-    // --- Session 9: Arc<str> specific tests ---
-
-    #[test]
-    fn test_rc_str_clone_is_shared() {
-        // Verify that Arc<str> values are shared references, not deep copies
-        let value: Arc<str> = Arc::from("shared");
-        let event1 = NextNodeEvent {
-            timestamp_us: 1,
-            value: Some(Arc::clone(&value)),
-            base_condition: true,
-            conditions: 1,
-        };
-        let event2 = event1.clone();
-        // Both events share the same Arc allocation
-        assert!(Arc::ptr_eq(
-            event1.value.as_ref().unwrap(),
-            event2.value.as_ref().unwrap()
-        ));
-    }
-
     #[test]
     fn test_stored_event_size() {
         // The per-event record kept in a state; the docs quote 24 bytes.
@@ -1340,14 +1320,7 @@ mod tests {
     }
 
     #[test]
-    fn test_next_node_event_size() {
-        // Verify NextNodeEvent with Arc<str> is 32 bytes (down from 40 with String)
-        assert_eq!(std::mem::size_of::<NextNodeEvent>(), 32);
-    }
-
-    #[test]
-    fn test_rc_str_combine_shares_references() {
-        // Verify combine_in_place preserves Arc sharing
+    fn test_combine_appends_events_and_keeps_their_values_readable() {
         let mut a = SequenceNextNodeState::new();
         a.direction = Some(Direction::Forward);
         a.base = Some(Base::FirstMatch);
@@ -1358,10 +1331,21 @@ mod tests {
         b.update(make_event(2, "B", false, &[false]));
 
         a.combine_in_place(&b);
-        // After combine, the value in b's event should be shared with a's copy
-        // (both are Arc clones, not deep copies)
         assert_eq!(a.events.len(), 2);
         assert_eq!(a.finalize(), Some("B".to_string()));
+    }
+
+    /// Values are arbitrary bytes of a `VARCHAR`: an embedded NUL neither ends
+    /// the string nor changes its length.
+    #[test]
+    fn test_value_with_embedded_nul_is_returned_whole() {
+        let mut state = SequenceNextNodeState::new();
+        state.direction = Some(Direction::Forward);
+        state.base = Some(Base::FirstMatch);
+        state.num_steps = 1;
+        state.update(make_event(1, "A", true, &[true]));
+        state.update(make_event(2, "hello\0world", false, &[false]));
+        assert_eq!(state.finalize().as_deref(), Some("hello\0world"));
     }
 
     #[test]

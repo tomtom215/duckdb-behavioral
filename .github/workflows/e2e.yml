@@ -54,6 +54,11 @@ jobs:
         run: |
           make configure
           make release
+      # The community Makefile calls `cargo build --release` without --locked
+      # (it is not ours to change), so a stale Cargo.lock would be re-resolved
+      # silently and the binary would differ from the one CI tested.
+      - name: Cargo.lock unchanged by the build
+        run: git diff --exit-code -- Cargo.lock
       - name: SQL logic tests (test/sql)
         run: make test_release
       # The stamp promises every DuckDB with C API v1.2.0; a call to a slot
@@ -86,7 +91,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        duckdb: ["v1.3.2", "v1.4.4", "v1.5.0", "v1.5.6"]
+        # v1.4.5 and v1.5.6 are the releases the community-extensions build
+        # compiles this extension for (scripts/build.py there).
+        duckdb: ["v1.3.2", "v1.4.4", "v1.4.5", "v1.5.0", "v1.5.6"]
     steps:
       # No checkout of the code under test is needed beyond the scripts.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

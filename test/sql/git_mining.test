@@ -10,7 +10,7 @@
 #     - Casalnuovo et al. "Developer Onboarding in GitHub." ESEC/FSE 2015.
 #     - Gousios, Pinzger, van Deursen. "An Exploratory Study of the Pull-Based
 #       Software Development Model." ICSE 2014.
-#     - Vasilescu et al. "Continuous Integration in a Social-Coded World." ICSE 2014.
+#     - Vasilescu et al. "Continuous Integration in a Social-Coded World." ICSME 2014.
 #     - Gall, Hajek, Jazayeri. "Detection of Logical Coupling Based on Product
 #       Release History." ICSM 1998.
 
@@ -147,7 +147,7 @@ bob	true
 
 # ============================================================
 # GIT-4: CI/CD Pipeline Failure Frequency (sequence_count)
-# Reference: Vasilescu et al., ICSE 2014 — CI behavioral patterns
+# Reference: Vasilescu et al., ICSME 2014 — CI behavioral patterns
 # Count: push -> ci_failure -> push cycles
 # ============================================================
 

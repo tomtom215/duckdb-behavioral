@@ -1959,6 +1959,75 @@ mod differential_tests {
         }
     }
 
+    /// What separates two consumers in a long pattern: nothing (adjacent),
+    /// `.*`, or a time constraint.
+    fn separator() -> impl Strategy<Value = String> {
+        prop_oneof![
+            8 => Just(String::new()),
+            3 => Just(".*".to_string()),
+            1 => (
+                prop::sample::select(vec![">=", "<=", ">", "<", "!="]),
+                0i64..6,
+            )
+                .prop_map(|(op, n)| format!("(?t{op}{n})")),
+        ]
+    }
+
+    /// Patterns with 28 to 69 consuming steps: past 32 consumers (the
+    /// matcher's inline-bitset limit) and long enough to cross 64-bit word
+    /// boundaries in its per-step reachability sets.
+    fn long_pattern() -> impl Strategy<Value = CompiledPattern> {
+        prop::collection::vec((consumer(), separator()), 28..70).prop_map(|parts| {
+            let mut text = String::new();
+            for (consumer, separator) in &parts {
+                text.push_str(consumer);
+                text.push_str(separator);
+            }
+            parse_pattern(&text).expect("valid by construction")
+        })
+    }
+
+    /// 65 to 299 events, mostly satisfying every condition so that long
+    /// patterns match often, with ties and sub-second offsets.
+    fn long_events() -> impl Strategy<Value = Vec<Event>> {
+        prop::collection::vec(
+            (
+                0i64..40,
+                prop::sample::select(vec![0i64, 400_000, 999_999]),
+                prop_oneof![5 => Just(0b111u32), 1 => 0u32..8],
+            ),
+            65..300,
+        )
+        .prop_map(|raw| {
+            let mut events: Vec<Event> = raw
+                .into_iter()
+                .map(|(s, us, conds)| Event::new(s * 1_000_000 + us, conds))
+                .collect();
+            events.sort_by_key(|e| e.timestamp_us);
+            events
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+
+        /// The same differential check on long patterns and long groups,
+        /// which the small generators above never reach.
+        #[test]
+        fn long_patterns_match_reference(pattern in long_pattern(), events in long_events()) {
+            for count_all in [false, true] {
+                let Some(expected) = reference_result(&pattern, &events, count_all) else {
+                    continue;
+                };
+                let actual = execute_pattern(&pattern, &events, count_all).unwrap();
+                prop_assert_eq!((actual.matched, actual.count), expected);
+            }
+            if let Ok(expected) = reference_nfa::execute_pattern_events(&pattern, &events) {
+                prop_assert_eq!(execute_pattern_events(&pattern, &events).unwrap(), expected);
+            }
+        }
+    }
+
     /// The input shape behind the quadratic slowdown: `.*` before a time
     /// constraint, a match that never completes, and a large group. The
     /// backtracking search re-scanned the remaining events from every start

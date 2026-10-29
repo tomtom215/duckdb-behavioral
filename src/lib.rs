@@ -57,3 +57,21 @@ quack_rs::entry_point_v2!(behavioral_init_c_api, |con| {
     // macro via duckdb_connect. The macro's closure runs in an unsafe context.
     ffi::register_all(con)
 });
+
+#[cfg(test)]
+mod build_metadata_tests {
+    /// The community Makefile stamps the binary with `TARGET_DUCKDB_VERSION`,
+    /// the C API version `DuckDB` checks at `LOAD`; `quack_rs` asks `DuckDB`
+    /// for `DUCKDB_API_VERSION` when the extension initialises. A mismatch
+    /// makes `DuckDB` refuse or mis-handle the binary, and nothing else
+    /// notices until a release is loaded.
+    #[test]
+    fn makefile_stamps_the_c_api_version_quack_rs_requests() {
+        let makefile = include_str!("../Makefile");
+        let stamped = makefile
+            .lines()
+            .find_map(|line| line.strip_prefix("TARGET_DUCKDB_VERSION="))
+            .expect("Makefile defines TARGET_DUCKDB_VERSION");
+        assert_eq!(stamped.trim(), quack_rs::DUCKDB_API_VERSION);
+    }
+}

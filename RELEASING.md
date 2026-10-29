@@ -14,10 +14,13 @@ DuckDB Community Extensions repository then needs one pull request.
 2. Set the same version in `Cargo.toml` and `description.yml` (`extension:
    version`). Run `cargo check` once so `Cargo.lock` records the new version,
    and commit it: CI builds with `--locked` and fails on a stale lockfile.
+   Command-line examples in the docs name the release (`-ev v0.10.1`, the
+   attestation archive name); `scripts/check-docs.py`, which `check.sh` runs,
+   fails until they match `Cargo.toml`.
 3. Run the checks a contributor runs, plus the ones only a release needs:
 
    ```bash
-   DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh
+   ./scripts/check.sh
    make configure release test_release
    scripts/compat-check.sh "$(command -v duckdb)" build/release/behavioral.duckdb_extension
    ```
@@ -57,3 +60,9 @@ builds the extension for every non-excluded platform and runs `test/sql/`.
 Fix the cause on `main`, delete the remote tag (`git push origin :refs/tags/vX.Y.Z`),
 and tag the fixed commit again. Re-running with `workflow_dispatch` and the tag
 name rebuilds that existing tag, not the fix.
+
+If only the last job, `update-description-ref`, failed (for example a branch
+ruleset refused its push to `main`), the release is already published. Set
+`repo.ref` in `description.yml` to the tagged commit by hand or in a pull
+request; re-running the workflow does not repeat that job, which runs only for
+tag pushes.

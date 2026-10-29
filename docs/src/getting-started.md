@@ -32,7 +32,7 @@ platform where Rust and DuckDB are available.
 - Rust 1.88 or later (`rustup` recommended)
 - A C toolchain/linker (gcc or clang) for linking the `cdylib`
 - Python 3 and `make` (for `make configure release`, which stamps the metadata footer)
-- DuckDB CLI v1.3.2 or later (for running queries; CI checks v1.3.2, v1.4.4, v1.5.0, v1.5.6 and v2.0.0)
+- DuckDB CLI v1.3.2 or later (for running queries; CI checks v1.3.2, v1.4.4, v1.4.5, v1.5.0, v1.5.6 and v2.0.0)
 
 **Build steps:**
 
@@ -329,6 +329,17 @@ duckdb --version
 The binary was stamped `C_STRUCT_UNSTABLE`, which pins it to one DuckDB
 release. Re-append the metadata as shown above, without `--abi-type`.
 
+**"... did not contain function "behavioral_init_c_api_v2" ..."**
+
+The same stamp, seen by DuckDB 2.0.0: there `C_STRUCT_UNSTABLE` means the V2 C
+API, whose entry point this extension does not have. Re-append the metadata
+without `--abi-type`.
+
+**"... did not contain function "xyz_init_c_api" ... undefined symbol"**
+
+DuckDB derives the entry point from the file name up to the first dot, so the
+stamped file must be named `behavioral.duckdb_extension`.
+
 **"... could not be loaded because its signature is either missing or invalid and unsigned extensions are disabled by configuration."**
 
 This only applies to locally-built extensions. If you installed via
@@ -336,14 +347,14 @@ This only applies to locally-built extensions. If you installed via
 this error should not occur.
 
 For locally-built extensions, DuckDB rejects unsigned extensions by default.
-Use one of these approaches:
+The setting can only be chosen when the database is opened; DuckDB 2.0.0 answers
+`SET allow_unsigned_extensions = true` inside a session with `Cannot change
+allow_unsigned_extensions setting while database is running`. Use one of these
+approaches:
 
 ```bash
 # CLI flag
 duckdb -unsigned
-
-# Or set inside a session (before LOAD)
-SET allow_unsigned_extensions = true;
 ```
 
 ```python
@@ -426,21 +437,24 @@ On macOS: `xcode-select --install`.
 
 **Test build fails to link against libduckdb**
 
-The `duckdb` dev-dependency is built without the `bundled` feature, so a bare
-`cargo test` has no DuckDB library to link. Set `DUCKDB_DOWNLOAD_LIB=1` to have
-`libduckdb-sys` download a prebuilt libduckdb (cached in
-`target/duckdb-download/`), or point `DUCKDB_LIB_DIR` (plus `LD_LIBRARY_PATH`
-on Linux) at an existing one. Neither is needed for `cargo build --release`.
+The unit tests (`cargo test --lib`) link nothing. The in-process extension-load
+tests (feature `e2e`) load the build into a real DuckDB, so a bare
+`cargo test --all-features` has no DuckDB library to link. Set
+`DUCKDB_DOWNLOAD_LIB=1` to have `libduckdb-sys` download a prebuilt libduckdb
+(cached in `target/duckdb-download/`), or point `DUCKDB_LIB_DIR` (plus
+`LD_LIBRARY_PATH` on Linux) at an existing one. Neither is needed for
+`cargo build --release`.
 
 ---
 
 ## Running Tests
 
-The extension includes 541 unit tests, 29 in-process integration tests
+The extension includes 541 unit tests, 34 in-process integration tests
 (`tests/extension_load.rs`), and 1 doc-test:
 
 ```bash
-DUCKDB_DOWNLOAD_LIB=1 cargo test
+cargo test --lib                                  # the unit tests alone
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features   # everything
 ```
 
 The integration tests build the release `cdylib`, stamp it, and `LOAD` it into

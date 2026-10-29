@@ -6,20 +6,22 @@
 #
 # Usage:
 #   ./scripts/check.sh            # everything
-#   ./scripts/check.sh --quick    # skip the doc build and benchmark compilation
+#   ./scripts/check.sh --quick    # skip the doc build and the stable-API check
 #
 # Tools that are not installed (cargo-nextest, cargo-deny, cargo-machete,
-# typos, shellcheck) are reported as SKIP, not as failures; CI always runs
-# them. Exit status is non-zero if any check that ran failed.
+# typos, shellcheck, actionlint, zizmor) are reported as SKIP, not as failures;
+# CI always runs them. Not covered here: the MSRV build, the cross-target
+# checks, and the macOS jobs. Exit status is non-zero if any check that ran
+# failed.
 # =============================================================================
 
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Dev/test builds link a prebuilt libduckdb (the `duckdb` dev-dependency has no
-# `bundled` feature). Use the cached download unless the caller points
-# DUCKDB_LIB_DIR at an existing library.
+# The in-process extension-load tests (feature `e2e`) link a prebuilt libduckdb.
+# Use the cached download unless the caller points DUCKDB_LIB_DIR at an
+# existing library.
 if [[ -z "${DUCKDB_LIB_DIR:-}" ]]; then
     export DUCKDB_DOWNLOAD_LIB="${DUCKDB_DOWNLOAD_LIB:-1}"
 fi
@@ -69,20 +71,21 @@ optional() {
 }
 
 check "Format" cargo fmt --all -- --check
-check "Clippy" cargo clippy --all-targets --locked -- -D warnings
+check "Clippy" cargo clippy --all-targets --all-features --locked -- -D warnings
+# `--lib --tests`, not `--all-targets`: that would also run the Criterion
+# benchmarks as tests, at full scale.
 if command -v cargo-nextest > /dev/null 2>&1; then
-    check "Tests" cargo nextest run --all-targets --locked
+    check "Tests" cargo nextest run --lib --tests --all-features --locked
 else
-    check "Tests" cargo test --all-targets --locked
+    check "Tests" cargo test --lib --tests --all-features --locked
 fi
 check "Doc-tests" cargo test --doc --locked
 
 if $quick; then
-    printf '[SKIP] Documentation build (--quick)\n[SKIP] Benchmark compilation (--quick)\n'
-    skipped=$((skipped + 2))
+    printf '[SKIP] Documentation build (--quick)\n'
+    skipped=$((skipped + 1))
 else
     RUSTDOCFLAGS="-Dwarnings" check "Documentation" cargo doc --no-deps --document-private-items --locked
-    check "Benchmarks compile" cargo bench --no-run --locked
 fi
 
 # Builds an unstripped release library (about 40 s), so --quick skips it.
@@ -96,9 +99,13 @@ else
 fi
 
 optional "Cargo deny" cargo-deny cargo deny check advisories bans licenses sources
-optional "Unused dependencies" cargo-machete cargo machete
+optional "Unused dependencies" cargo-machete cargo machete --with-metadata
 optional "Spelling" typos typos
 optional "Shell scripts" shellcheck shellcheck scripts/*.sh
+optional "Workflow lint" actionlint actionlint
+optional "Workflow security" zizmor zizmor --offline --no-progress --min-severity medium .github
+check "License headers" scripts/add-spdx-headers.sh --check
+check "Documentation consistency" python3 -I scripts/check-docs.py
 
 echo
 printf 'Results: %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"

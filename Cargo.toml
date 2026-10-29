@@ -28,18 +28,21 @@ quack-rs = "=0.19.0"
 libduckdb-sys = { version = "=1.20000.1", features = ["loadable-extension"] }
 smallvec = { version = "1", features = ["const_new"] }
 
+[features]
+# The in-process extension-load tests (`tests/extension_load.rs`) `LOAD` the
+# release library into a real DuckDB, which quack-rs's `testing::InMemoryDb`
+# provides through its `duckdb` dependency: that pulls in the arrow stack and
+# needs a libduckdb to link. The unit tests need neither, so a bare
+# `cargo test --lib` works on a fresh clone; run everything with
+# `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`. This feature is for tests
+# only: never enable it for a release build.
+e2e = ["quack-rs/bundled-test-prebuilt"]
+
+[[test]]
+name = "extension_load"
+required-features = ["e2e"]
+
 [dev-dependencies]
-# No `bundled` feature: dev/test builds link a prebuilt libduckdb downloaded by
-# libduckdb-sys when DUCKDB_DOWNLOAD_LIB=1 (set workflow-wide in CI; locally run
-# `DUCKDB_DOWNLOAD_LIB=1 cargo test`) instead of compiling DuckDB's C++ tree from
-# source. Offline alternative: set DUCKDB_LIB_DIR to a directory containing
-# libduckdb (plus LD_LIBRARY_PATH on Linux). Never set either for release builds.
-duckdb = "=1.20000.1"
-# `bundled-test-prebuilt` exposes `quack_rs::testing::InMemoryDb` (used by the
-# in-process extension-load integration test, `tests/extension_load.rs`) while
-# linking the same prebuilt libduckdb as the `duckdb` dev-dependency above.
-# This feature is dev-only and never reaches the release `.so`.
-quack-rs = { version = "=0.19.0", features = ["bundled-test-prebuilt"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1"
 
@@ -92,7 +95,6 @@ opt-level = 3
 lto = "thin"
 
 [lints.rust]
-unsafe_op_in_unsafe_fn = "warn"
 missing_docs = "warn"
 # All `unsafe` lives in `src/ffi`, which opts out with `#[allow(unsafe_code)]`
 # in lib.rs; the pure-Rust core cannot grow an unsafe block by accident.
@@ -107,22 +109,15 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-# Mathematical/analytics code allowances
+# Timestamp and interval arithmetic: `later.wrapping_sub(earlier) as u64` reads
+# a gap of up to twice `i64::MAX` exactly (DuckDB's ±infinity), and row and
+# step counts are cast between `usize`, `u32` and `i64` after range checks.
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
-cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-# FFI code allowances
-ptr_as_ptr = "allow"
-too_many_arguments = "allow"
-wildcard_imports = "allow"
-# DuckDB interval struct requires reading from raw byte pointers at known offsets
-cast_ptr_alignment = "allow"
-# extern "C" FFI callback functions cannot be const despite only using size_of
+# Callbacks and builders are not `const`-evaluable even when they only use size_of.
 missing_const_for_fn = "allow"
 # Dependency version duplicates (transitive through duckdb)
 multiple_crate_versions = "allow"

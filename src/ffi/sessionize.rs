@@ -3,9 +3,10 @@
 
 //! FFI registration for the `sessionize` aggregate/window function.
 //!
-//! `sessionize` is registered as a plain aggregate function via
-//! [`quack_rs::aggregate::AggregateFunctionBuilder`] (single fixed signature,
-//! unlike the variadic function sets used by the other modules). `DuckDB`'s
+//! `sessionize` is registered as a plain aggregate function set via
+//! [`quack_rs::aggregate::AggregateFunctionSetBuilder`]: two overloads with the
+//! same fixed arguments, one for `TIMESTAMP` and one for `TIMESTAMPTZ` (the
+//! other modules add one overload per condition count). `DuckDB`'s
 //! windowing machinery drives any aggregate through the same
 //! update/combine/finalize callbacks when it appears in an `OVER` clause —
 //! there is no window-specific registration. The segment-tree evaluation is
@@ -13,10 +14,10 @@
 //! `current_row_null` flag propagates from the right-hand segment.
 //!
 //! Historical note: this module was hand-rolled on raw `libduckdb-sys` until
-//! quack-rs grew `AggregateFunctionBuilder` + `Registrar::register_aggregate`,
-//! whose registration performs the identical C-API call sequence (including
-//! default NULL handling, i.e. no `duckdb_aggregate_function_set_special_handling`).
-//! See `LESSONS.md` for context on the original decision.
+//! quack-rs grew its aggregate builders, whose registration performs the
+//! identical C-API call sequence (including default NULL handling, i.e. no
+//! `duckdb_aggregate_function_set_special_handling`). See `LESSONS.md` for
+//! context on the original decision.
 
 use super::view::{Combine, Finalize, I64Kind, States, Update};
 use crate::common::config::invalid_interval_message;
@@ -29,7 +30,7 @@ impl quack_rs::aggregate::AggregateState for SessionizeBoundaryState {}
 
 /// Registers the `sessionize` function with `DuckDB`.
 ///
-/// Signature: `sessionize(TIMESTAMP, INTERVAL) → BIGINT`
+/// Signature: `sessionize(TIMESTAMP | TIMESTAMPTZ, INTERVAL) → BIGINT`
 ///
 /// Used as a window function:
 /// ```sql
@@ -120,6 +121,19 @@ fn update(call: Update<SessionizeBoundaryState>) {
             }
         }
 
+        // Rows of one state arrive in window order. A timestamp below the
+        // previous one means the window is not ordered by ascending
+        // timestamp (`ORDER BY ts DESC`, or another column); the gap check
+        // would read every such step as a huge gap and open a session per
+        // row, silently. Ties are fine.
+        if state.last_ts.is_some_and(|prev| timestamp_us < prev) {
+            info.set_error(
+                "sessionize: rows must arrive in ascending timestamp order; use \
+                 OVER (... ORDER BY <timestamp column>) with an ascending order",
+            );
+            return;
+        }
+
         state.update(timestamp_us);
     }
 }
@@ -130,10 +144,25 @@ fn update(call: Update<SessionizeBoundaryState>) {
 quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
     // SAFETY: see above.
     let Combine {
-        source, mut target, ..
+        info,
+        source,
+        mut target,
     } = unsafe { Combine::<SessionizeBoundaryState>::from_raw(info, source, target, count) };
     for i in 0..source.count() {
         if let Some((src, tgt)) = States::pair(&source, &mut target, i) {
+            // The target is the earlier segment. A source that starts before the
+            // target ends was combined out of order (a plain GROUP BY, whose
+            // thread-local states DuckDB merges in any order): an error, not a
+            // silently different session count.
+            if let (Some(left_last), Some(right_first)) = (tgt.last_ts, src.first_ts)
+                && right_first < left_last
+            {
+                info.set_error(
+                    "sessionize: rows must arrive in ascending timestamp order; use \
+                     OVER (... ORDER BY <timestamp column>) with an ascending order",
+                );
+                return;
+            }
             *tgt = tgt.combine(src);
         }
     }

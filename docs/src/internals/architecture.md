@@ -28,7 +28,7 @@ src/
   ffi/
     mod.rs                     register_all() dispatcher
     view.rs                    Safe views over DuckDB's raw handles: the only unsafe constructors
-    sessionize.rs              FFI via quack-rs AggregateFunctionBuilder (fixed signature)
+    sessionize.rs              FFI via quack-rs AggregateFunctionSetBuilder (fixed arguments, 2 overloads)
     retention.rs               FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     window_funnel.rs           FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
     window_funnel_events.rs    FFI sharing window_funnel update/combine + LIST(TIMESTAMP) finalize
@@ -135,16 +135,17 @@ All 8 aggregate functions use quack-rs builders for registration: the seven
 variadic functions via `AggregateFunctionSetBuilder` (including `retention`,
 `window_funnel_events`, and `sequence_match_events`, which use
 `.returns_logical(LogicalType::list(...))` for their `LIST(T)` return types),
-and `sessionize` via `AggregateFunctionBuilder` — DuckDB windows any
-aggregate, so no window-specific registration exists.
-The `duckdb` crate is declared as a dev-dependency (without the `bundled`
-feature) so that test builds link a prebuilt libduckdb
-(`DUCKDB_DOWNLOAD_LIB=1` or `DUCKDB_LIB_DIR`); no code in `src/`, `tests/`, or
-`benches/` references it.
+and `sessionize` via the same builder with a fixed argument list (two
+overloads, one per timestamp type) — DuckDB windows any aggregate, so no
+window-specific registration exists.
+The in-process extension-load tests sit behind the `e2e` feature, which makes
+quack-rs depend on the `duckdb` crate so that they link a prebuilt libduckdb
+(`DUCKDB_DOWNLOAD_LIB=1` or `DUCKDB_LIB_DIR`); without it the unit tests build
+with no DuckDB library at all.
 
 The extension uses only the stable C API. The `.duckdb_extension` file is
 stamped with C API version `v1.2.0` and ABI type `C_STRUCT`, so one binary
-loads into DuckDB 1.3.2 and later (CI checks 1.3.2, 1.4.4, 1.5.0, 1.5.6, and 2.0.0).
+loads into DuckDB 1.3.2 and later (CI checks 1.3.2, 1.4.4, 1.4.5, 1.5.0, 1.5.6, and 2.0.0).
 
 ## Event Representation
 

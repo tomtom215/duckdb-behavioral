@@ -822,6 +822,258 @@ fn window_funnel_as_windowed_aggregate() {
     assert_eq!(running, vec![1, 2, 3]);
 }
 
+/// The query shapes that crashed every C API aggregate before `DuckDB` 2.0.0
+/// (duckdb/duckdb#26109, fixed by duckdb/duckdb#26455): `ORDER BY` inside the
+/// call, `OVER ()`, `UNBOUNDED PRECEDING .. UNBOUNDED FOLLOWING`, and
+/// `OVER (PARTITION BY g)` with no `ORDER BY`. Runs all eight aggregates through
+/// each shape in-process and requires the windowed result to equal the plain
+/// `GROUP BY` result. `sessionize` is only required not to crash: its value
+/// depends on the row's place in the order, so it has no `GROUP BY` equivalent.
+///
+/// The in-process `DuckDB` is the release `libduckdb-sys` links (2.0.0). The
+/// shapes still crash 1.x releases, so the test runs only when the linked
+/// library is 2.x or later; `scripts/crash-shapes.sh` maps the older releases.
+#[test]
+fn issue_26109_query_shapes_work_on_duckdb_2() {
+    let db = load_extension();
+    let version: String = db
+        .query_one("SELECT library_version FROM pragma_version()")
+        .unwrap();
+    let major: u32 = version
+        .trim_start_matches('v')
+        .split('.')
+        .next()
+        .and_then(|m| m.parse().ok())
+        .unwrap_or_else(|| panic!("unparsable DuckDB version {version:?}"));
+    if major < 2 {
+        eprintln!("skipped: DuckDB {version} crashes on these shapes (duckdb/duckdb#26109)");
+        return;
+    }
+    db.execute_batch(
+        "CREATE TABLE t AS SELECT i % 2 AS g, TIMESTAMP '2024-01-01' + to_seconds(i) AS ts,
+            i % 2 = 0 AS a, i % 3 = 0 AS b, 'v' || i AS v FROM range(10) r(i);",
+    )
+    .unwrap();
+    // (name, arguments). The ORDER BY shape appends `ORDER BY ts` to the arguments.
+    let calls: [(&str, &str); 8] = [
+        ("sessionize", "ts, INTERVAL 5 SECOND"),
+        ("retention", "a, b"),
+        ("window_funnel", "INTERVAL 1 HOUR, ts, a, b"),
+        ("window_funnel_events", "INTERVAL 1 HOUR, ts, a, b"),
+        ("sequence_match", "'(?1).*(?2)', ts, a, b"),
+        ("sequence_count", "'(?1).*(?2)', ts, a, b"),
+        ("sequence_match_events", "'(?1).*(?2)', ts, a, b"),
+        ("sequence_next_node", "'forward', 'head', ts, v, a, a"),
+    ];
+    let windows = [
+        "OVER ()",
+        "OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)",
+        "OVER (PARTITION BY g)",
+    ];
+    for (name, args) in calls {
+        let plain = format!("{name}({args})");
+        // `ORDER BY` inside the call: one row per group, equal to the plain result.
+        let ordered: i64 = db
+            .query_one(&format!(
+                "SELECT count(*) FROM (SELECT g, {name}({args} ORDER BY ts) AS r FROM t GROUP BY g) o
+                 JOIN (SELECT g, {plain} AS r FROM t GROUP BY g) p USING (g)
+                 WHERE o.r IS NOT DISTINCT FROM p.r"
+            ))
+            .unwrap_or_else(|e| panic!("{name}: ORDER BY inside the call failed: {e}"));
+        assert_eq!(ordered, 2, "{name}: ORDER BY inside the call");
+        for window in windows {
+            let sql = format!("SELECT count(r) FROM (SELECT {plain} {window} AS r FROM t)");
+            let rows: i64 = db
+                .query_one(&sql)
+                .unwrap_or_else(|e| panic!("{name} {window} failed: {e}"));
+            // `count` skips NULL; a sessionize id is never NULL here.
+            if name == "sessionize" {
+                assert_eq!(rows, 10, "{name} {window}");
+                continue;
+            }
+            // Rows whose windowed result differs from the GROUP BY result of
+            // their partition (the whole table for the unpartitioned shapes).
+            let partitioned = window.contains("PARTITION BY g");
+            let check = if partitioned {
+                format!(
+                    "SELECT count(*) FROM (SELECT g, {plain} {window} AS r FROM t) w
+                     JOIN (SELECT g, {plain} AS r FROM t GROUP BY g) a USING (g)
+                     WHERE w.r IS DISTINCT FROM a.r"
+                )
+            } else {
+                format!(
+                    "SELECT count(*) FROM (SELECT {plain} {window} AS r FROM t) w
+                     WHERE w.r IS DISTINCT FROM (SELECT {plain} FROM t)"
+                )
+            };
+            let mismatches: i64 = db
+                .query_one(&check)
+                .unwrap_or_else(|e| panic!("{name} {window} comparison failed: {e}"));
+            assert_eq!(
+                mismatches, 0,
+                "{name} {window}: rows differing from GROUP BY"
+            );
+        }
+    }
+}
+
+/// `sequence_next_node` returns the next value byte for byte: an embedded NUL
+/// neither ends the string nor shortens it, an empty string is not `NULL`,
+/// multi-byte text survives, and a 100 kB value passes through the value
+/// buffer and into the result vector unchanged.
+#[test]
+fn sequence_next_node_returns_awkward_values_whole() {
+    let db = load_extension();
+    for value in [
+        "'a' || chr(0) || 'b'",
+        "''",
+        "'h\u{e9}llo \u{2713}'",
+        "repeat('x', 100000)",
+    ] {
+        let (same, bytes): (bool, i64) = db
+            .conn()
+            .query_row(
+                &format!(
+                    "SELECT r = ({value}), strlen(r) FROM (
+                         SELECT sequence_next_node('forward', 'head', ts, v, c, c) AS r
+                         FROM (VALUES (TIMESTAMP '2024-01-01 00:00:00', 'start', true),
+                                      (TIMESTAMP '2024-01-01 00:00:01', {value}, false))
+                              t(ts, v, c))"
+                ),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or_else(|e| panic!("value {value}: {e}"));
+        assert!(same, "value {value} was altered");
+        let expected: i64 = db.query_one(&format!("SELECT strlen({value})")).unwrap();
+        assert_eq!(bytes, expected, "value {value}");
+    }
+}
+
+/// A window ordered by descending timestamp, or by another column, used to
+/// give silently wrong session IDs (every step back in time read as a huge
+/// gap, so each row opened a session). It is now an error; ties and ascending
+/// order are not.
+#[test]
+fn sessionize_rejects_rows_out_of_timestamp_order() {
+    let db = load_extension();
+    db.execute_batch(
+        "CREATE TABLE ord AS SELECT i, TIMESTAMP '2024-01-01' + to_seconds(i % 3 * 100 + i) AS ts
+         FROM range(6) t(i);",
+    )
+    .unwrap();
+    for order in ["ts DESC", "i DESC"] {
+        let err = db
+            .query_one::<i64>(&format!(
+                "SELECT sum(s) FROM (SELECT sessionize(ts, INTERVAL 10 SECOND)
+                     OVER (ORDER BY {order}) AS s FROM ord)"
+            ))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ascending timestamp order"), "{order}: {err}");
+    }
+    // Ascending order, with ties, is fine: three rows share each timestamp.
+    let sessions: i64 = db
+        .query_one(
+            "SELECT max(s) FROM (SELECT sessionize(ts, INTERVAL 10 SECOND)
+                 OVER (ORDER BY ts) AS s
+             FROM (VALUES (TIMESTAMP '2024-01-01'), (TIMESTAMP '2024-01-01'),
+                          (TIMESTAMP '2024-01-01 00:01:00')) t(ts))",
+        )
+        .unwrap();
+    assert_eq!(sessions, 2);
+}
+
+/// Without `OVER`, `sessionize` is a plain aggregate whose thread-local
+/// states `DuckDB` merges in any order, so partial states can meet out of
+/// timestamp order. That used to give a different session count per run (8 or
+/// 9 sessions for one that is exactly 1, at four threads); combine now rejects
+/// the misordered merge. Scheduling decides whether a given run merges in
+/// order, so the invariant is "correct or an error, never a silently different
+/// answer".
+#[test]
+fn sessionize_plain_aggregate_is_correct_or_an_error_never_wrong() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET threads = 4;
+         CREATE TABLE sorted AS SELECT TIMESTAMP '2024-01-01' + to_seconds(i * 60) AS ts
+         FROM range(1000000) t(i);",
+    )
+    .unwrap();
+    for run in 0..8 {
+        match db.query_one::<i64>("SELECT sessionize(ts, INTERVAL 2 MINUTE) FROM sorted") {
+            Ok(sessions) => assert_eq!(sessions, 1, "run {run}: a silently wrong count"),
+            Err(e) => assert!(
+                e.to_string().contains("ascending timestamp order"),
+                "run {run}: {e}"
+            ),
+        }
+    }
+}
+
+/// `sessionize` over every kind of window frame `DuckDB` offers, against a
+/// reference computed from the frame's own rows: the number of gaps above the
+/// threshold in the list of timestamps the frame holds, plus one. Running,
+/// sliding, forward-looking, `EXCLUDE`, `RANGE` and `GROUPS` frames take
+/// different paths through `DuckDB`'s window machinery (a running state, a
+/// segment tree whose nodes are combined in a different order); the
+/// partitions are large enough (3,000 rows) to need several tree levels.
+/// Timestamps are unique within a partition, so row order is not ambiguous.
+#[test]
+fn sessionize_matches_a_list_reference_in_every_window_frame() {
+    let db = load_extension();
+    db.execute_batch(
+        "SET threads = 4;
+         CREATE TABLE ev AS SELECT i % 2 AS g,
+             TIMESTAMP '2024-01-01' + to_seconds((i * 7919) % 100003) AS ts
+         FROM range(6000) t(i);",
+    )
+    .unwrap();
+    let frames = [
+        "",
+        "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW",
+        "ROWS BETWEEN 5 PRECEDING AND CURRENT ROW",
+        "ROWS BETWEEN 10 PRECEDING AND 3 FOLLOWING",
+        "ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING",
+        "ROWS BETWEEN 2000 PRECEDING AND 1500 FOLLOWING",
+        "ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING EXCLUDE CURRENT ROW",
+        "RANGE BETWEEN INTERVAL 3000 SECOND PRECEDING AND CURRENT ROW",
+        "GROUPS BETWEEN 2 PRECEDING AND 1 FOLLOWING",
+    ];
+    for frame in frames {
+        let (mismatches, distinct): (i64, i64) = db
+            .conn()
+            .query_row(
+                &format!(
+                    "WITH got AS (
+                         SELECT g, ts, sessionize(ts, INTERVAL 30 SECOND)
+                             OVER (PARTITION BY g ORDER BY ts {frame}) AS v
+                         FROM ev),
+                     frames AS (
+                         SELECT g, ts, list(ts ORDER BY ts)
+                             OVER (PARTITION BY g ORDER BY ts {frame}) AS l
+                         FROM ev),
+                     expected AS (
+                         SELECT g, ts, CASE WHEN len(l) = 0 THEN NULL ELSE 1 + len(list_filter(
+                             range(2, len(l) + 1),
+                             lambda i: l[i] - l[i - 1] > INTERVAL 30 SECOND)) END AS e
+                         FROM frames)
+                     SELECT count(*) FILTER (WHERE got.v IS DISTINCT FROM expected.e),
+                            count(DISTINCT got.v)
+                     FROM got JOIN expected USING (g, ts)"
+                ),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or_else(|e| panic!("frame [{frame}] failed: {e}"));
+        assert_eq!(mismatches, 0, "frame [{frame}]");
+        assert!(
+            distinct > 3,
+            "frame [{frame}] produced one value: {distinct}"
+        );
+    }
+}
+
 /// The shipped release profile keeps panic containment working: every
 /// aggregate callback runs under quack-rs's `catch_unwind` guard, which
 /// `panic = "abort"` makes inert (a panic would then kill the user's `DuckDB`

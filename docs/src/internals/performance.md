@@ -50,18 +50,22 @@ The 100-million rows have 10 samples each, so their intervals are wide.
 
 `scripts/bench-sql.sh`: 10 million rows in 100,000 groups of 100 events,
 4 threads, wall time of a fresh `duckdb` 2.0.0 process, median [min, max] of 9
-runs, same machine. These include DuckDB's scan and grouping.
+runs (25 for `sessionize`). These include DuckDB's scan and grouping. Measured
+in PERF.md Session 22 on one shared 4-vCPU Intel Xeon @ 2.10 GHz, a different
+machine from the Criterion numbers above, so the two sets do not compare. The
+base column is the build from before this release's changes, run alternately
+with the new one.
 
-| Query | Seconds |
-|---|---|
-| `window_funnel`, 3 steps | 1.58 [1.49, 1.63] |
-| `window_funnel_events` | 1.60 [1.49, 1.67] |
-| `sequence_count('(?1).*(?2).*(?3)')` | 1.75 [1.63, 1.81] |
-| `sequence_match_events('(?1).*(?2)')` | 1.61 [1.54, 1.66] |
-| `sequence_next_node` | 3.33 [3.13, 3.68] |
-| `retention`, 3 conditions | 0.46 [0.43, 0.52] |
-| `sessionize` over `PARTITION BY u ORDER BY ts` | 1.92 [1.81, 2.05] |
-| `window_funnel` over one 10-million-row group | 0.56 [0.54, 0.64] |
+| Query | Base | New |
+|---|---|---|
+| `window_funnel`, 3 steps | 1.16 [1.04, 1.39] | 1.07 [0.99, 1.41] |
+| `window_funnel_events` | 0.98 [0.97, 1.04] | 1.02 [0.96, 1.09] |
+| `sequence_count('(?1).*(?2).*(?3)')` | 1.17 [1.08, 1.31] | 1.20 [1.06, 1.47] |
+| `sequence_match_events('(?1).*(?2)')` | 1.16 [1.02, 1.21] | 1.10 [1.06, 1.21] |
+| `sequence_next_node` | 2.52 [2.34, 2.94] | 2.60 [2.43, 2.93] |
+| `retention`, 3 conditions | 0.27 [0.24, 0.31] | 0.26 [0.24, 0.29] |
+| `sessionize` over `PARTITION BY u ORDER BY ts` | 1.39 [1.30, 1.53] | 1.42 [1.31, 1.58] |
+| `window_funnel` over one 10-million-row group | 0.41 [0.38, 0.46] | 0.41 [0.39, 0.48] |
 
 ## Algorithmic Complexity
 
@@ -73,10 +77,13 @@ runs, same machine. These include DuckDB's scan and grouping.
 | `sequence_match` | O(1) | O(m) | O(n*s) | O(n) |
 | `sequence_count` | O(1) | O(m) | O(n*s) | O(n) |
 | `sequence_match_events` | O(1) | O(m) | O(n*s) | O(n) |
-| `sequence_next_node` | O(1) | O(m) | O(n*k) | O(n) |
+| `sequence_next_node` | O(1) | O(m) | O(n log n) | O(n) |
 
 Where n = events, m = events in other state, k = conditions (up to 32),
-s = pattern steps.
+s = pattern steps. Finalize of every event-collecting function starts by
+sorting its events: O(n log n), or O(n) when they already arrive in order,
+which DuckDB often provides. For `sequence_next_node` the sort dominates: the
+anchor scan is O(n) and the chain check O(k).
 
 ## Optimization History
 

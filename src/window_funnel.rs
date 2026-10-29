@@ -58,12 +58,12 @@ use crate::common::event::{Event, sort_events};
 /// # Bitmask Layout
 ///
 /// ```text
-/// Bit 0 (0x01): STRICT             (ClickHouse: 'strict_deduplication'; 'strict' alias)
-/// Bit 1 (0x02): STRICT_ORDER       (ClickHouse: 'strict_order')
-/// Bit 2 (0x04): STRICT_DEDUPLICATION (Extension: 'timestamp_dedup')
-/// Bit 3 (0x08): STRICT_INCREASE    (ClickHouse: 'strict_increase')
-/// Bit 4 (0x10): STRICT_ONCE        (ClickHouse: 'strict_once')
-/// Bit 5 (0x20): ALLOW_REENTRY      (ClickHouse: 'allow_reentry')
+/// Bit 0 (0x01): STRICT_DEDUPLICATION (ClickHouse: 'strict_deduplication'; 'strict' alias)
+/// Bit 1 (0x02): STRICT_ORDER         (ClickHouse: 'strict_order')
+/// Bit 2 (0x04): TIMESTAMP_DEDUP      (Extension: 'timestamp_dedup')
+/// Bit 3 (0x08): STRICT_INCREASE      (ClickHouse: 'strict_increase')
+/// Bit 4 (0x10): STRICT_ONCE          (ClickHouse: 'strict_once')
+/// Bit 5 (0x20): ALLOW_REENTRY        (ClickHouse: 'allow_reentry')
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FunnelMode(u8);
@@ -76,7 +76,7 @@ impl FunnelMode {
     /// already been reached (by any chain, even one whose window has passed)
     /// stops the scan. `'strict'` is accepted as an alias for backward
     /// compatibility; `ClickHouse` 26.9 rejects it.
-    pub const STRICT: Self = Self(0x01);
+    pub const STRICT_DEDUPLICATION: Self = Self(0x01);
 
     /// `'strict_order'`: once a chain has been entered, an event matching no
     /// condition, or a step arriving before its predecessor has been reached,
@@ -86,7 +86,7 @@ impl FunnelMode {
     /// **Extension mode** `'timestamp_dedup'` (not in `ClickHouse`): a step
     /// cannot be filled at the timestamp of the step before it, which is
     /// exactly [`STRICT_INCREASE`](Self::STRICT_INCREASE); kept as an alias.
-    pub const STRICT_DEDUPLICATION: Self = Self(0x04);
+    pub const TIMESTAMP_DEDUP: Self = Self(0x04);
 
     /// `'strict_increase'`: each step must be strictly later than the step
     /// before it, checked for every step (so one event cannot fill two).
@@ -143,10 +143,10 @@ impl FunnelMode {
 
     /// Parses a mode string into a single flag bit.
     ///
-    /// `'strict'` and `'strict_deduplication'` both map to [`STRICT`](Self::STRICT),
+    /// `'strict'` and `'strict_deduplication'` both map to [`STRICT_DEDUPLICATION`](Self::STRICT_DEDUPLICATION),
     /// matching `ClickHouse` semantics where they are aliases.
     ///
-    /// `'timestamp_dedup'` maps to [`STRICT_DEDUPLICATION`](Self::STRICT_DEDUPLICATION),
+    /// `'timestamp_dedup'` maps to [`TIMESTAMP_DEDUP`](Self::TIMESTAMP_DEDUP),
     /// an extension mode not present in `ClickHouse`.
     ///
     /// Returns `None` for unrecognized mode strings.
@@ -154,10 +154,10 @@ impl FunnelMode {
     pub fn parse_mode_str(s: &str) -> Option<Self> {
         // Case-insensitive, like `sequence_next_node`'s direction and base.
         const NAMES: [(&str, FunnelMode); 7] = [
-            ("strict", FunnelMode::STRICT),
-            ("strict_deduplication", FunnelMode::STRICT),
+            ("strict", FunnelMode::STRICT_DEDUPLICATION),
+            ("strict_deduplication", FunnelMode::STRICT_DEDUPLICATION),
             ("strict_order", FunnelMode::STRICT_ORDER),
-            ("timestamp_dedup", FunnelMode::STRICT_DEDUPLICATION),
+            ("timestamp_dedup", FunnelMode::TIMESTAMP_DEDUP),
             ("strict_increase", FunnelMode::STRICT_INCREASE),
             ("strict_once", FunnelMode::STRICT_ONCE),
             ("allow_reentry", FunnelMode::ALLOW_REENTRY),
@@ -201,9 +201,9 @@ impl std::fmt::Display for FunnelMode {
         }
         let mut first = true;
         let flags = [
-            (Self::STRICT, "strict"),
+            (Self::STRICT_DEDUPLICATION, "strict_deduplication"),
             (Self::STRICT_ORDER, "strict_order"),
-            (Self::STRICT_DEDUPLICATION, "timestamp_dedup"),
+            (Self::TIMESTAMP_DEDUP, "timestamp_dedup"),
             (Self::STRICT_INCREASE, "strict_increase"),
             (Self::STRICT_ONCE, "strict_once"),
             (Self::ALLOW_REENTRY, "allow_reentry"),
@@ -401,7 +401,7 @@ impl<P: PathStore> Scan<P> {
     fn pre_extend(&self, idx: usize) -> Result<bool, Stop> {
         // strict_deduplication: a condition repeating a step already reached
         // stops the scan.
-        if self.mode.has(FunnelMode::STRICT) && self.levels[idx].is_set() {
+        if self.mode.has(FunnelMode::STRICT_DEDUPLICATION) && self.levels[idx].is_set() {
             return Err(Stop);
         }
         // strict_order: a step arriving before its predecessor stops the scan
@@ -561,19 +561,25 @@ impl<P: PathStore> Scan<P> {
 /// Answers "can steps `lo..hi` each get a distinct event of this
 /// same-timestamp group, none of them event `exclude`?" for `strict_once`.
 ///
-/// Each step keeps at most `MAX_STEPS + 1` candidate events: a step needs one
-/// event, the other steps use at most `MAX_STEPS - 1` and one more may be
+/// Each step keeps at most `steps + 1` candidate events: a step needs one
+/// event, the other steps use at most `steps - 1` and one more may be
 /// excluded, so a step with that many candidates can always be served and
 /// extra candidates never change an answer. Answers are cached per step
-/// range; the excluded event is part of the key only when it is a candidate,
-/// since excluding any other event changes nothing. This bounds the work for
-/// a large group by the number of conditions rather than the group size.
+/// range and per the excluded event's conditions inside that range: events
+/// with equal conditions there are interchangeable (swapping them is a graph
+/// isomorphism), so excluding either gives one answer, however many such
+/// events the group holds. This bounds the work for a large group by the
+/// number of conditions rather than the group size; keying on the event's
+/// index instead made 31 overlapping conditions over 32 simultaneous events
+/// 60 times slower than the other modes.
 struct Matcher {
     /// Number of events in the group.
     group_len: usize,
     candidates: Vec<Vec<usize>>,
     /// Per event, the steps whose (kept) candidates include it.
     candidate_steps: Vec<u64>,
+    /// Per event, its condition bitmask (the cache key uses it).
+    masks: Vec<u32>,
     cache: std::collections::HashMap<u64, bool, BuildPackedKeyHasher>,
 }
 
@@ -586,6 +592,7 @@ impl Matcher {
                 group_len: group.len(),
                 candidates: Vec::new(),
                 candidate_steps: Vec::new(),
+                masks: Vec::new(),
                 cache: std::collections::HashMap::default(),
             };
         }
@@ -593,7 +600,7 @@ impl Matcher {
             .map(|step| {
                 (0..group.len())
                     .filter(|&e| group[e].condition(step))
-                    .take(MAX_STEPS + 1)
+                    .take(steps + 1)
                     .collect()
             })
             .collect();
@@ -607,6 +614,7 @@ impl Matcher {
             group_len: group.len(),
             candidates,
             candidate_steps,
+            masks: group.iter().map(|e| e.conditions).collect(),
             cache: std::collections::HashMap::default(),
         }
     }
@@ -631,16 +639,10 @@ impl Matcher {
             return self.candidates[lo].iter().any(|&e| e != exclude);
         }
         let range = (u64::MAX << lo) & !(u64::MAX << hi);
-        let relevant = self.candidate_steps[exclude] & range != 0;
-        // lo, hi <= 32 fit in 6 bits each; exclude + 1 (0 = not relevant)
-        // fills the rest.
-        let key = lo as u64
-            | (hi as u64) << 6
-            | if relevant {
-                (exclude as u64 + 1) << 12
-            } else {
-                0
-            };
+        // lo, hi <= 32 fit in 6 bits each; the excluded event's conditions
+        // inside the range (at most 32 bits) fill the rest.
+        let restricted = u64::from(self.masks[exclude]) & range;
+        let key = lo as u64 | (hi as u64) << 6 | restricted << 12;
         if let Some(&known) = self.cache.get(&key) {
             return known;
         }
@@ -860,6 +862,9 @@ impl WindowFunnelState {
         sort_events(&mut self.events);
 
         let mode = self.mode;
+        // The SQL layer rejects a negative window; a negative field here would
+        // become a huge unsigned window below.
+        debug_assert!(self.window_size_us >= 0, "negative window");
         let mut scan = Scan {
             levels: [Level::EMPTY; MAX_STEPS],
             dirty: 0,
@@ -868,7 +873,7 @@ impl WindowFunnelState {
             steps,
             mode,
             strict_increase: mode.has(FunnelMode::STRICT_INCREASE)
-                || mode.has(FunnelMode::STRICT_DEDUPLICATION),
+                || mode.has(FunnelMode::TIMESTAMP_DEDUP),
         };
 
         for group in self
@@ -994,7 +999,7 @@ mod tests {
     fn test_strict_mode() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT;
+        state.mode = FunnelMode::STRICT_DEDUPLICATION;
         state.update(make_event(0, &[true, false, false]), 3); // step 0
         state.update(make_event(1_000, &[true, false, false]), 3); // step 0 again!
         state.update(make_event(2_000, &[false, true, false]), 3); // step 1
@@ -1097,7 +1102,7 @@ mod tests {
     fn test_strict_dedup_basic_success() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION;
+        state.mode = FunnelMode::TIMESTAMP_DEDUP;
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(1_000, &[false, true, false]), 3);
         state.update(make_event(2_000, &[false, false, true]), 3);
@@ -1109,7 +1114,7 @@ mod tests {
         // Events with identical timestamps for the next condition are skipped
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION;
+        state.mode = FunnelMode::TIMESTAMP_DEDUP;
         state.update(make_event(0, &[true, false]), 2); // step 0, prev_ts = 0
         state.update(make_event(0, &[false, true]), 2); // same ts=0, skipped
         assert_eq!(state.finalize(), 1);
@@ -1119,7 +1124,7 @@ mod tests {
     fn test_strict_dedup_different_timestamps_ok() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION;
+        state.mode = FunnelMode::TIMESTAMP_DEDUP;
         state.update(make_event(0, &[true, false]), 2);
         state.update(make_event(1, &[false, true]), 2); // different ts
         assert_eq!(state.finalize(), 2);
@@ -1129,7 +1134,7 @@ mod tests {
     fn test_strict_dedup_skips_then_matches_later() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION;
+        state.mode = FunnelMode::TIMESTAMP_DEDUP;
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(0, &[false, true, false]), 3); // same ts, skipped
         state.update(make_event(1_000, &[false, true, false]), 3); // different ts, matches
@@ -1140,7 +1145,7 @@ mod tests {
     #[test]
     fn test_strict_dedup_empty() {
         let mut state = WindowFunnelState::new();
-        state.mode = FunnelMode::STRICT_DEDUPLICATION;
+        state.mode = FunnelMode::TIMESTAMP_DEDUP;
         assert_eq!(state.finalize(), 0);
     }
 
@@ -1181,19 +1186,19 @@ mod tests {
     #[test]
     fn test_combine_preserves_mode() {
         let mut a = WindowFunnelState::new();
-        a.mode = FunnelMode::STRICT;
+        a.mode = FunnelMode::STRICT_DEDUPLICATION;
         a.window_size_us = 3_600_000_000;
 
         let b = WindowFunnelState::new();
         let combined = a.combine(&b);
-        assert_eq!(combined.mode, FunnelMode::STRICT);
+        assert_eq!(combined.mode, FunnelMode::STRICT_DEDUPLICATION);
     }
 
     #[test]
     fn test_strict_mode_allows_forward_movement() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT;
+        state.mode = FunnelMode::STRICT_DEDUPLICATION;
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(1_000, &[false, true, false]), 3);
         state.update(make_event(2_000, &[false, false, true]), 3);
@@ -1204,7 +1209,7 @@ mod tests {
     fn test_strict_mode_backward_step_breaks() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT;
+        state.mode = FunnelMode::STRICT_DEDUPLICATION;
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(1_000, &[false, true, false]), 3); // step 1
         state.update(make_event(2_000, &[false, true, false]), 3); // step 1 fires again
@@ -1304,7 +1309,7 @@ mod tests {
         // cannot extend a chain; one at a later timestamp can.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION;
+        state.mode = FunnelMode::TIMESTAMP_DEDUP;
         state.update(make_event(100, &[true, false]), 2); // step 0, prev_ts=100
         state.update(make_event(100, &[false, true]), 2); // same ts → SKIP
         state.update(make_event(101, &[false, true]), 2); // different ts → match
@@ -1354,9 +1359,9 @@ mod tests {
 
     #[test]
     fn test_funnel_mode_individual_flags() {
-        assert_eq!(FunnelMode::STRICT.bits(), 0x01);
+        assert_eq!(FunnelMode::STRICT_DEDUPLICATION.bits(), 0x01);
         assert_eq!(FunnelMode::STRICT_ORDER.bits(), 0x02);
-        assert_eq!(FunnelMode::STRICT_DEDUPLICATION.bits(), 0x04);
+        assert_eq!(FunnelMode::TIMESTAMP_DEDUP.bits(), 0x04);
         assert_eq!(FunnelMode::STRICT_INCREASE.bits(), 0x08);
         assert_eq!(FunnelMode::STRICT_ONCE.bits(), 0x10);
         assert_eq!(FunnelMode::ALLOW_REENTRY.bits(), 0x20);
@@ -1364,8 +1369,8 @@ mod tests {
 
     #[test]
     fn test_funnel_mode_combinable() {
-        let mode = FunnelMode::STRICT.with(FunnelMode::STRICT_INCREASE);
-        assert!(mode.has(FunnelMode::STRICT));
+        let mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::STRICT_INCREASE);
+        assert!(mode.has(FunnelMode::STRICT_DEDUPLICATION));
         assert!(mode.has(FunnelMode::STRICT_INCREASE));
         assert!(!mode.has(FunnelMode::STRICT_ORDER));
         assert!(!mode.is_default());
@@ -1375,9 +1380,9 @@ mod tests {
     fn test_funnel_mode_has_self() {
         // Each flag should contain itself
         let flags = [
-            FunnelMode::STRICT,
-            FunnelMode::STRICT_ORDER,
             FunnelMode::STRICT_DEDUPLICATION,
+            FunnelMode::STRICT_ORDER,
+            FunnelMode::TIMESTAMP_DEDUP,
             FunnelMode::STRICT_INCREASE,
             FunnelMode::STRICT_ONCE,
             FunnelMode::ALLOW_REENTRY,
@@ -1390,10 +1395,10 @@ mod tests {
     #[test]
     fn test_funnel_mode_from_bits_roundtrip() {
         let mode = FunnelMode::from_bits(0x13);
-        assert!(mode.has(FunnelMode::STRICT));
+        assert!(mode.has(FunnelMode::STRICT_DEDUPLICATION));
         assert!(mode.has(FunnelMode::STRICT_ORDER));
         assert!(mode.has(FunnelMode::STRICT_ONCE));
-        assert!(!mode.has(FunnelMode::STRICT_DEDUPLICATION));
+        assert!(!mode.has(FunnelMode::TIMESTAMP_DEDUP));
         assert_eq!(mode.bits(), 0x13);
     }
 
@@ -1401,7 +1406,7 @@ mod tests {
     fn test_funnel_mode_parse_mode_str() {
         assert_eq!(
             FunnelMode::parse_mode_str("strict"),
-            Some(FunnelMode::STRICT)
+            Some(FunnelMode::STRICT_DEDUPLICATION)
         );
         assert_eq!(
             FunnelMode::parse_mode_str("strict_order"),
@@ -1410,12 +1415,12 @@ mod tests {
         // strict_deduplication is a ClickHouse alias for strict
         assert_eq!(
             FunnelMode::parse_mode_str("strict_deduplication"),
-            Some(FunnelMode::STRICT)
+            Some(FunnelMode::STRICT_DEDUPLICATION)
         );
         // timestamp_dedup is our extension mode
         assert_eq!(
             FunnelMode::parse_mode_str("timestamp_dedup"),
-            Some(FunnelMode::STRICT_DEDUPLICATION)
+            Some(FunnelMode::TIMESTAMP_DEDUP)
         );
         assert_eq!(
             FunnelMode::parse_mode_str("strict_increase"),
@@ -1436,19 +1441,22 @@ mod tests {
     #[test]
     fn test_funnel_mode_display() {
         assert_eq!(FunnelMode::DEFAULT.to_string(), "default");
-        assert_eq!(FunnelMode::STRICT.to_string(), "strict");
         assert_eq!(
-            FunnelMode::STRICT
+            FunnelMode::STRICT_DEDUPLICATION.to_string(),
+            "strict_deduplication"
+        );
+        assert_eq!(
+            FunnelMode::STRICT_DEDUPLICATION
                 .with(FunnelMode::STRICT_INCREASE)
                 .to_string(),
-            "strict+strict_increase"
+            "strict_deduplication+strict_increase"
         );
     }
 
     #[test]
     fn test_funnel_mode_with_is_commutative() {
-        let a = FunnelMode::STRICT.with(FunnelMode::STRICT_ORDER);
-        let b = FunnelMode::STRICT_ORDER.with(FunnelMode::STRICT);
+        let a = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::STRICT_ORDER);
+        let b = FunnelMode::STRICT_ORDER.with(FunnelMode::STRICT_DEDUPLICATION);
         assert_eq!(a, b);
     }
 
@@ -1468,7 +1476,7 @@ mod tests {
     fn test_parse_modes_single() {
         assert_eq!(
             FunnelMode::parse_modes("strict").unwrap(),
-            FunnelMode::STRICT
+            FunnelMode::STRICT_DEDUPLICATION
         );
     }
 
@@ -1477,13 +1485,13 @@ mod tests {
         let mode = FunnelMode::parse_modes("strict_increase, strict_once").unwrap();
         assert!(mode.has(FunnelMode::STRICT_INCREASE));
         assert!(mode.has(FunnelMode::STRICT_ONCE));
-        assert!(!mode.has(FunnelMode::STRICT));
+        assert!(!mode.has(FunnelMode::STRICT_DEDUPLICATION));
     }
 
     #[test]
     fn test_parse_modes_no_whitespace() {
         let mode = FunnelMode::parse_modes("strict,strict_order").unwrap();
-        assert!(mode.has(FunnelMode::STRICT));
+        assert!(mode.has(FunnelMode::STRICT_DEDUPLICATION));
         assert!(mode.has(FunnelMode::STRICT_ORDER));
     }
 
@@ -1501,9 +1509,9 @@ mod tests {
             "strict, strict_order, strict_deduplication, strict_increase, strict_once, allow_reentry",
         )
         .unwrap();
-        assert!(mode.has(FunnelMode::STRICT)); // both 'strict' and 'strict_deduplication' set this
+        assert!(mode.has(FunnelMode::STRICT_DEDUPLICATION)); // both 'strict' and 'strict_deduplication' set this
         assert!(mode.has(FunnelMode::STRICT_ORDER));
-        assert!(!mode.has(FunnelMode::STRICT_DEDUPLICATION)); // not set by ClickHouse mode names
+        assert!(!mode.has(FunnelMode::TIMESTAMP_DEDUP)); // not set by ClickHouse mode names
         assert!(mode.has(FunnelMode::STRICT_INCREASE));
         assert!(mode.has(FunnelMode::STRICT_ONCE));
         assert!(mode.has(FunnelMode::ALLOW_REENTRY));
@@ -1516,9 +1524,9 @@ mod tests {
             "strict, strict_order, timestamp_dedup, strict_increase, strict_once, allow_reentry",
         )
         .unwrap();
-        assert!(mode.has(FunnelMode::STRICT));
-        assert!(mode.has(FunnelMode::STRICT_ORDER));
         assert!(mode.has(FunnelMode::STRICT_DEDUPLICATION));
+        assert!(mode.has(FunnelMode::STRICT_ORDER));
+        assert!(mode.has(FunnelMode::TIMESTAMP_DEDUP));
         assert!(mode.has(FunnelMode::STRICT_INCREASE));
         assert!(mode.has(FunnelMode::STRICT_ONCE));
         assert!(mode.has(FunnelMode::ALLOW_REENTRY));
@@ -1534,14 +1542,14 @@ mod tests {
     fn test_parse_modes_trailing_comma() {
         // Trailing comma produces an empty token which is skipped
         let mode = FunnelMode::parse_modes("strict,").unwrap();
-        assert_eq!(mode, FunnelMode::STRICT);
+        assert_eq!(mode, FunnelMode::STRICT_DEDUPLICATION);
     }
 
     #[test]
     fn test_parse_modes_duplicate_mode() {
         // Duplicate mode is idempotent (OR of same bit)
         let mode = FunnelMode::parse_modes("strict, strict").unwrap();
-        assert_eq!(mode, FunnelMode::STRICT);
+        assert_eq!(mode, FunnelMode::STRICT_DEDUPLICATION);
     }
 
     // --- strict_increase mode tests ---
@@ -1741,7 +1749,7 @@ mod tests {
     fn test_strict_plus_strict_increase() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT.with(FunnelMode::STRICT_INCREASE);
+        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::STRICT_INCREASE);
         state.update(make_event(0, &[true, false, false]), 3);
         state.update(make_event(1000, &[false, true, false]), 3);
         state.update(make_event(2000, &[false, false, true]), 3);
@@ -1763,7 +1771,7 @@ mod tests {
     fn test_strict_dedup_plus_strict_increase() {
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::STRICT_INCREASE);
+        state.mode = FunnelMode::TIMESTAMP_DEDUP.with(FunnelMode::STRICT_INCREASE);
         state.update(make_event(0, &[true, false]), 2);
         state.update(make_event(0, &[false, true]), 2); // both modes block same-ts
         assert_eq!(state.finalize(), 1);
@@ -1797,9 +1805,9 @@ mod tests {
     #[test]
     fn test_all_modes_combined() {
         // Stress test: all modes at once with clean sequential data
-        let mode = FunnelMode::STRICT
+        let mode = FunnelMode::STRICT_DEDUPLICATION
             .with(FunnelMode::STRICT_ORDER)
-            .with(FunnelMode::STRICT_DEDUPLICATION)
+            .with(FunnelMode::TIMESTAMP_DEDUP)
             .with(FunnelMode::STRICT_INCREASE)
             .with(FunnelMode::STRICT_ONCE);
         let mut state = WindowFunnelState::new();
@@ -1862,7 +1870,7 @@ mod tests {
         let mut target = WindowFunnelState::new();
         let mut s1 = WindowFunnelState::new();
         s1.window_size_us = 3_600_000_000;
-        s1.mode = FunnelMode::STRICT;
+        s1.mode = FunnelMode::STRICT_DEDUPLICATION;
         s1.update(make_event(0, &[true, false, false]), 3);
 
         let mut s2 = WindowFunnelState::new();
@@ -1873,7 +1881,7 @@ mod tests {
         target.combine_in_place(&s1);
         target.combine_in_place(&s2);
         assert_eq!(target.window_size_us, 3_600_000_000);
-        assert_eq!(target.mode, FunnelMode::STRICT);
+        assert_eq!(target.mode, FunnelMode::STRICT_DEDUPLICATION);
         assert_eq!(target.finalize(), 3);
     }
 
@@ -1894,12 +1902,12 @@ mod tests {
 
     #[test]
     fn test_strict_dedup_plus_allow_reentry() {
-        // STRICT_DEDUPLICATION + ALLOW_REENTRY: dedup skips same-timestamp
+        // TIMESTAMP_DEDUP + ALLOW_REENTRY: dedup skips same-timestamp
         // events after the previous matched step, and reentry resets the
         // chain when entry condition fires again.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::ALLOW_REENTRY);
+        state.mode = FunnelMode::TIMESTAMP_DEDUP.with(FunnelMode::ALLOW_REENTRY);
         // Entry at t=100
         state.update(make_event(100, &[true, false, false]), 3);
         // Step 2 at t=100 (same ts as entry) → STRICT_DEDUP should skip
@@ -1917,7 +1925,7 @@ mod tests {
         // but dedup should then skip same-timestamp advancement.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::ALLOW_REENTRY);
+        state.mode = FunnelMode::TIMESTAMP_DEDUP.with(FunnelMode::ALLOW_REENTRY);
         // Entry at t=100, advance to step 2 at t=200
         state.update(make_event(100, &[true, false, false]), 3);
         state.update(make_event(200, &[false, true, false]), 3);
@@ -1934,11 +1942,11 @@ mod tests {
 
     #[test]
     fn test_strict_dedup_plus_strict_order() {
-        // STRICT_DEDUPLICATION + STRICT_ORDER: dedup skips same-ts events,
+        // TIMESTAMP_DEDUP + STRICT_ORDER: dedup skips same-ts events,
         // and strict_order breaks if earlier conditions appear between steps.
         let mut state = WindowFunnelState::new();
         state.window_size_us = 3_600_000_000;
-        state.mode = FunnelMode::STRICT_DEDUPLICATION.with(FunnelMode::STRICT_ORDER);
+        state.mode = FunnelMode::TIMESTAMP_DEDUP.with(FunnelMode::STRICT_ORDER);
         state.update(make_event(100, &[true, false, false]), 3);
         // Step 2 at same ts as entry → dedup skips
         state.update(make_event(100, &[false, true, false]), 3);
@@ -2214,7 +2222,7 @@ mod finalize_events_tests {
             ),
             (
                 10_000_000,
-                FunnelMode::STRICT,
+                FunnelMode::STRICT_DEDUPLICATION,
                 &[
                     (0, &[true, false, false]),
                     (1_000_000, &[false, true, false]),
@@ -2384,7 +2392,7 @@ mod clickhouse_parity_tests {
         // ClickHouse 26.9.8.3 windowFunnel returns 2.
         let mut s = WindowFunnelState::new();
         s.window_size_us = 10 * S;
-        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT);
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_DEDUPLICATION);
         s.update(Event::new(0, 0b1), 3);
         s.update(Event::new(S, 0b10), 3);
         s.update(Event::new(2 * S, 0b110), 3);
@@ -2397,7 +2405,7 @@ mod clickhouse_parity_tests {
         let mut s = WindowFunnelState::new();
         s.window_size_us = S;
         s.mode = FunnelMode::DEFAULT
-            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_DEDUPLICATION)
             .with(FunnelMode::STRICT_INCREASE)
             .with(FunnelMode::STRICT_ONCE);
         s.update(Event::new(0, 0b1), 2);
@@ -2411,7 +2419,7 @@ mod clickhouse_parity_tests {
         // ClickHouse 26.9.8.3 windowFunnel returns 2.
         let mut s = WindowFunnelState::new();
         s.window_size_us = 2 * S;
-        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT);
+        s.mode = FunnelMode::DEFAULT.with(FunnelMode::STRICT_DEDUPLICATION);
         s.update(Event::new(0, 0b1), 3);
         s.update(Event::new(S, 0b10), 3);
         s.update(Event::new(5 * S, 0b1), 3);
@@ -2516,7 +2524,7 @@ mod clickhouse_parity_tests {
         let mut s = WindowFunnelState::new();
         s.window_size_us = 7 * S;
         s.mode = FunnelMode::DEFAULT
-            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_DEDUPLICATION)
             .with(FunnelMode::STRICT_INCREASE);
         s.update(Event::new(2 * S, 0b1), 3);
         s.update(Event::new(5 * S, 0b11), 3);
@@ -2531,7 +2539,7 @@ mod clickhouse_parity_tests {
         let mut s = WindowFunnelState::new();
         s.window_size_us = S;
         s.mode = FunnelMode::DEFAULT
-            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_DEDUPLICATION)
             .with(FunnelMode::STRICT_ONCE);
         s.update(Event::new(2 * S, 0b10), 3);
         s.update(Event::new(2 * S, 0b111), 3);
@@ -2544,7 +2552,7 @@ mod clickhouse_parity_tests {
         // ClickHouse returns 2 or 3 for these rows depending on insertion order.
         let rows = [(2, 0b010), (2, 0b111), (3, 0b100)];
         let mode = FunnelMode::DEFAULT
-            .with(FunnelMode::STRICT)
+            .with(FunnelMode::STRICT_DEDUPLICATION)
             .with(FunnelMode::STRICT_ONCE);
         let orders: [[usize; 3]; 6] = [
             [0, 1, 2],
@@ -2806,11 +2814,10 @@ mod matcher_tests {
         assert!(matcher.is_candidate(2));
     }
 
-    /// The cache key carries the excluded event when that event is a
-    /// candidate for any step in the range, including when its steps are
-    /// exactly the range. Event 1 is the only candidate for the second step:
-    /// excluding it must not reuse the answer cached for excluding event 0,
-    /// which is a candidate for no step in the range.
+    /// The cache key carries the excluded event's conditions inside the
+    /// range, including when they are exactly the range. Event 1 is the only
+    /// candidate for the second step: excluding it must not reuse the answer
+    /// cached for excluding event 0, which has no condition in the range.
     #[test]
     fn cache_distinguishes_excluded_event_covering_the_whole_range() {
         let group = [
@@ -2821,6 +2828,21 @@ mod matcher_tests {
         let mut matcher = Matcher::new(&group, 3);
         assert!(matcher.distinct_events_exist(0, 2, 0));
         assert!(!matcher.distinct_events_exist(0, 2, 1));
+    }
+
+    /// Events with equal conditions are interchangeable, so a group of any
+    /// size costs one cache entry per step range, not one per event. With the
+    /// event index in the key, this group of 200 events made 200 entries per
+    /// range and `strict_once` over 31 overlapping conditions took seconds.
+    #[test]
+    fn equal_events_share_cache_entries() {
+        let group: Vec<Event> = (0..200).map(|_| Event::new(0, 0x7FFF_FFFF)).collect();
+        let mut matcher = Matcher::new(&group, 31);
+        for exclude in 0..group.len() {
+            assert!(matcher.distinct_events_exist(0, 31, exclude));
+            assert!(matcher.distinct_events_exist(5, 20, exclude));
+        }
+        assert_eq!(matcher.cache.len(), 2);
     }
 
     /// Brute force: can steps `lo..hi` each get a distinct event of the
@@ -2854,6 +2876,33 @@ mod matcher_tests {
         fn distinct_events_exist_matches_brute_force(
             masks in prop::collection::vec(0u32..64, 1..7),
             steps in 1usize..=6,
+        ) {
+            let group: Vec<Event> = masks.iter().map(|&m| Event::new(0, m)).collect();
+            let mut matcher = Matcher::new(&group, steps);
+            for exclude in 0..group.len() {
+                for lo in 0..=steps {
+                    for hi in lo..=steps {
+                        prop_assert_eq!(
+                            matcher.distinct_events_exist(lo, hi, exclude),
+                            brute(&group, lo, hi, exclude),
+                            "lo={} hi={} exclude={} masks={:?}", lo, hi, exclude, masks
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+
+        /// Larger groups than the test above, so that steps have more than
+        /// `steps + 1` candidates and the truncation is exercised: the
+        /// answers still match brute force.
+        #[test]
+        fn truncated_candidates_match_brute_force(
+            masks in prop::collection::vec(0u32..32, 6..11),
+            steps in 1usize..=5,
         ) {
             let group: Vec<Event> = masks.iter().map(|&m| Event::new(0, m)).collect();
             let mut matcher = Matcher::new(&group, steps);

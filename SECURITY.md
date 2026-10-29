@@ -2,12 +2,13 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in this project, please report it via
-[GitHub Issues](https://github.com/tomtom215/duckdb-behavioral/issues).
-
-For sensitive disclosures, please use a private advisory via GitHub's
+Please report a suspected vulnerability privately, through GitHub's
 [Security Advisory](https://github.com/tomtom215/duckdb-behavioral/security/advisories/new)
-feature.
+form. Do not open a public issue for it: an issue discloses the problem before
+a fix exists. For a defect that is not a vulnerability (a wrong result, a
+crash on valid input), a normal
+[issue](https://github.com/tomtom215/duckdb-behavioral/issues) is the right
+place.
 
 ## Security Model
 

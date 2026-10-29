@@ -95,8 +95,9 @@ the epoch; for `TIMESTAMPTZ` that is the instant itself, independent of the
 session time zone. Casting `TIMESTAMPTZ` to `TIMESTAMP` instead converts to
 local time, which can reorder events around a daylight-saving change.
 `TIMESTAMP_S`, `TIMESTAMP_MS` and `DATE` are cast to `TIMESTAMP` implicitly.
-`TIMESTAMP_NS` is too, which truncates to microseconds: events less than a
-microsecond apart become ties.
+`TIMESTAMP_NS` is too, converted to microseconds by DuckDB's cast (truncated
+up to 1.5.6, rounded to the nearest microsecond in 2.0.0): events less than a
+microsecond apart can become ties.
 
 ## Implementation
 
