@@ -46,8 +46,9 @@ O(1)-state functions (sessionize, retention) store no per-event data.
 currently capped at 100 million (a 1-billion run was measured once, in
 PERF.md Session 4).
 
-`sequence_next_node` uses 32-byte `NextNodeEvent` structs with `Arc<str>`
-string storage, further reducing the maximum feasible scale.
+`sequence_next_node` stores a 24-byte record per event plus the bytes of its
+value, which lowers the maximum feasible scale below the 16-byte-event
+functions.
 
 ## Running Benchmarks
 

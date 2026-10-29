@@ -21,7 +21,9 @@ sequence_match_events(pattern VARCHAR, timestamp TIMESTAMP,
 | `cond1..condN` | `BOOLEAN` | Event conditions (2 to 32) |
 
 **Returns:** `LIST(TIMESTAMP)` (`LIST(TIMESTAMPTZ)` for `TIMESTAMPTZ` input) -- a list of timestamps corresponding to each
-matched `(?N)` step in the pattern. Returns an empty list if no match is found.
+matched `(?N)` step in the pattern. If the full pattern does not match, it returns
+the timestamps of the longest partial chain (see [Behavior](#behavior)); the
+list is empty only when no `(?N)` step is ever reached.
 
 ## Usage
 

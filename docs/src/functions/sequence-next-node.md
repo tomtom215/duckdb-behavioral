@@ -155,16 +155,17 @@ microsecond apart become ties.
 
 | Operation | Complexity |
 |---|---|
-| Update | O(1) amortized (event append) |
-| Combine | O(m) where m = events in other state |
+| Update | O(1) amortized (event append, plus the value's bytes) |
+| Combine | O(m) where m = events and value bytes in the other state |
 | Finalize | O(n * k) sequential scan, where n = events, k = event conditions |
-| Space | O(n) -- all events stored (each includes an `Arc<str>` value) |
+| Space | O(n) -- one 24-byte record per event, plus the value bytes |
 
-Note: Unlike other event-collecting functions where the `Event` struct is `Copy`
-(16 bytes), `sequence_next_node` uses a dedicated `NextNodeEvent` struct (32 bytes)
-that stores an `Arc<str>` value per event. The `Arc<str>` enables O(1) clone via
-reference counting, which significantly reduces combine overhead compared to
-per-event deep string copying.
+Note: Unlike the other event-collecting functions, which store a 16-byte `Copy`
+`Event`, `sequence_next_node` keeps a state's values back to back in one byte
+buffer, and each event is a 24-byte `Copy` record holding a `(start, len)`
+range into it. A value equal to the previous event's is stored once, so a
+column with long runs of one value costs one copy per run. Growth is
+fallible: running out of memory is a SQL error, not an abort.
 
 ## See Also
 

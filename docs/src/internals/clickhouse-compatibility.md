@@ -11,7 +11,7 @@ remaining gaps.
 ### Behavioral Parametric Functions
 
 All six ClickHouse behavioral parametric functions are implemented. "Verified"
-means differential testing against ClickHouse 26.9.8.3 found no difference
+means differential testing against ClickHouse 26.10.2.103 found no difference
 outside the deliberate ones listed under
 [Known Semantic Differences](#known-semantic-differences).
 
@@ -89,23 +89,36 @@ provides session analysis through different mechanisms.
 
 Each function was run in both engines on the same randomly generated event
 groups (whole-second timestamps, frequent ties, events matching zero, one or
-several conditions, every mode combination) and the results compared group by
-group. ClickHouse ran as `clickhouse local` 26.9.8.3; every difference was
-minimized and explained from ClickHouse's source at tag `v26.9.8.3-stable`.
+several conditions) and the results compared group by group. ClickHouse ran as
+`clickhouse local` 26.10.2.103; `window_funnel` was also run on 26.9.8.3 and
+gave identical results. Every difference was minimized and explained from
+ClickHouse's source (`AggregateFunctionWindowFunnel.cpp`,
+`AggregateFunctionSequenceMatch.cpp`, `AggregateFunctionSequenceNextNode.cpp`).
 
 | Function | Cases | Outcome |
 |---|---|---|
-| `retention` | 102,500 groups | Identical |
-| `window_funnel` (24 mode combinations, 3 windows each) | 1,296,000 (two seeds) | Equal in every case to an exhaustive reference that follows ClickHouse's algorithm but keeps every chain and orders ties canonically. ClickHouse equals that reference for 17 combinations; the other 7 differ only by differences 1 and 2 |
-| `sequence_match` / `sequence_count` | 14,857 groups with time constraints only after `(?N)` or `.`, or none | Identical apart from 4 `sequence_count` cases where ClickHouse's answer changed between runs of the same rows (difference 6) |
-| `sequence_match_events` | same | Identical apart from difference 5 |
-| `sequence_next_node` (6 valid direction/base pairs, 1 to 4 conditions) | 240,000 with distinct (timestamp, value) per event | Identical. With ties, identical when the rows reach ClickHouse in the extension's tie order |
+| `retention` | 200,000 groups, 2 to 32 conditions | Identical |
+| `window_funnel` | 96,000 groups x 24 mode combinations x 3 windows = 6,912,000 results | 70,314 differ, all within 9 of the 24 combinations; the other 15 are identical in every variant. Six combinations use `strict_increase` without `strict_once` (difference 1). Three use `strict_deduplication` with `strict_once` and differ only when tied rows arrive in an order other than the extension's (difference 2): 353 results with shuffled ties, 0 with ties in the extension's order |
+| `sequence_match` / `sequence_count` | 600 patterns x 1,000 groups per pattern class, distinct timestamps, patterns without the hazards of differences 4 and 6 | Identical (0 of 600,000 results each) |
+| same, patterns ending in `.*` or a vacuous time constraint | 600 x 1,000 | `sequence_match` differs in 160 results, `sequence_count` in none (difference 6) |
+| same, a time constraint directly after `.*` | 600 x 1,000 | Differ widely (difference 4) |
+| same, tied timestamps | 600 x 1,000 | Identical when rows reach ClickHouse in the extension's tie order; otherwise they differ (difference 3) |
+| `sequence_match_events` | same | 5,174 of 600,000 results differ with distinct timestamps (difference 5) |
+| `sequence_next_node` (6 valid direction/base pairs, 1 to 5 conditions) | 100,000 groups = 600,000 results per variant | Identical with distinct timestamps and with ties in the extension's order; with shuffled ties 10,862 differ (difference 2) |
+
+For the `sequence_match_events` differences, 1,274 results (up to 25 per
+pattern) were triaged by deleting the events before the extension's chain and
+asking ClickHouse again: 975 then report the extension's chain, so the earlier
+attempt was what ClickHouse reported. The other 299 (21 patterns, each with an
+equality or other time gate at the end) are not explained by that test, because
+the abandoned attempt shares its first step with the successful match; one was
+traced by hand to the same cause, the rest were not.
 
 ## Semantic Compatibility
 
 ### retention
 
-Compatible. `result[0]` reflects the anchor condition; `result[i]` requires
+Compatible. `result[1]` reflects the anchor condition (SQL lists are 1-based); `result[i]` requires
 both the anchor and condition `i` to have been true in the group.
 
 ### window_funnel
@@ -155,7 +168,7 @@ failed chain is not retried at another anchor. `forward` with `tail` and
 | `window_funnel_events` | The step timestamps of the chain `window_funnel` reports, as `LIST(TIMESTAMP)` |
 | `'timestamp_dedup'` mode | Alias of `strict_increase` |
 | `(?t!=N)` time constraint | Not-equal operator in sequence patterns |
-| No experimental flags | `sequence_next_node` works without `SET allow_experimental_funnel_functions = 1` |
+| No settings required | `sequence_next_node` works without `SET enable_funnel_functions = 1` (ClickHouse's former name for it, `allow_experimental_funnel_functions`, is still an alias there) |
 
 ## Known Semantic Differences
 
@@ -178,8 +191,10 @@ order:
    on `(timestamp, value)` in arrival order. The extension orders ties by a
    total key (the condition bitmask; for `sequence_next_node`,
    `(timestamp, value, base_condition, conditions)`), so results never depend
-   on row order or thread count. Every differing `windowFunnel` case checked
-   (547) is an answer ClickHouse itself returns for some ordering of the rows.
+   on row order or thread count. The extension's `window_funnel` equals an
+   exhaustive reference (`funnel_matches_exhaustive_reference` in
+   `src/oracle_tests.rs`) that follows ClickHouse's algorithm but keeps every
+   chain and orders ties canonically.
 
 3. **`sequenceMatch` and friends also order same-timestamp events by
    arrival** (`::sort` on timestamp only); the extension orders them by
@@ -196,7 +211,9 @@ order:
    its best chain only when a strictly longer one appears, so after a failed
    attempt it can report that attempt's timestamps for a later successful
    match of the same length (`(?1)(?t==2)` over `c1@0, c1@3, c2@5` reports
-   `[0]`). The extension reports the events that matched (`[3]`).
+   `[0]`). The same happens when the failed attempt shares its first step
+   with the successful match. The extension reports the events that matched
+   (`[3]`).
 
 6. **ClickHouse reads past its action list** for a pattern ending in `.*`,
    `(?t<…)`, `(?t<=…)` or `(?t>=0)` when the match consumes the last event
@@ -223,6 +240,9 @@ Other differences:
 
 10. **Empty input.** Over zero rows `retention` returns `[]` and
     `sequence_match` / `sequence_count` return NULL; ClickHouse returns zeros.
+    Over rows that carry no true condition, `sequence_match('.*', ...)` is
+    true and `sequence_count` is 0, as in ClickHouse; a pattern with a `(?N)`
+    step is false.
 
 11. **`sequenceNextNode` condition limit.** ClickHouse allows 64 event
     conditions; the extension 32.

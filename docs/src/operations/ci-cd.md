@@ -1,33 +1,79 @@
 # CI/CD
 
 The project uses GitHub Actions for continuous integration, end-to-end testing,
-and release management. All workflows are defined in `.github/workflows/`.
+and release management. All workflows are defined in `.github/workflows/`; the
+toolchain, cache, and prebuilt-libduckdb handling every job shares lives in one
+composite action, `.github/actions/setup-rust`.
 
 ## Workflows
 
 ### CI (`ci.yml`)
 
-Runs on every push to `main` and every pull request. 14 jobs ensure code
-quality across multiple dimensions. The workflow sets `DUCKDB_DOWNLOAD_LIB=1`
-so test builds link a prebuilt libduckdb instead of compiling DuckDB from
-source.
+Runs on every push to `main` and every pull request. Twelve jobs cover code
+quality across several dimensions, and the single **CI Gate** job is the only
+required status check: it fails if any other job (apart from the informational
+`coverage`) did not succeed, without listing job names, so a new job cannot be
+forgotten. The workflow sets `DUCKDB_DOWNLOAD_LIB=1` so test builds link a
+prebuilt libduckdb instead of compiling DuckDB from source, and every `cargo`
+call uses `--locked`.
 
 | Job | Purpose | Tool |
 |-----|---------|------|
-| **check** | Verify compilation | `cargo check --all-targets` |
-| **wasm-check** | Library compiles for DuckDB-WASM | `cargo check --target wasm32-unknown-emscripten --lib` |
-| **test** | Run 547 unit tests + 28 in-process integration tests, then the doc-test | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
-| **clippy** | Zero-warning lint enforcement | `cargo clippy` with `-D warnings` |
-| **fmt** | Formatting verification | `cargo fmt --check` |
+| **fmt** | Formatting verification | `cargo fmt --all -- --check` |
+| **clippy** | Zero-warning lint enforcement, including the unsafe-code lints; also type-checks every target | `cargo clippy --all-targets -- -D warnings` |
+| **test** | 540 unit tests + 29 in-process integration tests, then the doc-test, on Linux and macOS | `cargo nextest run --all-targets --profile ci`, then `cargo test --doc` |
 | **doc** | Documentation builds without warnings | `cargo doc --no-deps --document-private-items` with `-Dwarnings` |
-| **msrv** | Minimum Supported Rust Version (1.88) | `cargo +1.88 check --all-targets` |
+| **msrv** | Minimum Supported Rust Version (1.88) | the `setup-rust` action with `toolchain: "1.88"`, then `cargo check --all-targets` |
+| **wasm-check** | Library compiles for DuckDB-WASM | `cargo check --target wasm32-unknown-emscripten --lib` |
 | **bench-compile** | Benchmarks compile (no execution) | `cargo bench --no-run` |
 | **deny** | License, advisory, and source auditing | `cargo-deny` |
-| **semver** | Semver compatibility check | `cargo-semver-checks` |
-| **coverage** | Code coverage reporting | `cargo-tarpaulin` + Codecov |
-| **cross-platform** | Linux + macOS test matrix | `cargo nextest run --all-targets --profile ci` on both OSes |
-| **extension-build** | Community extension packaging (without the prebuilt-libduckdb download) | `make configure && make release` |
-| **ci-gate** | Required status check gate | Evaluates all job results |
+| **hygiene** | Unused dependencies, spelling, workflow lint and security audit, shell scripts, license headers | `cargo machete`, `typos`, `actionlint`, `zizmor`, `shellcheck`, `scripts/add-spdx-headers.sh --check` |
+| **coverage** | Code coverage reporting (informational, not in the gate) | `cargo llvm-cov nextest` + Codecov |
+| **e2e** | The reusable `e2e.yml` below | |
+| **ci-gate** | Required status check gate | `jq` over `toJSON(needs)` |
+
+The repository has no `cargo-semver-checks` job: the crate is not published
+(`publish = false`) and its Rust API is internal; the SQL surface is the API,
+and the exact overload counts are asserted in `tests/extension_load.rs` and
+`scripts/compat-check.sh`.
+
+**One compiler everywhere.** `rust-toolchain.toml` pins the toolchain
+(1.97.0 at the time of writing). The `setup-rust` action installs exactly that
+and exports `RUSTUP_TOOLCHAIN`, which outranks the toolchain file, so the MSRV
+job really runs 1.88. (Before that, a bare `cargo check` after installing 1.87
+silently ran the pinned toolchain; see `LESSONS.md`, lesson 19.) Only pushes to
+`main` save the cargo cache; pull requests restore it.
+
+### E2E (`e2e.yml`)
+
+A reusable workflow (`workflow_call`, also runnable by hand) that `ci.yml`
+calls. It builds the extension with the community Makefile exactly as the
+community-extensions CI does, then asserts results.
+
+| Step | What it checks |
+|------|----------------|
+| `make configure release` | The extension builds and is stamped for the stable C API (`C_STRUCT`, C API v1.2.0) |
+| `make test_release` | The SQL logic tests in `test/sql/` pass in DuckDB 2.0.0 |
+| `scripts/check-stable-api.py` (Linux) | The unstripped library calls only C API functions inside the stable prefix of `duckdb_ext_api_v1` (76 of 548 slots, highest 306, limit 357), so the C API v1.2.0 stamp stays true |
+| `scripts/compat-check.sh` | 21 asserted queries covering all 8 functions, `TIMESTAMPTZ`, NULLs, error messages, the exact overload count (540), and one `GROUP BY` run at 1 and 4 threads that must give identical rows |
+
+`build` runs these on Linux x86_64 and macOS ARM64. The `compat` job then loads
+the Linux binary into DuckDB v1.3.2, v1.4.4, v1.5.0, and v1.5.6 and runs the
+same script, so one binary is shown to answer identically on every release with
+that C API. `scripts/install-duckdb-cli.sh` downloads the CLIs (DuckDB 2.0.0
+renamed its assets: `.tar.gz` for 2.x, `.zip` before).
+
+### Scheduled (`scheduled.yml`)
+
+Weekly (Monday 04:23 UTC) and on demand. A red run is a heads-up, not a blocked
+merge:
+
+| Job | Question it answers |
+|-----|---------------------|
+| **advisories** | Did a RustSec advisory land for a locked dependency? (`cargo deny check advisories`) |
+| **toolchain** (stable, beta) | Would the next Rust release break clippy or the tests? |
+| **latest-deps** | Do the tests pass after `cargo update` (what a build without `--locked` gets)? |
+| **duckdb-nightly** | Does the stamped binary still load and answer in the DuckDB nightly (`pip install --pre duckdb`, `scripts/nightly-smoke.py`)? |
 
 ### CodeQL (`codeql.yml`)
 
@@ -37,7 +83,6 @@ pull request, and on a weekly schedule (Monday 06:00 UTC). Uses the
 
 - **Triggers**: push to main, PRs, weekly cron
 - **Language**: Rust
-- **Action version**: `github/codeql-action` v4.36.2 (SHA-pinned)
 - **Permissions**: `security-events: write` (required to upload SARIF results)
 
 **Prerequisite — Disable Default Setup:**
@@ -55,103 +100,66 @@ fast with actionable remediation steps. To resolve:
 2. Click the **⋯** menu → **Disable CodeQL**
 3. Or via CLI: `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`
 
-### E2E Tests (`e2e.yml`)
-
-Runs on every push to `main` and every pull request. Builds the extension
-using the community extension Makefile and tests it against a real DuckDB
-instance.
-
-**Test coverage:**
-- Extension loading verification
-- All 8 functions (sessionize, retention, window_funnel,
-  window_funnel_events, sequence_match, sequence_count,
-  sequence_match_events, sequence_next_node)
-- Mode parameters (strict_increase)
-- GROUP BY aggregation
-- Load test with 100K events across all aggregate functions
-- No-match and empty-input edge cases
-
-**Platforms tested:** Linux x86_64, macOS ARM64
-
-**Compatibility job (`compat`):** The extension is stamped for the stable C API
-(ABI type `C_STRUCT`, C API v1.2.0). The `compat` job downloads the Linux
-artifact built by the E2E job, loads it into DuckDB v1.3.2, v1.4.4, v1.5.0,
-v1.5.6, and v2.0.0, and compares a query's output against the expected result.
-
 ### Release (`release.yml`)
 
-Triggered on git tag push (`v*`) or manual dispatch. Builds the extension
-for 4 platform targets, runs SQL integration tests, and creates a GitHub
-release with SHA256 checksums and build provenance attestations.
+Triggered on a `vX.Y.Z` tag push, or by hand for an existing tag. The steps and
+the follow-up pull request to the community repository are in
+[`RELEASING.md`](https://github.com/tomtom215/duckdb-behavioral/blob/main/RELEASING.md).
 
-**Build targets:**
+1. **validate**: the tag is SemVer, and `Cargo.toml`, `description.yml` and a
+   `CHANGELOG.md` section all carry the same version.
+2. **build** (4 platforms): the community Makefile, an architecture check with
+   `file`, then on the platforms that can run the binary the SQL logic tests and
+   `scripts/compat-check.sh`. Builds use no cargo cache, so a cache written by a
+   pull request cannot influence an attested binary.
+3. **release**: a GitHub release whose notes are the `CHANGELOG.md` section,
+   with `SHA256SUMS.txt` and a build-provenance attestation per archive.
+4. **update-description-ref**: commits the tagged commit's SHA into
+   `description.yml`'s `repo.ref` on `main`.
+
 | Platform | Runner | Target |
 |----------|--------|--------|
-| Linux x86_64 | ubuntu-latest | `x86_64-unknown-linux-gnu` |
-| Linux ARM64 | ubuntu-22.04 | `aarch64-unknown-linux-gnu` (cross-compiled) |
-| macOS x86_64 | macos-latest | `x86_64-apple-darwin` |
-| macOS ARM64 | macos-latest | `aarch64-apple-darwin` |
+| Linux x86_64 | `ubuntu-latest` | `x86_64-unknown-linux-gnu` |
+| Linux ARM64 | `ubuntu-24.04-arm` (native) | `aarch64-unknown-linux-gnu` |
+| macOS x86_64 | `macos-latest` | `x86_64-apple-darwin` |
+| macOS ARM64 | `macos-latest` | `aarch64-apple-darwin` |
 
-**Supply chain security:**
-- SHA256 checksums for all artifacts
-- GitHub artifact attestation via `actions/attest-build-provenance` v4.1.0 (SHA-pinned)
-- Build artifacts retained for 90 days
-- Build provenance tied to specific git commit
+Inputs reach shell steps through `env:` (never interpolated into the script),
+and each job holds only the permissions it needs.
 
-### Community Submission (`community-submission.yml`)
+### Documentation site (`pages.yml`)
 
-On-demand workflow for preparing updates to the extension listing in the
-[DuckDB Community Extensions](https://github.com/duckdb/community-extensions)
-repository. The extension was accepted via
-[PR #1306](https://github.com/duckdb/community-extensions/pull/1306) (merged
-2026-02-15). This workflow is used for subsequent version updates.
-Triggered via `workflow_dispatch` with a `dry_run` toggle.
+Builds the mdBook (v0.4.40 with `mdbook-mermaid` v0.14.0) on every pull request
+that touches `docs/` or `demo/`, so broken links and preprocessor errors fail
+before merge, and deploys it to GitHub Pages on pushes to `main`.
 
-**Phases:**
+### Dependabot
 
-| Phase | Purpose |
-|-------|---------|
-| **Validate** | description.yml schema, version consistency (Cargo.toml vs description.yml), required files |
-| **Quality Gate** | `cargo test`, `cargo clippy`, `cargo fmt`, `cargo doc` |
-| **Build & Test** | `make configure && make release && make test_release` (community Makefile toolchain) |
-| **Pin Ref** | Updates `description.yml` ref to the validated commit SHA (skipped in dry run) |
-| **Submission Package** | Uploads description.yml artifact, generates step-by-step PR commands |
-
-**Usage:**
-
-```bash
-# Dry run — validate everything without making changes
-gh workflow run community-submission.yml -f dry_run=true
-
-# Full run — validate, build, test, pin ref, generate submission package
-gh workflow run community-submission.yml -f dry_run=false
-```
-
-After a full run, the workflow summary contains the exact `gh` CLI commands to
-create a branch in the `duckdb/community-extensions` fork, update the ref, and
-open a PR — ensuring deterministic, repeatable version updates.
-
-### Pages (`pages.yml`)
-
-Deploys mdBook documentation to GitHub Pages on push to `main`. Uses
-mdBook v0.4.40 with custom CSS styling.
+Weekly updates for Cargo and GitHub Actions, with a 7-day cooldown and grouped
+pull requests. Every `uses:` is pinned to a commit SHA. `libduckdb-sys`,
+`duckdb` and `quack-rs` are pinned with `=` and move with the DuckDB release the
+bindings come from; review those pull requests against "Updating DuckDB
+version" in `CLAUDE.md`.
 
 ## Reproducing CI Locally
 
 ```bash
-# Run the same checks as CI
-cargo check --all-targets
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 547 unit + 28 integration + 1 doc-test
-cargo clippy --all-targets -- -D warnings
+# The CI checks that run offline, in one command (tools that are not
+# installed are skipped; CI always runs them)
+./scripts/check.sh
+
+# Or one at a time
+DUCKDB_DOWNLOAD_LIB=1 cargo test --locked   # 540 unit + 29 integration + 1 doc-test
+cargo clippy --all-targets --locked -- -D warnings
 cargo fmt --all -- --check
-RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --document-private-items
+RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --document-private-items --locked
 cargo deny check advisories bans licenses sources
 
-# Build extension (requires submodule); do not set DUCKDB_DOWNLOAD_LIB here
+# Build the extension (requires the submodule); do not set DUCKDB_DOWNLOAD_LIB here
 git submodule update --init --recursive
-make configure
-make release
+make configure release
+make test_release        # SQL logic tests
 
-# Run SQL integration tests
-make test_release
+# Assert results through any DuckDB CLI
+scripts/compat-check.sh "$(command -v duckdb)" build/release/behavioral.duckdb_extension
 ```

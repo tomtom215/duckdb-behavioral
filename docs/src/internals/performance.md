@@ -5,38 +5,63 @@ All performance claims in this project are backed by measured data from
 95% confidence intervals, validated across three or more consecutive runs.
 Improvements are accepted only when confidence intervals do not overlap.
 
-The benchmarks are microbenchmarks of the Rust aggregate state (update,
-combine, finalize), not end-to-end SQL queries through DuckDB.
+The Criterion benchmarks are microbenchmarks of the Rust aggregate state
+(update, combine, finalize), not end-to-end SQL queries through DuckDB.
+`scripts/bench-sql.sh` times the SQL queries (10 million rows, 100,000 groups,
+4 threads); its numbers are in the [SQL timings](#sql-timings) below.
 
 ## Current Baseline
 
-Measured on the development machine. Absolute numbers vary by hardware; relative
-improvements and algorithmic scaling are hardware-independent. These are the
-PERF.md Session 15 headline numbers, recorded before v0.8.0 and not
-re-measured since (PERF.md Session 18 measured the cost of the v0.8.0
-correctness changes on selected benchmarks).
+Measured in PERF.md Session 21 on one shared 4-vCPU Intel Xeon @ 2.80 GHz,
+rustc 1.97.0, `bench` profile, Criterion 0.8.2 (95% CI of the mean). Absolute
+numbers vary by hardware; compare only with numbers taken on the same machine
+in the same session. The Session 15 table that preceded these came from another
+machine and, for `window_funnel`, from the engine replaced in 0.10.0.
 
 ### Headline Numbers
 
-| Benchmark | Scale | Wall Clock | Throughput |
+| Benchmark | Scale | Time [95% CI] | Throughput |
 |---|---|---|---|
-| `sessionize_update` | 1 billion | 1.20 s | 830 Melem/s |
-| `retention_combine` | 100 million | 274 ms | 365 Melem/s |
-| `window_funnel_finalize` | 100 million | 791 ms | 126 Melem/s |
-| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million | 1.18 s | 85 Melem/s |
-| `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
-| `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
+| `sessionize_update` | 1 billion | 1.68 s [1.66, 1.70] | 595 Melem/s |
+| `retention_combine` | 100 million | 251 ms [246, 256] | 398 Melem/s |
+| `window_funnel_finalize` (8 conditions) | 100 million | 2.12 s [1.93, 2.27] | 47 Melem/s |
+| `window_funnel_events_finalize` | 100 million | 1.49 s [1.31, 1.73] | 67 Melem/s |
+| `sequence_match` | 100 million | 1.49 s [1.26, 1.70] | 67 Melem/s |
+| `sequence_count` | 100 million | 1.50 s [1.28, 1.72] | 67 Melem/s |
+| `sequence_match_events` | 100 million | 1.30 s [1.18, 1.52] | 77 Melem/s |
+| `sequence_next_node` | 10 million | 587 ms (median of 3 runs, 569 to 593) | 17 Melem/s |
+
+The 100-million rows have 10 samples each, so their intervals are wide.
 
 ### Per-Element Cost
 
-| Function | Cost per Element | Bound |
-|---|---|---|
-| `sessionize` | 1.2 ns | CPU-bound (register-only loop) |
-| `retention` | 2.7 ns | CPU-bound (bitmask OR) |
-| `window_funnel` | 7.9 ns | Memory-bound at 100M (1.6 GB working set) |
-| `sequence_match` | 10.5 ns | Memory-bound (NFA + event traversal) |
-| `sequence_count` | 11.8 ns | Memory-bound (NFA restart overhead) |
+| Function | Cost per Element |
+|---|---|
+| `sessionize` | 1.7 ns |
+| `retention` | 2.5 ns |
+| `window_funnel` | 21.2 ns |
+| `window_funnel_events` | 14.9 ns |
+| `sequence_match` | 14.9 ns |
+| `sequence_count` | 15.0 ns |
+| `sequence_match_events` | 13.0 ns |
+| `sequence_next_node` | 58.7 ns |
+
+### SQL timings
+
+`scripts/bench-sql.sh`: 10 million rows in 100,000 groups of 100 events,
+4 threads, wall time of a fresh `duckdb` 2.0.0 process, median [min, max] of 9
+runs, same machine. These include DuckDB's scan and grouping.
+
+| Query | Seconds |
+|---|---|
+| `window_funnel`, 3 steps | 1.58 [1.49, 1.63] |
+| `window_funnel_events` | 1.60 [1.49, 1.67] |
+| `sequence_count('(?1).*(?2).*(?3)')` | 1.75 [1.63, 1.81] |
+| `sequence_match_events('(?1).*(?2)')` | 1.61 [1.54, 1.66] |
+| `sequence_next_node` | 3.33 [3.13, 3.68] |
+| `retention`, 3 conditions | 0.46 [0.43, 0.52] |
+| `sessionize` over `PARTITION BY u ORDER BY ts` | 1.92 [1.81, 2.05] |
+| `window_funnel` over one 10-million-row group | 0.56 [0.54, 0.64] |
 
 ## Algorithmic Complexity
 
@@ -56,7 +81,7 @@ s = pattern steps.
 ## Optimization History
 
 `PERF.md` records the optimization sessions (numbered from Session 1 to
-Session 18) that produced the current performance profile. Each
+Session 21) that produced the current performance profile. Each
 optimization below was measured independently with before/after Criterion data
 and non-overlapping confidence intervals (except where noted as negative results).
 
@@ -176,9 +201,13 @@ struct size. `Arc::clone` (~1ns atomic increment) consistently beats
 Also added a realistic cardinality benchmark using a pool of 100 distinct
 `Arc<str>` values, showing 35% improvement over unique strings at 1M events.
 
+> Superseded in 0.10.1: `sequence_next_node` now stores a state's values in
+> one byte buffer and each event is a 24-byte record with a range into it. See
+> the 0.10.1 entry at the end of this page.
+
 ### E2E Validation + Custom C Entry Point
 
-Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time (now 547) missed:
+Discovered and fixed 3 critical bugs that all 375 passing unit tests at the time (now 540) missed:
 
 1. **SEGFAULT on extension load**: `extract_raw_connection` used incorrect
    pointer arithmetic. Replaced with a custom C entry point
@@ -244,6 +273,25 @@ check), so the extra branch in the hot loop costs more than it saves. Reverted.
 | `sequence_next_node_combine` | `sequence_next_node` | 100 to 1 million |
 | `sequence_next_node_realistic` | `sequence_next_node` | 100 to 10 million |
 
+### Session 21 (unreleased): safe FFI views, edition 2024, byte-buffer store
+
+Base (v0.10.1, commit 63e5a64) and the branch were built and run alternately on
+the same machine; the full tables are in `PERF.md`.
+
+- Eight Criterion state benchmarks at 10 million elements, three alternating
+  passes: no difference beyond the spread of the passes (ratios 0.96 to 1.06).
+  The 1.06 is `retention_combine`: ranges did not overlap in those passes, but
+  five more alternating passes gave +2.5% with overlapping ranges, and its
+  production code is unchanged.
+- Eight SQL queries at 10 million rows: no difference beyond the spread of 9
+  runs, except `sequence_next_node`: 6.85 s to 3.33 s (0.49) on the reproducible
+  data, 0.58 on a second data set in both wall and CPU time.
+- `sequence_next_node` stores values in one byte buffer per state, with a
+  24-byte record per event, instead of an `Arc<str>` per event. The per-row
+  ingest cost in Criterion (allocating an `Arc` from a borrowed string and
+  `update`, against `try_push`) fell to 0.48 at 10 million unique values and
+  0.42 with 100 distinct values.
+
 ## Reproduction
 
 ```bash
@@ -260,7 +308,11 @@ cargo bench -- sequence_match_events
 
 Criterion automatically compares against previous runs and reports confidence
 intervals. Run benchmarks three or more times before drawing conclusions from
-the data.
+the data. For SQL timings:
+
+```bash
+scripts/bench-sql.sh "$(command -v duckdb)" build/release/behavioral.duckdb_extension
+```
 
 ## Methodology
 

@@ -378,15 +378,16 @@ If `LOAD` succeeds but functions are not available, verify registration by
 querying the function catalog:
 
 ```sql
-SELECT function_name, function_type
+SELECT DISTINCT function_name
 FROM duckdb_functions()
-WHERE function_name LIKE 'session%'
-   OR function_name LIKE 'retention%'
-   OR function_name LIKE 'window_funnel%'
-   OR function_name LIKE 'sequence%';
+WHERE function_name IN ('sessionize', 'retention', 'window_funnel',
+  'window_funnel_events', 'sequence_match', 'sequence_count',
+  'sequence_match_events', 'sequence_next_node', 'behavioral_version')
+ORDER BY function_name;
 ```
 
-All eight aggregate functions should appear. If some are missing, check that
+All eight aggregate functions and `behavioral_version` should appear (540
+overloads in all: `SELECT count(*)` without `DISTINCT` returns that). If some are missing, check that
 you loaded the current build (`SELECT behavioral_version();`) and that your
 DuckDB is v1.3.2 or newer.
 
@@ -435,7 +436,7 @@ on Linux) at an existing one. Neither is needed for `cargo build --release`.
 
 ## Running Tests
 
-The extension includes 547 unit tests, 28 in-process integration tests
+The extension includes 540 unit tests, 29 in-process integration tests
 (`tests/extension_load.rs`), and 1 doc-test:
 
 ```bash
@@ -476,6 +477,7 @@ src/
   lib.rs                  # Entry point via quack_rs::entry_point_v2! macro
   common/
     mod.rs
+    config.rs             # Error messages for per-group constant arguments and out-of-memory
     event.rs              # Shared Event type (16-byte bitmask)
     timestamp.rs          # Interval-to-microseconds conversion
   pattern/
@@ -488,8 +490,10 @@ src/
   window_funnel.rs        # Port of ClickHouse windowFunnel, mode flags
   sequence.rs             # Pattern matching state management
   sequence_next_node.rs   # Next event value after pattern match
+  oracle_tests.rs         # Test-only: reference and invariance checks for every state
   ffi/
     mod.rs                # register_all() dispatcher
+    view.rs               # Safe views over DuckDB's raw handles (the only unsafe constructors)
     sessionize.rs         # Sessionize FFI callbacks
     retention.rs          # Retention FFI callbacks
     window_funnel.rs      # Window funnel FFI callbacks

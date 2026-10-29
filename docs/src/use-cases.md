@@ -2,8 +2,9 @@
 
 This page presents five real-world use cases for `duckdb-behavioral`, each with a
 problem description, sample data, the analytical query, and interpretation of
-results. All examples are self-contained -- you can copy and paste each section
-into a DuckDB session with the extension loaded.
+results. Each section creates its own sample data and its expected output was
+checked against a real DuckDB session, so you can copy and paste it into one
+with the extension loaded.
 
 ---
 

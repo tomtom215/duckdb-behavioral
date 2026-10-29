@@ -29,6 +29,7 @@ reproducible via `cargo bench`.
 - [Session 18 (v0.8.0): Correctness-Driven Arithmetic + Determinism — Measured Cost](#session-18-v080-correctness-driven-arithmetic--determinism--measured-cost)
 - [Session 19: Feasibility-Then-Greedy Sequence Matcher](#session-19-feasibility-then-greedy-sequence-matcher)
 - [Session 20: Per-Row Allocation and Run-Based Update](#session-20-per-row-allocation-and-run-based-update)
+- [Session 21: Same-Machine Check of the FFI Views, Edition 2024 and the `sequence_next_node` Store](#session-21-same-machine-check-of-the-ffi-views-edition-2024-and-the-sequence_next_node-store)
 - [Current Baseline](#current-baseline)
   - [Sessionize](#sessionize)
   - [Retention](#retention)
@@ -83,11 +84,11 @@ cargo bench -- sequence_match
 | `sequence_combine` | `sequence_*` | combine_in_place + finalize | 100 to 1M states | In-place append + NFA cost |
 | `sort_events` | (isolated) | sort only | 100 to 100M events | pdqsort scaling (reverse-ordered timestamps with jitter) |
 | `sort_events_presorted` | (isolated) | sort only | 100 to 100M events | pdqsort adaptive path |
-| `sequence_next_node` | `sequence_next_node` | update + finalize | 100 to 10M events | Sequential matching + Arc\<str\> clone |
+| `sequence_next_node` | `sequence_next_node` | `try_push` per row + finalize | 100 to 10M events | Sequential matching + copying each value into the state's byte buffer (before Session 21: `Arc<str>` clone) |
 | `sequence_next_node_combine` | `sequence_next_node` | combine_in_place + finalize | 100 to 1M states | In-place append + sequential matching |
 | `sequence_match_events` | `sequence_match_events` | update + finalize_events | 100 to 100M events | NFA pattern matching + timestamp collection |
 | `sequence_match_events_combine` | `sequence_match_events` | combine_in_place + finalize_events | 100 to 1M states | In-place append + NFA + timestamp cost |
-| `sequence_next_node_realistic` | `sequence_next_node` | update + finalize (100 distinct values) | 100 to 1M events | Realistic cardinality Arc\<str\> sharing |
+| `sequence_next_node_realistic` | `sequence_next_node` | `try_push` per row + finalize (100 distinct values) | 100 to 10M events | Realistic cardinality |
 
 ## Algorithmic Complexity
 
@@ -99,7 +100,7 @@ cargo bench -- sequence_match
 | `sequence_match` | O(1) amortized | O(m) append | O(n) fast paths; otherwise O(s · n log n) feasibility pass + greedy walk | O(n) — collected events, plus O(n·s) bytes while finalizing |
 | `sequence_count` | O(1) amortized | O(m) append | O(n) fast paths; otherwise O(s · n log n) feasibility pass + greedy walk | O(n) — collected events, plus O(n·s) bytes while finalizing |
 | `sequence_match_events` | O(1) amortized | O(m) append | O(n) wildcard-separated fast path; otherwise O(s · n log n) | O(n) — collected events, plus O(n·s) bytes while finalizing |
-| `sequence_next_node` | O(1) amortized | O(m) append | O(n*s) sequential scan | O(n) — collected events + Strings |
+| `sequence_next_node` | O(1) amortized (plus the value's bytes) | O(m) append, ranges rebased | O(n*s) sequential scan | O(n) — 24-byte records + one byte buffer of values |
 
 Where n = events, m = events in other state, k = conditions (up to 32), s = pattern steps.
 
@@ -979,12 +980,125 @@ groups (per-user funnels) is the common shape.
 - Measured and not kept: the fixed level array alone, without the other
   changes, made no measurable difference.
 
+## Session 21: Same-Machine Check of the FFI Views, Edition 2024 and the `sequence_next_node` Store
+
+**Question.** Between v0.10.1 (commit 63e5a64) and this branch the FFI layer
+became safe Rust over `src/ffi/view.rs`, the crate moved to edition 2024,
+`libduckdb-sys` went from 1.20000.0 to 1.20000.1 (identical bindings), and
+`sequence_next_node` replaced an `Arc<str>` per event with one byte buffer per
+state and 24-byte records. Did anything get slower or faster?
+
+**Method.** Base is commit 63e5a64 in a `git worktree`; new is this branch.
+One shared 4-vCPU Intel Xeon @ 2.80 GHz, Linux, rustc 1.97.0 for both, release
+profile (LTO, one codegen unit), DuckDB 2.0.0. The two trees ran alternately
+(base, new, base, new, ...) so that drift in the shared machine hits both.
+
+1. **Criterion**, 10M-element size of every benchmark whose code changed or
+   could be affected, 3 alternating passes. Each cell is the median of the
+   three Criterion means, with the range of the three in brackets.
+2. **SQL, reproducible**: `scripts/bench-sql.sh`, 10M rows in 100,000 groups,
+   4 threads, wall time of a fresh `duckdb` process per run, 9 runs per build.
+3. **SQL, scratch data** (a differently shaped 10M-row table that is not in the
+   repository; kept because it gave CPU time as well as wall time), 9
+   alternating runs per build, 4 threads.
+
+**Criterion, 10M elements** (ms):
+
+| Benchmark | Base | New | New / base |
+|---|---|---|---|
+| `sessionize_update` | 17.7 [16.2, 18.6] | 17.0 [16.6, 17.1] | 0.96 |
+| `sessionize_combine` | 90.1 [90.1, 93.8] | 93.2 [92.0, 94.3] | 1.03 |
+| `retention_combine` | 25.2 [25.1, 25.7] | 26.5 [26.1, 26.6] | 1.06 (see below) |
+| `window_funnel_finalize` (8 conditions) | 93.0 [90.3, 99.0] | 94.0 [92.8, 95.4] | 1.01 |
+| `window_funnel_events_finalize` | 90.7 [90.4, 94.7] | 92.1 [89.9, 94.2] | 1.02 |
+| `sequence_match` | 98.5 [96.0, 99.4] | 97.4 [96.5, 99.0] | 0.99 |
+| `sequence_count` | 115.1 [114.8, 115.3] | 114.5 [111.5, 116.3] | 1.00 |
+| `sequence_match_events` | 95.0 [94.9, 98.4] | 100.1 [96.6, 100.1] | 1.05 |
+
+Nothing moved beyond the spread of the passes. `retention_combine` showed
+ranges that did not overlap in those three passes (+5.5%), although
+`src/retention.rs` differs only in its tests. Five more alternating passes of
+that one benchmark gave base 25.1 ms [24.6, 26.2] and new 25.7 ms [25.3, 26.3]
+(+2.5%, ranges overlapping), so the first gap is attributed to machine drift
+(CONJECTURED; the cause was not investigated further).
+
+**`sequence_next_node`, Criterion.** The old benchmark pre-built `Arc<str>`
+values and called `update(e.clone())`, which measures neither design's real
+cost. In production the FFI had to allocate an `Arc<str>` from DuckDB's
+borrowed string for every row; the new store copies the bytes into its buffer
+instead. The benchmark now calls `try_push` with a borrowed `&str`, as the
+aggregate does, and the base tree's copy of the benchmark allocates an
+`Arc<str>` per row as the old FFI did. 3 alternating passes, ms:
+
+| Benchmark | Base (`Arc::from` + `update`) | New (`try_push`) | New / base |
+|---|---|---|---|
+| `sequence_next_node/1000000` (unique values) | 102 [102, 106] | 70 [67, 76] | 0.68 |
+| `sequence_next_node/10000000` (unique values) | 1226 [1182, 1274] | 587 [569, 593] | 0.48 |
+| `sequence_next_node_realistic/1000000` (100 values) | 101 [97, 104] | 25.9 [25.5, 26.0] | 0.26 |
+| `sequence_next_node_realistic/10000000` (100 values) | 1209 [1134, 1251] | 511 [510, 522] | 0.42 |
+
+(With the old benchmark body, which clones a pre-built `Arc` and calls
+`update`, the new tree is 9% to 16% slower at 10M; that is the cost of copying
+the bytes once the allocation is no longer counted, not a regression of the
+aggregate.)
+
+**SQL, `scripts/bench-sql.sh`** (seconds, median [min, max] of 9 runs):
+
+| Query | Base | New | New / base |
+|---|---|---|---|
+| `window_funnel`, 100k groups | 1.54 [1.49, 1.60] | 1.58 [1.49, 1.63] | 1.02 |
+| `window_funnel_events` | 1.69 [1.54, 1.86] | 1.60 [1.49, 1.67] | 0.95 |
+| `sequence_count` | 1.79 [1.63, 1.91] | 1.75 [1.63, 1.81] | 0.98 |
+| `sequence_match_events` | 1.68 [1.60, 1.78] | 1.61 [1.54, 1.66] | 0.96 |
+| `sequence_next_node` | 6.85 [6.56, 7.18] | 3.33 [3.13, 3.68] | 0.49 |
+| `retention` | 0.44 [0.41, 0.49] | 0.46 [0.43, 0.52] | 1.05 |
+| `sessionize`, `OVER (PARTITION BY u ORDER BY ts)` | 1.78 [1.70, 1.82] | 1.92 [1.81, 2.05] | 1.08 |
+| `window_funnel`, one 10M-row group | 0.55 [0.52, 0.61] | 0.56 [0.54, 0.64] | 1.03 |
+
+The `sessionize` ratio (+8%, ranges just overlapping) did not reproduce on the
+scratch data below (1.00 in wall time and in CPU time), so it is reported, not
+explained. An earlier version of the FFI views, measured the same way during this
+session (that build was not kept), was 4% to 8% slower; moving the panic path
+out of line and adding `#[inline]` hints removed that.
+
+**SQL, scratch data** (new / base of the median over 9 alternating runs; CPU
+time is user plus system of the `duckdb` process):
+
+| Query | Wall | CPU |
+|---|---|---|
+| `window_funnel` | 1.01 | 1.01 |
+| `window_funnel_events` | 1.02 | 1.04 |
+| `sequence_count` | 1.03 | 1.06 |
+| `sequence_match_events` | 1.06 | 1.02 |
+| `sequence_next_node` | 0.58 | 0.58 |
+| `retention` | 1.03 | 1.12 |
+| `sessionize` | 1.00 | 1.00 |
+| `window_funnel`, one group | 1.01 | 1.05 |
+
+Every min-max range of the non-`sequence_next_node` rows overlaps its base.
+`sequence_next_node` CPU time: 4.73 s [4.39, 5.91] to 2.72 s [2.56, 3.62].
+
+**Conclusion.** The safe views, edition 2024 and the dependency patch bumps
+cost nothing that these measurements can see (differences within the spread of
+repeated runs; CONJECTURED for anything smaller than about 5%).
+`sequence_next_node` is about twice as fast in SQL (0.49 to 0.58 of the time in
+three SQL measurements on two data sets) and no longer aborts when it runs out of memory. Memory left
+behind by an abandoned `GROUP BY ... LIMIT` scan (300,000 groups) fell from
+246 MB to 136 MB.
+
+**Full-scale numbers** (Criterion, this branch; see Current Baseline): these
+replace the Session 15 headline table, which was recorded on a different
+machine and, for `window_funnel`, before the 0.10.0 engine.
+
 ## Current Baseline
 
-Recorded after Session 15 dependency refresh (Criterion 0.8.2, rand 0.9.2).
-No Rust source code changes — numbers reflect updated benchmark framework
-and data generation. Any future optimization must demonstrate improvement
-against these values.
+The headline tables at the end of this section (Per-Element Cost at Scale and
+Headline Numbers) were re-measured in Session 21 on rustc 1.97.0. The per-size
+tables for each function below are still the Session 15 values (rustc 1.93.0,
+Criterion 0.8.2, rand 0.9.2, a different machine) and, for `window_funnel`,
+belong to the engine replaced in 0.10.0: do not compare them with Session 21
+numbers. Any future optimization must demonstrate improvement against
+measurements taken on the same machine in the same session.
 
 > **v0.8.0 note**: `window_funnel_events` (added in v0.8.0) shares
 > `window_funnel`'s greedy scan via a zero-sized recorder abstraction, so the
@@ -1112,9 +1226,11 @@ against these values.
 
 ### Sequence Next Node
 
-`sequence_next_node` stores `NextNodeEvent` structs (timestamp + `Option<Arc<str>>` +
-conditions + base_condition, 32 bytes) which are larger than the `Copy` `Event` struct
-(16 bytes).
+Session 15 values, from the `Arc<str>` implementation and a benchmark that
+pre-built the `Arc`s. Since 0.10.1 a state keeps its values in one byte buffer
+with a 24-byte record per event, and the benchmark calls `try_push` with a
+borrowed `&str`; the Session 21 section has the comparison and the current
+10M value (587 ms).
 
 | Benchmark | Mean [95% CI] | Throughput |
 |---|---|---|
@@ -1136,53 +1252,53 @@ conditions + base_condition, 32 bytes) which are larger than the `Copy` `Event` 
 | `sequence_next_node_realistic/1000000` | 51.6 ms [51.3, 51.9] | 19 Melem/s |
 | `sequence_next_node_realistic/10000000` | 533 ms [529, 536] | 19 Melem/s |
 
-**Analysis**: `sequence_next_node` throughput is ~18 Melem/s at 10M scale. The
-realistic cardinality benchmark (100 distinct Arc\<str\> values) shows consistent
-performance with unique strings at scale, confirming Arc sharing benefits in
-production workloads.
+**Analysis** (Session 15): throughput was ~18 Melem/s at 10M scale with the
+pre-built `Arc` benchmark. That benchmark did not include the per-row `Arc`
+allocation the FFI paid; see Session 21.
 
 ### Per-Element Cost at Scale
 
-Cost per element at scale. Session 15 refresh numbers:
+Session 21 (this branch, Criterion 0.8.2, rustc 1.97.0, shared 4-vCPU Intel
+Xeon @ 2.80 GHz, `bench` profile, 95% CI of the mean; 100 samples at 10M and
+below, 10 samples at 100M and above, which is why those intervals are wide):
 
-| Function | Scale | Time | ns/element | Throughput | Bottleneck |
+| Function | Scale | Time [95% CI] | ns/element | Throughput [95% CI] | Bottleneck |
 |---|---|---|---|---|---|
-| `sessionize_update` | 1B | 1.20 s | 1.20 | 830 Melem/s | O(1) per-event, compute-bound |
-| `retention_combine` | 100M | 274 ms | 2.74 | 365 Melem/s | O(1) per-state, DRAM-bound |
-| `window_funnel_finalize` | 100M | 791 ms | 7.91 | 126 Melem/s | Sort + O(n*k) greedy scan |
-| `sequence_match` | 100M | 1.05 s | 10.5 | 95 Melem/s | Sort + O(n) fast-path scan |
-| `sequence_count` | 100M | 1.18 s | 11.8 | 85 Melem/s | Sort + O(n) fast-path counting |
-| `sequence_match_events` | 100M | 1.07 s | 10.7 | 93 Melem/s | Sort + linear scan + timestamp collection (Session 15; Session 19 measured 687 ms on its own machine, see there) |
-| `sequence_next_node` | 10M | 546 ms | 54.6 | 18 Melem/s | Sort + sequential scan + Arc\<str\> alloc |
-| `sort_events` (reverse-ordered, jittered) | 100M | 2.079 s | 20.79 | 48 Melem/s | O(n log n) pdqsort, DRAM-bound |
-| `sort_events` (presorted) | 100M | 1.895 s | 18.95 | 53 Melem/s | O(n) adaptive, DRAM-bound |
+| `sessionize_update` | 1B | 1.681 s [1.660, 1.703] | 1.68 | 595 Melem/s [587, 603] | O(1) per-event, compute-bound |
+| `retention_combine` | 100M | 251 ms [246, 256] | 2.51 | 398 Melem/s [390, 406] | O(1) per-state, DRAM-bound |
+| `window_funnel_finalize` (8 conditions) | 100M | 2.12 s [1.93, 2.27] | 21.2 | 47 Melem/s [44, 52] | Sort + one entry per true condition |
+| `window_funnel_events_finalize` | 100M | 1.49 s [1.31, 1.73] | 14.9 | 67 Melem/s [58, 77] | Same scan, plus the reported chain |
+| `sequence_match` | 100M | 1.49 s [1.26, 1.70] | 14.9 | 67 Melem/s [59, 79] | Sort + O(n) fast-path scan |
+| `sequence_count` | 100M | 1.50 s [1.28, 1.72] | 15.0 | 67 Melem/s [58, 78] | Sort + O(n) fast-path counting |
+| `sequence_match_events` | 100M | 1.30 s [1.18, 1.52] | 13.0 | 77 Melem/s [66, 85] | Sort + linear scan + timestamp collection |
+| `sequence_next_node` | 10M | 587 ms (median of 3 runs, range 569 to 593) | 58.7 | 17 Melem/s | Sort + copy of each value into the state + sequential scan |
+
+`sort_events` was not re-run; its Session 15 values (2.079 s reverse-ordered
+and 1.895 s presorted at 100M) stand for the Session 15 machine only.
+
+The `window_funnel_finalize` row is not comparable with Session 15 (791 ms at
+100M): the funnel engine was replaced in 0.10.0 by a port of ClickHouse's
+`windowFunnel`, which keeps one entry per true condition. The other rows differ
+from Session 15 because the machine does: Session 21's same-machine A/B against
+v0.10.1 shows `sessionize_update` at 17.7 ms and 17.0 ms for base and new at
+10M, with identical production code, while Session 15 recorded 12.1 ms at 10M.
 
 ### Headline Numbers
 
-Criterion-validated, reproducible headline numbers for portfolio presentation
-(Session 15, Criterion 0.8.2, rand 0.9.2):
+The first eight rows of the table above are the headline numbers: 595 Melem/s
+for `sessionize_update` at one billion elements, 398 Melem/s for
+`retention_combine` at 100 million, and 47 to 77 Melem/s for the
+event-collecting functions at 100 million. These are throughput of the Rust
+state functions, not SQL queries; `scripts/bench-sql.sh` times the queries
+(README, Performance).
 
-| Function | Scale | Wall Clock | Throughput | ns/element |
-|---|---|---|---|---|
-| **`sessionize_update`** | **1 billion** | **1.20 s** | **830 Melem/s** | **1.20** |
-| **`retention_combine`** | 100 million | 274 ms | 365 Melem/s | 2.74 |
-| `window_funnel_finalize` | 100 million | 791 ms | 126 Melem/s | 7.91 |
-| `sequence_match` | 100 million | 1.05 s | 95 Melem/s | 10.5 |
-| `sequence_count` | 100 million | 1.18 s | 85 Melem/s | 11.8 |
-| `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s | 10.7 |
-| `sequence_next_node` | 10 million | 546 ms | 18 Melem/s | 54.6 |
-| `sort_events` (reverse-ordered, jittered) | 100 million | 2.08 s | 48 Melem/s | 20.8 |
-
-Note: Minor throughput differences from Session 14 reflect Criterion 0.8.2's
-updated statistical sampling and rand 0.9.2's different data generation.
-No Rust source code was changed. CIs overlap with Session 14 in all cases.
-
-Memory constraint: Event-collecting functions store 16 bytes per event. At 100M events
-= 1.6GB working set. 1B events would require 16GB + clone overhead, exceeding
-available memory (21GB) during Criterion's measurement loop. The 100M scale is
-the measured maximum for these functions — not extrapolated. `sequence_next_node`
-stores per-event Arc\<str\> data (32 bytes per NextNodeEvent) limiting its practical
-benchmark maximum to 10M events.
+Memory constraint: event-collecting functions store 16 bytes per event. At 100M
+events that is a 1.6 GB working set. 1B events would need 16 GB plus clone
+overhead, exceeding the 21 GB available during Criterion's measurement loop, so
+100M is the measured maximum for these functions, not an extrapolation.
+`sequence_next_node` stores a 24-byte record per event plus the value bytes
+(6 to 12 bytes per event in the benchmark), which limits its practical maximum
+to 10M events.
 
 ## Session Improvement Protocol
 
