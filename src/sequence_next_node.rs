@@ -1334,6 +1334,12 @@ mod tests {
     }
 
     #[test]
+    fn test_stored_event_size() {
+        // The per-event record kept in a state; the docs quote 24 bytes.
+        assert_eq!(std::mem::size_of::<StoredEvent>(), 24);
+    }
+
+    #[test]
     fn test_next_node_event_size() {
         // Verify NextNodeEvent with Arc<str> is 32 bytes (down from 40 with String)
         assert_eq!(std::mem::size_of::<NextNodeEvent>(), 32);

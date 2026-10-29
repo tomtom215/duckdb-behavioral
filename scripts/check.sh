@@ -85,6 +85,16 @@ else
     check "Benchmarks compile" cargo bench --no-run --locked
 fi
 
+# Builds an unstripped release library (about 40 s), so --quick skips it.
+if $quick; then
+    printf '[SKIP] Stable C API surface (--quick)\n'
+    skipped=$((skipped + 1))
+else
+    optional "Stable C API surface" objdump bash -c \
+        'env -u DUCKDB_DOWNLOAD_LIB -u DUCKDB_LIB_DIR cargo build --profile profiling --lib --locked &&
+         python3 -I scripts/check-stable-api.py target/profiling/libbehavioral.so'
+fi
+
 optional "Cargo deny" cargo-deny cargo deny check advisories bans licenses sources
 optional "Unused dependencies" cargo-machete cargo machete
 optional "Spelling" typos typos

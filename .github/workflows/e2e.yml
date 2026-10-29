@@ -56,6 +56,14 @@ jobs:
           make release
       - name: SQL logic tests (test/sql)
         run: make test_release
+      # The stamp promises every DuckDB with C API v1.2.0; a call to a slot
+      # outside the stable prefix would break that without any test noticing on
+      # a recent DuckDB. Needs symbols, which the release profile strips.
+      - name: Stable C API surface
+        if: matrix.platform == 'linux_amd64'
+        run: |
+          cargo build --profile profiling --lib --locked
+          python3 -I scripts/check-stable-api.py target/profiling/libbehavioral.so
       - name: Check the built binary in DuckDB ${{ env.DUCKDB_VERSION }}
         run: |
           scripts/install-duckdb-cli.sh "$DUCKDB_VERSION" "${{ matrix.cli_platform }}" "$RUNNER_TEMP/duckdb"

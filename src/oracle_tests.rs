@@ -595,7 +595,7 @@ proptest! {
         seed in any::<u64>(),
     ) {
         let mut rng = Rng(seed);
-        let mut rows: Vec<(i64, i64)> = rows.into_iter().map(|(t, thr)| (t * 500_000, thr)).collect();
+        let mut rows: Vec<(i64, i64)> = rows.into_iter().map(|(t, gap)| (t * 500_000, gap)).collect();
         rows.sort_by_key(|row| row.0);
         let want = 1 + (1..rows.len()).filter(|&i| rows[i].0 - rows[i - 1].0 > rows[i].1).count() as i64;
 

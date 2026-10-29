@@ -6,9 +6,11 @@
 //! Measures update + finalize throughput at multiple input sizes.
 //! Tests forward matching with `first_match` base (the common case).
 //!
-//! Event-collecting function with String storage: `NextNodeEvent` is 32 bytes
-//! with `Arc<str>`. Memory-limited to ~50M unique-string events or ~100M
-//! realistic-cardinality events on a 21GB system.
+//! Event-collecting function with value storage: a state keeps one byte buffer
+//! and a 24-byte record per event. The update benchmarks feed borrowed `&str`
+//! values through `try_push`, the call the aggregate makes for each row.
+//! Memory-limited to ~50M unique-string events or ~100M realistic-cardinality
+//! events on a 21GB system.
 //!
 //! Uses Criterion with 100+ samples and 95% confidence intervals.
 #![allow(missing_docs, clippy::cast_possible_truncation)]
@@ -18,14 +20,17 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use std::hint::black_box;
 use std::sync::Arc;
 
-fn make_next_node_events(num_events: usize, num_steps: usize) -> Vec<NextNodeEvent> {
+/// One input row: timestamp, value, base condition, condition bitmask.
+type Row = (i64, String, bool, u32);
+
+fn make_next_node_events(num_events: usize, num_steps: usize) -> Vec<Row> {
     (0..num_events)
         .map(|i| {
             let step = i % (num_steps * 2);
             let bitmask = if step < num_steps { 1u32 << step } else { 0u32 };
-            NextNodeEvent::new(
+            (
                 (i as i64) * 1_000_000,
-                Some(Arc::from(format!("page_{i}").as_str())),
+                format!("page_{i}"),
                 step == 0,
                 bitmask,
             )
@@ -51,8 +56,10 @@ fn bench_sequence_next_node(c: &mut Criterion) {
                 state.direction = Some(Direction::Forward);
                 state.base = Some(Base::FirstMatch);
                 state.num_steps = 3;
-                for e in &events {
-                    state.update(black_box(e.clone()));
+                for (ts, value, base_condition, conditions) in &events {
+                    state
+                        .try_push(*ts, Some(black_box(value)), *base_condition, *conditions)
+                        .expect("state grows");
                 }
                 state.finalize()
             });
@@ -111,10 +118,8 @@ fn bench_sequence_next_node_combine(c: &mut Criterion) {
 fn bench_sequence_next_node_realistic(c: &mut Criterion) {
     let mut group = c.benchmark_group("sequence_next_node_realistic");
 
-    // Pre-generate a pool of 100 distinct Arc<str> values
-    let pool: Vec<Arc<str>> = (0..100)
-        .map(|i| Arc::from(format!("page_{i}").as_str()))
-        .collect();
+    // Pre-generate a pool of 100 distinct values
+    let pool: Vec<String> = (0..100).map(|i| format!("page_{i}")).collect();
 
     for &n in &[100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000] {
         group.throughput(Throughput::Elements(n as u64));
@@ -124,18 +129,13 @@ fn bench_sequence_next_node_realistic(c: &mut Criterion) {
         if n >= 10_000_000 {
             group.measurement_time(std::time::Duration::from_secs(60));
         }
-        let pool_clone = pool.clone();
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            let events: Vec<NextNodeEvent> = (0..n)
+            // (timestamp, index into the pool, base condition, bitmask)
+            let events: Vec<(i64, usize, bool, u32)> = (0..n)
                 .map(|i| {
                     let step = i % 6; // 3 steps * 2
                     let bitmask = if step < 3 { 1u32 << step } else { 0u32 };
-                    NextNodeEvent::new(
-                        (i as i64) * 1_000_000,
-                        Some(Arc::clone(&pool_clone[i % 100])),
-                        step == 0,
-                        bitmask,
-                    )
+                    ((i as i64) * 1_000_000, i % 100, step == 0, bitmask)
                 })
                 .collect();
             b.iter(|| {
@@ -143,8 +143,15 @@ fn bench_sequence_next_node_realistic(c: &mut Criterion) {
                 state.direction = Some(Direction::Forward);
                 state.base = Some(Base::FirstMatch);
                 state.num_steps = 3;
-                for e in &events {
-                    state.update(black_box(e.clone()));
+                for &(ts, value, base_condition, conditions) in &events {
+                    state
+                        .try_push(
+                            ts,
+                            Some(black_box(&pool[value])),
+                            base_condition,
+                            conditions,
+                        )
+                        .expect("state grows");
                 }
                 state.finalize()
             });
