@@ -897,9 +897,9 @@ all bumping deps to versions at or below those landed here: #58, #61,
 [0.9.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.6.0...v0.8.0
 [0.7.0]: https://github.com/tomtom215/duckdb-behavioral/commit/f50cb24
-[0.6.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.4.0...v0.5.0
+[0.6.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.4.0...v0.6.0
+[0.5.0]: https://github.com/tomtom215/duckdb-behavioral/commit/b329106
 [0.4.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/tomtom215/duckdb-behavioral/releases/tag/v0.1.0
+[0.2.0]: https://github.com/tomtom215/duckdb-behavioral/tree/v0.2.0
+[0.1.0]: https://github.com/tomtom215/duckdb-behavioral/commits/v0.2.0

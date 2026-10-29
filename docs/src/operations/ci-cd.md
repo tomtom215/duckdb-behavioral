@@ -56,7 +56,7 @@ community-extensions CI does, then asserts results.
 | `make configure release` | The extension builds and is stamped for the stable C API (`C_STRUCT`, C API v1.2.0) |
 | `make test_release` | The SQL logic tests in `test/sql/` pass in DuckDB 2.0.0 |
 | `scripts/check-stable-api.py` (Linux) | The unstripped library calls only C API functions inside the stable prefix of `duckdb_ext_api_v1` (76 of 548 slots, highest 306, limit 357), so the C API v1.2.0 stamp stays true |
-| `scripts/compat-check.sh` | 21 asserted queries covering all 8 functions, `TIMESTAMPTZ`, NULLs, error messages, the exact overload count (540), and one `GROUP BY` run at 1 and 4 threads that must give identical rows |
+| `scripts/compat-check.sh` | 21 asserted queries (25 on DuckDB 2.x, where the crash shapes of duckdb/duckdb#26109 also run) covering all 8 functions, `TIMESTAMPTZ`, NULLs, error messages, the exact overload count (540), and one `GROUP BY` run at 1 and 4 threads that must give identical rows |
 
 `build` runs these on Linux x86_64 and macOS ARM64. The `compat` job then loads
 the Linux binary into DuckDB v1.3.2, v1.4.4, v1.4.5, v1.5.0, and v1.5.6 (v2.0.0

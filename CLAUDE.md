@@ -351,7 +351,8 @@ Every change MUST meet these requirements:
   tables, all funnel modes, 5+ conditions, all 8 direction/base combinations),
   and `scripts/compat-check.sh`: 21 asserted queries (all functions,
   `TIMESTAMPTZ`, NULLs, error messages, the 540-overload count, a 1- vs
-  4-thread determinism check), run on Linux and macOS in DuckDB 2.0.0 and on
+  4-thread determinism check; 25 on 2.x, where the crash shapes of
+  duckdb/duckdb#26109 also run), run on Linux and macOS in DuckDB 2.0.0 and on
   Linux in 1.3.2, 1.4.4, 1.4.5, 1.5.0 and 1.5.6
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
@@ -532,7 +533,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **Edge cases**: Threshold boundaries, NULL handling, empty inputs
 - **Combine correctness**: Empty combine, boundary detection, associativity,
   config propagation via `AggregateTestHarness`
-- **Property-based tests**: 37 proptest tests verifying algebraic properties
+- **Property-based tests**: 39 proptest tests verifying algebraic properties
   (associativity, commutativity, identity, idempotency, monotonicity),
   including tests at the 32-condition limit, a brute-force check of the
   `strict_once` matching, and 2 differential tests checking the pattern
@@ -772,11 +773,11 @@ Hard-won knowledge from developing this extension. Consult before making changes
   (`tests/extension_load.rs`, all 8 functions, equal to `GROUP BY`),
   `scripts/compat-check.sh` and `scripts/nightly-smoke.py`:
 
-  | Query shape | 1.3.2 | 1.4.4 | 1.5.0 | 1.5.6 | 2.0.0 |
-  |---|---|---|---|---|---|
-  | `f(.. ORDER BY ts)`, `OVER ()`, `UNBOUNDED..UNBOUNDED FOLLOWING` | crash | crash | crash | crash | ok |
-  | `OVER (PARTITION BY g)`, `OVER (PARTITION BY 1)` (no `ORDER BY`) | crash | crash | ok | ok | ok |
-  | `PARTITION BY g ORDER BY ts` with a bounded or running frame | ok | ok | ok | ok | ok |
+  | Query shape | 1.3.2 | 1.4.4 | 1.4.5 | 1.5.0 | 1.5.6 | 2.0.0 |
+  |---|---|---|---|---|---|---|
+  | `f(.. ORDER BY ts)`, `OVER ()`, `UNBOUNDED..UNBOUNDED FOLLOWING` | crash | crash | crash | crash | crash | ok |
+  | `OVER (PARTITION BY g)`, `OVER (PARTITION BY 1)` (no `ORDER BY`) | crash | crash | crash | ok | ok | ok |
+  | `PARTITION BY g ORDER BY ts` with a bounded or running frame | ok | ok | ok | ok | ok | ok |
 
   On 2.0.0 none crashes for any of the 8 functions, and the 7 event functions
   match the plain aggregate. Documented in README "Known limitations" and the

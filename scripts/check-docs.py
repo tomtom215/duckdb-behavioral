@@ -72,6 +72,21 @@ def numbered_lines(path: pathlib.Path):
 TEST_ATTRIBUTE = re.compile(r"^\s*#\[test\]", re.M)
 unit = sum(len(TEST_ATTRIBUTE.findall(read(p))) for p in (ROOT / "src").rglob("*.rs"))
 integration = len(TEST_ATTRIBUTE.findall(read(ROOT / "tests/extension_load.rs")))
+
+
+def proptest_count(text: str) -> int:
+    """`#[test]` attributes inside `proptest! { ... }` blocks."""
+    total = 0
+    for block in re.finditer(r"proptest!\s*\{", text):
+        depth, end = 1, block.end()
+        while depth and end < len(text):
+            depth += {"{": 1, "}": -1}.get(text[end], 0)
+            end += 1
+        total += len(TEST_ATTRIBUTE.findall(text[block.end():end]))
+    return total
+
+
+property_tests = sum(proptest_count(read(p)) for p in (ROOT / "src").rglob("*.rs"))
 queries = statements = 0
 for test_file in (ROOT / "test/sql").glob("*.test"):
     text = read(test_file)
@@ -91,6 +106,17 @@ for doc in CURRENT_DOCS:
                     f"{where}: says {m.group(1)} integration tests, "
                     f"the source has {integration}"
                 )
+        # Table rows: "| Unit tests | 541, ..." and "| Integration tests | 33, ...".
+        for label, expected, kind in (("Unit tests", unit, "unit"), ("Integration tests", integration, "integration")):
+            m = re.search(rf"\|\s*{label}\s*\|\s*(\d+)", line)
+            if m and int(m.group(1)) != expected:
+                problem(f"{where}: says {m.group(1)} {kind} tests, the source has {expected}")
+        for m in re.finditer(r"\b(\d+)\s+(?:property|proptest)\s+tests", line):
+            if int(m.group(1)) != property_tests:
+                problem(
+                    f"{where}: says {m.group(1)} property tests, "
+                    f"the source has {property_tests}"
+                )
         for m in re.finditer(r"\b(\d+)\s+directives", line):
             if int(m.group(1)) != directives:
                 problem(f"{where}: says {m.group(1)} directives, test/sql has {directives}")
@@ -100,6 +126,33 @@ for doc in CURRENT_DOCS:
                     f"{where}: says {m.group(1)} result-checked queries, "
                     f"test/sql has {queries}"
                 )
+
+# compat-check.sh: the checks that run on every DuckDB release come before the
+# block that runs only on 2.x (the crash shapes).
+compat = read(ROOT / "scripts/compat-check.sh")
+compat_pattern = re.compile(r"^\s*(?:check|check_error) [A-Za-z_-]+ ", re.M)
+compat_all = len(compat_pattern.findall(compat))
+compat_every_release = len(compat_pattern.findall(compat.split("# Query shapes that crash", 1)[0]))
+for doc in CURRENT_DOCS:
+    for number, line in numbered_lines(doc):
+        for m in re.finditer(r"\b(\d+)\s+asserted queries", line):
+            if int(m.group(1)) != compat_every_release:
+                problem(
+                    f"{rel(doc)}:{number}: says {m.group(1)} asserted queries, "
+                    f"compat-check.sh runs {compat_every_release} on every release "
+                    f"({compat_all} on 2.x)"
+                )
+
+# The release version appears in command-line examples; after a version bump
+# they must follow it (RELEASING.md runs this script).
+cargo_version = re.search(r'^version\s*=\s*"([^"]+)"', read(ROOT / "Cargo.toml"), re.M).group(1)
+VERSIONED_EXAMPLE = re.compile(r"-ev v?(\d+\.\d+\.\d+)|behavioral-v(\d+\.\d+\.\d+)-|e\.g\. '(\d+\.\d+\.\d+)'")
+for doc in CURRENT_DOCS:
+    for number, line in numbered_lines(doc):
+        for m in VERSIONED_EXAMPLE.finditer(line):
+            shown = next(group for group in m.groups() if group)
+            if shown != cargo_version:
+                problem(f"{rel(doc)}:{number}: example uses version {shown}, Cargo.toml has {cargo_version}")
 
 # ── DuckDB releases CI loads the build into ──────────────────────────────
 
@@ -264,7 +317,7 @@ for pr_id, timestamps in expected_rows("GIT-6"):
             )
 
 print(
-    f"facts: {unit} unit tests, {integration} integration tests, {queries} queries + "
+    f"facts: {unit} unit tests ({property_tests} property), {integration} integration tests, {queries} queries + "
     f"{statements} statements in test/sql, CI loads DuckDB {', '.join(ci_versions)}; "
     f"{links} links in {len(LINK_FILES)} files"
 )

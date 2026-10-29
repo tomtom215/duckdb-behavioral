@@ -527,28 +527,33 @@ A defect in DuckDB's C API for aggregate functions
 ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109)) makes
 DuckDB read out of bounds, and usually crash with a segmentation fault, when
 **any** aggregate registered through the C API, including every function in
-this extension, is called in certain shapes. Which DuckDB release crashes on
-which shape (`window_funnel`, run by `scripts/crash-shapes.sh`):
+this extension, is called in certain shapes. DuckDB fixed it for 2.0.0 only
+([duckdb/duckdb#26455](https://github.com/duckdb/duckdb/pull/26455) makes the C
+API aggregate update flatten the state vector); the heads of the 1.4 and 1.5
+branches still lack the fix, and the community channel builds this extension
+for 1.4.5 and 1.5.6 as well as 2.0.0. Which DuckDB release crashes on which
+shape (`window_funnel`, run by `scripts/crash-shapes.sh`):
 
-| Query shape | 1.3.2 | 1.4.4 | 1.5.0 | 1.5.6 | 2.0.0 |
-|---|---|---|---|---|---|
-| `ORDER BY` inside the call, such as `retention(c1, c2 ORDER BY ts)` | crash | crash | crash | crash | ok |
-| `OVER ()` | crash | crash | crash | crash | ok |
-| A frame written `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` | crash | crash | crash | crash | ok |
-| `OVER (PARTITION BY g)` or `OVER (PARTITION BY 1)`, no `ORDER BY` | crash | crash | ok | ok | ok |
-| `OVER (PARTITION BY g ORDER BY ts)`, running or bounded frame | ok | ok | ok | ok | ok |
+| Query shape | 1.3.2 | 1.4.4 | 1.4.5 | 1.5.0 | 1.5.6 | 2.0.0 |
+|---|---|---|---|---|---|---|
+| `ORDER BY` inside the call, such as `retention(c1, c2 ORDER BY ts)` | crash | crash | crash | crash | crash | ok |
+| `OVER ()` | crash | crash | crash | crash | crash | ok |
+| A frame written `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` | crash | crash | crash | crash | crash | ok |
+| `OVER (PARTITION BY g)` or `OVER (PARTITION BY 1)`, no `ORDER BY` | crash | crash | crash | ok | ok | ok |
+| `OVER (PARTITION BY g ORDER BY ts)`, running or bounded frame | ok | ok | ok | ok | ok | ok |
 
 On DuckDB 2.0.0 none of the shapes crashed for any of the eight functions
 (100,000 rows in one partition), and the seven event functions returned the
 same values as the plain aggregate. On 1.3.2 all eight functions crashed in the
-whole-partition shapes. The extension cannot work around this: it never sees
+whole-partition shapes. On 2.0.0 CI asserts all eight functions on every
+crashing shape. The extension cannot work around this: it never sees
 the problem state array (see below). So on a release older than 2.0.0:
 
 - Drop `ORDER BY` from inside the call: every function sorts by timestamp itself.
 - Do not use `OVER ()`, `UNBOUNDED..UNBOUNDED` frames, or a window with only a
   `PARTITION BY`. **`OVER (PARTITION BY u)` is safe only from DuckDB 1.5.0**;
   earlier versions of this page recommended it as the replacement, which
-  crashes on 1.3.2 and 1.4.4.
+  crashes on 1.3.2, 1.4.4 and 1.4.5.
 - For one value per partition use `GROUP BY` and join back (below), or a
   bounded frame such as `ROWS BETWEEN 100000 PRECEDING AND 100000 FOLLOWING`
   with an `ORDER BY`, which ran cleanly.
