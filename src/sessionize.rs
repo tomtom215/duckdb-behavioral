@@ -23,244 +23,27 @@
 //!
 //! - `first_ts`: Earliest timestamp in this segment
 //! - `last_ts`: Latest timestamp in this segment
-//! - `session_count`: Number of sessions (gap breaks + 1) in this segment
+//! - `boundaries`: Number of gaps in this segment that exceed the threshold
+//!   (the session ID is `boundaries + 1`)
 //! - `threshold_us`: Gap threshold in microseconds
+//!
+//! # Ordering contract
+//!
+//! Rows must arrive in ascending timestamp order, which `ORDER BY ts` in the
+//! window gives. The gap check is exact for gaps up to twice `i64::MAX`
+//! (`DuckDB`'s `±infinity`), which it achieves by reading `later - earlier` as
+//! an unsigned number; a descending order therefore reads every gap as huge and
+//! opens a session per row, and an unordered `GROUP BY` gives unspecified
+//! counts. A plain aggregate (`GROUP BY`) is not ordered by `DuckDB` and its
+//! result depends on scan order and thread count; use the window form.
 //!
 //! The `combine` operation is O(1) — it merges two adjacent segments by checking
 //! if the gap between `left.last_ts` and `right.first_ts` exceeds the threshold.
 //! This enables O(n log n) windowed evaluation via segment trees.
 
-/// Simple session counter — counts sessions within a single segment.
+/// Sessionize state tracking session BOUNDARIES (gaps exceeding threshold).
 ///
-/// **Not used by the extension.** The FFI layer uses [`SessionizeBoundaryState`],
-/// which tracks boundary crossings for O(1) combine with correct segment tree
-/// semantics. This type is retained for testing as a reference implementation.
-#[cfg(test)]
-#[derive(Debug, Clone)]
-struct SessionizeState {
-    /// Earliest timestamp in this segment (microseconds since epoch).
-    pub first_ts: Option<i64>,
-    /// Latest timestamp in this segment (microseconds since epoch).
-    pub last_ts: Option<i64>,
-    /// Number of sessions in this segment. A segment with one event has
-    /// `session_count = 1`. Each gap exceeding the threshold adds 1.
-    pub session_count: i64,
-    /// Gap threshold in microseconds. Read from the INTERVAL parameter
-    /// during the first `update()` call.
-    pub threshold_us: i64,
-}
-
-#[cfg(test)]
-impl SessionizeState {
-    /// Creates a new empty state.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            first_ts: None,
-            last_ts: None,
-            session_count: 0,
-            threshold_us: 0,
-        }
-    }
-
-    /// Updates the state with a single timestamp.
-    ///
-    /// If this is the first timestamp, initializes the state.
-    /// If the gap from the previous `last_ts` exceeds the threshold,
-    /// increments the session count.
-    pub fn update(&mut self, timestamp_us: i64) {
-        match self.last_ts {
-            None => {
-                self.first_ts = Some(timestamp_us);
-                self.last_ts = Some(timestamp_us);
-                self.session_count = 1;
-            }
-            Some(prev) => {
-                // Overflow-exact gap check under the window ORDER BY
-                // contract (non-decreasing timestamps): the true gap — up to
-                // 2*i64::MAX with DuckDB's ±infinity timestamps — fits in
-                // u64, and two's-complement wrapping_sub reinterpreted as u64
-                // IS that gap. threshold_us is validated non-negative at the
-                // FFI boundary. Cost: a single sub + compare, same as the
-                // naive subtraction. Feeding unordered timestamps (plain
-                // GROUP BY misuse) yields unspecified boundary counts —
-                // session IDs are only meaningful over ordered frames.
-                if timestamp_us.wrapping_sub(prev) as u64 > self.threshold_us as u64 {
-                    self.session_count += 1;
-                }
-                if timestamp_us > prev {
-                    self.last_ts = Some(timestamp_us);
-                }
-                if let Some(first) = self.first_ts {
-                    if timestamp_us < first {
-                        self.first_ts = Some(timestamp_us);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Combines two states representing adjacent segments.
-    ///
-    /// The key insight: when merging two ordered segments `[a, b]` and `[c, d]`,
-    /// we only need to check if the gap between `b` (`left.last_ts`) and `c`
-    /// (`right.first_ts`) creates a new session boundary.
-    ///
-    /// This is O(1) per combine, enabling O(n log n) segment tree evaluation.
-    #[must_use]
-    pub fn combine(&self, other: &Self) -> Self {
-        match (self.first_ts, other.first_ts) {
-            (None, _) => other.clone(),
-            (_, None) => self.clone(),
-            (Some(_), Some(other_first)) => {
-                let boundary = self.last_ts.map_or(0, |self_last| {
-                    i64::from(other_first - self_last > self.threshold_us)
-                });
-
-                Self {
-                    first_ts: self.first_ts,
-                    last_ts: other.last_ts.or(self.last_ts),
-                    session_count: self.session_count + other.session_count + boundary,
-                    threshold_us: self.threshold_us,
-                }
-            }
-        }
-    }
-
-    /// Returns the session ID for the finalize step.
-    ///
-    /// The session count IS the session ID when evaluated over the frame
-    /// `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.
-    #[must_use]
-    pub const fn finalize(&self) -> i64 {
-        self.session_count
-    }
-}
-
-#[cfg(test)]
-impl Default for SessionizeState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_empty_state() {
-        let state = SessionizeState::new();
-        assert_eq!(state.finalize(), 0);
-        assert!(state.first_ts.is_none());
-    }
-
-    #[test]
-    fn test_single_event() {
-        let mut state = SessionizeState::new();
-        state.threshold_us = 1_800_000_000; // 30 minutes
-        state.update(1_000_000);
-        assert_eq!(state.finalize(), 1);
-    }
-
-    #[test]
-    fn test_two_events_same_session() {
-        let mut state = SessionizeState::new();
-        state.threshold_us = 1_800_000_000; // 30 minutes
-        state.update(1_000_000); // t=1s
-        state.update(600_000_000); // t=600s (10 min gap, within 30 min)
-        assert_eq!(state.finalize(), 1);
-    }
-
-    #[test]
-    fn test_two_events_different_sessions() {
-        let mut state = SessionizeState::new();
-        state.threshold_us = 1_800_000_000; // 30 minutes
-        state.update(0); // t=0
-        state.update(2_000_000_000); // t=2000s (33+ min gap, exceeds 30 min)
-        assert_eq!(state.finalize(), 2);
-    }
-
-    #[test]
-    fn test_multiple_sessions() {
-        let mut state = SessionizeState::new();
-        state.threshold_us = 60_000_000; // 1 minute
-        state.update(0); // t=0
-        state.update(30_000_000); // t=30s (same session)
-        state.update(120_000_000); // t=120s (new session, 90s gap > 60s)
-        state.update(150_000_000); // t=150s (same session)
-        state.update(300_000_000); // t=300s (new session, 150s gap > 60s)
-        assert_eq!(state.finalize(), 3);
-    }
-
-    #[test]
-    fn test_gap_exactly_at_threshold() {
-        let mut state = SessionizeState::new();
-        state.threshold_us = 60_000_000; // 1 minute
-        state.update(0);
-        state.update(60_000_000); // exactly 60s gap = threshold
-                                  // Gap must EXCEED threshold, not equal it
-        assert_eq!(state.finalize(), 1);
-    }
-
-    #[test]
-    fn test_gap_just_over_threshold() {
-        let mut state = SessionizeState::new();
-        state.threshold_us = 60_000_000; // 1 minute
-        state.update(0);
-        state.update(60_000_001); // 1 microsecond over threshold
-        assert_eq!(state.finalize(), 2);
-    }
-
-    #[test]
-    fn test_combine_empty_states() {
-        let a = SessionizeState::new();
-        let b = SessionizeState::new();
-        let combined = a.combine(&b);
-        assert_eq!(combined.finalize(), 0);
-    }
-
-    #[test]
-    fn test_combine_left_empty() {
-        let a = SessionizeState::new();
-        let mut b = SessionizeState::new();
-        b.threshold_us = 1_000_000;
-        b.update(100);
-        let combined = a.combine(&b);
-        assert_eq!(combined.finalize(), 1);
-    }
-
-    #[test]
-    fn test_combine_right_empty() {
-        let mut a = SessionizeState::new();
-        a.threshold_us = 1_000_000;
-        a.update(100);
-        let b = SessionizeState::new();
-        let combined = a.combine(&b);
-        assert_eq!(combined.finalize(), 1);
-    }
-
-    #[test]
-    fn test_combine_no_boundary() {
-        let mut a = SessionizeState::new();
-        a.threshold_us = 1_000_000; // 1 second
-        a.update(0);
-
-        let mut b = SessionizeState::new();
-        b.threshold_us = 1_000_000;
-        b.update(500_000); // 0.5s gap, within threshold
-
-        let combined = a.combine(&b);
-        assert_eq!(combined.finalize(), 2); // 1 + 1 + 0 boundary
-                                            // Note: SessionizeState counts sessions per segment, so combining two
-                                            // single-event segments yields 2 even though they're in the same session.
-                                            // The revised SessionizeBoundaryState below fixes this.
-    }
-}
-
-/// Revised sessionize state tracking session BOUNDARIES (gaps exceeding threshold).
-///
-/// `session_boundaries` counts the number of gaps within this segment that exceed
+/// `boundaries` counts the number of gaps within this segment that exceed
 /// the threshold. The total number of sessions is `boundaries + 1` for non-empty data.
 ///
 /// The `current_row_null` flag tracks whether the rightmost row in this segment
@@ -338,10 +121,10 @@ impl SessionizeBoundaryState {
                 if timestamp_us > prev {
                     self.last_ts = Some(timestamp_us);
                 }
-                if let Some(first) = self.first_ts {
-                    if timestamp_us < first {
-                        self.first_ts = Some(timestamp_us);
-                    }
+                if let Some(first) = self.first_ts
+                    && timestamp_us < first
+                {
+                    self.first_ts = Some(timestamp_us);
                 }
             }
         }
@@ -1120,16 +903,5 @@ mod infinity_tests {
             2,
             "infinite cross-segment gap is a boundary"
         );
-    }
-
-    #[test]
-    fn test_running_state_infinite_gap_saturates() {
-        let mut state = SessionizeState {
-            threshold_us: 1_800_000_000,
-            ..Default::default()
-        };
-        state.update(-i64::MAX);
-        state.update(i64::MAX);
-        assert_eq!(state.session_count, 2);
     }
 }

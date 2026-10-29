@@ -43,9 +43,11 @@ src/
 ├── retention.rs            # Retention state (bitmask-based)
 ├── window_funnel.rs        # Window funnel state (port of ClickHouse windowFunnel, bitflag modes)
 ├── sequence.rs             # Sequence match/count/events state (wraps pattern engine)
-├── sequence_next_node.rs   # Sequence next node state (sequential matching, Arc<str> values)
+├── sequence_next_node.rs   # Sequence next node state (sequential matching, one byte buffer of values per state)
+├── oracle_tests.rs         # Test-only: window_funnel vs an exhaustive reference; order/combine invariance for every state
 └── ffi/
     ├── mod.rs              # register_all() — dispatches to all FFI modules via Registrar trait
+    ├── view.rs             # Safe views over DuckDB's raw handles (Chunk/columns, States<T>, Output<K>): the only unsafe constructors
     ├── sessionize.rs       # FFI via quack-rs AggregateFunctionBuilder (single fixed signature)
     ├── version.rs          # behavioral_version() scalar via quack-rs ScalarFunctionBuilder
     ├── retention.rs        # FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
@@ -53,14 +55,23 @@ src/
     ├── window_funnel_events.rs   # FFI sharing window_funnel update/combine + LIST(TIMESTAMP) finalize
     ├── sequence.rs         # FFI via quack-rs builder for sequence_match + sequence_count
     ├── sequence_match_events.rs  # FFI via quack-rs builder + returns_logical(LIST(TIMESTAMP)) + ListVector
-    └── sequence_next_node.rs     # FFI via quack-rs builder + VectorWriter::write_varchar
+    └── sequence_next_node.rs     # FFI via quack-rs builder + Output<VarcharKind>
 ```
 
 ### Key Design Decisions
 
 1. **Pure Rust core + FFI bridge**: Business logic lives in top-level modules
    (`sessionize.rs`, `retention.rs`, etc.) with zero FFI dependencies. The `ffi/`
-   submodules handle DuckDB C API registration only.
+   submodules handle DuckDB C API registration only. `unsafe_code = "deny"` in
+   `Cargo.toml` makes that mechanical: only `mod ffi` is allowed `unsafe`, and
+   inside it `clippy::undocumented_unsafe_blocks` and
+   `clippy::multiple_unsafe_ops_per_block` are denied, so every `unsafe` block
+   is one operation with a `// SAFETY:` note. The callbacks are safe Rust over
+   `ffi/view.rs`, whose `unsafe` constructors state what DuckDB guarantees for
+   each handle (flat inputs, declared argument types, initialised states) and
+   whose methods bounds-check every row index; `States::pair` panics rather
+   than hand out aliasing references. To add a new accessor, add it to
+   `view.rs` with its constructor's contract, not an `unsafe` block in a callback.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
    provide high-level aggregate function registration. We use `quack-rs` v0.19.0
@@ -136,9 +147,10 @@ src/
    thread scheduling. (Taking the first value seen, as before 0.10.0, made
    results order-dependent.) `sessionize`'s gap is the exception: each row's
    gap legitimately judges that row. Per chunk, the raw 16-byte string slot
-   (`ffi::RawStringSlots`) and last parse are cached, so an unchanged value
-   costs one comparison. Allocation failures (event buffers, the sequence
-   matcher) are SQL errors too, never aborts.
+   (`Varchars::slot` in `ffi/view.rs`) and last parse are cached, so an
+   unchanged value costs one comparison. Allocation failures (event buffers,
+   the value buffer of `sequence_next_node`, the sequence matcher) are SQL
+   errors too, never aborts.
 
 ## Build & Test
 
@@ -155,14 +167,17 @@ cargo build
 # Build from source (release, produces loadable .so/.dylib)
 cargo build --release
 
-# Run all tests (547 unit + 28 integration + 1 doc-test).
+# Everything CI runs that works offline, in one command (tools that are not
+# installed are skipped): ./scripts/check.sh   (--quick skips docs and benches)
+
+# Run all tests (540 unit + 29 integration + 1 doc-test).
 # DUCKDB_DOWNLOAD_LIB=1 makes libduckdb-sys link a prebuilt libduckdb
 # (downloaded once, cached in target/duckdb-download/) instead of compiling
 # DuckDB's C++ tree from source. Offline alternative: DUCKDB_LIB_DIR=<dir>
 # (plus LD_LIBRARY_PATH=<dir> on Linux). Never set these for release builds.
 DUCKDB_DOWNLOAD_LIB=1 cargo test
 
-# Run clippy (must produce zero warnings)
+# Run clippy (must produce zero warnings; CI adds --locked -- -D warnings)
 cargo clippy --all-targets
 
 # Format check
@@ -171,10 +186,13 @@ cargo fmt -- --check
 # Run benchmarks
 cargo bench
 
-# Build docs
+# Build docs (CI: RUSTDOCFLAGS=-Dwarnings, --document-private-items)
 cargo doc --no-deps
 
-# E2E test against real DuckDB (requires duckdb CLI)
+# E2E: `make configure release test_release` builds the stamped extension and
+# runs test/sql/*.test; then assert results through any DuckDB CLI:
+#   scripts/compat-check.sh "$(command -v duckdb)" build/release/behavioral.duckdb_extension
+# By hand against a real DuckDB (requires duckdb CLI):
 # 1. Build release
 cargo build --release
 # 2. Copy and append metadata. Stable C API: ABI type C_STRUCT (the default),
@@ -219,7 +237,11 @@ functions then return `TIMESTAMPTZ[]`).
   `ListVector` for LIST output, `LogicalType::list()` for parameterized types,
   and `AggregateTestHarness` for combine testing. Re-exports `libduckdb-sys`
   with `loadable-extension` feature.
-- `libduckdb-sys = "=1.20000.0"` with `loadable-extension` feature — Re-exported
+- `smallvec = "1"` — Inline storage for the first two events of a group
+  (`SmallVec<[Event; 2]>` in `window_funnel` and `sequence`), so millions of
+  tiny groups make no heap allocation. A caret requirement, locked by
+  `Cargo.lock`; 2.x is not adopted.
+- `libduckdb-sys = "=1.20000.1"` with `loadable-extension` feature — Re-exported
   by quack-rs but pinned explicitly: the FFI modules use its raw types
   (`duckdb_function_info`, `duckdb_data_chunk`, `duckdb_aggregate_state`, …)
   in the `unsafe extern "C"` callback signatures.
@@ -229,11 +251,11 @@ functions then return `TIMESTAMPTZ[]`).
   stable C API and loads into DuckDB 1.3.2+ (see "Stable C API" below).
 
 **Dev-only** (unit tests and benchmarks):
-- `duckdb = "=1.20000.0"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
+- `duckdb = "=1.20000.1"` (no `bundled` feature) — Used in `#[cfg(test)]` modules
   for `Connection::open_in_memory()`. Not linked into the release extension.
   Dev/test builds link a **prebuilt libduckdb** downloaded by `libduckdb-sys`
   (`DUCKDB_DOWNLOAD_LIB=1`, cached in `target/duckdb-download/`) instead of
-  compiling DuckDB's C++ tree from source. CI sets the env var workflow-wide;
+  compiling DuckDB's C++ tree from source. `ci.yml` sets the env var workflow-wide;
   locally run `DUCKDB_DOWNLOAD_LIB=1 cargo test`, or set
   `DUCKDB_LIB_DIR=/path/to/libduckdb` (plus `LD_LIBRARY_PATH` on Linux) to use
   an already-downloaded library. Never set either variable for release builds.
@@ -248,9 +270,11 @@ functions then return `TIMESTAMPTZ[]`).
   prunes `target/`, treating that directory as a build profile and keeping
   only `build/`, `.fingerprint/` and `deps/`, so `cache-directories` saves an
   empty directory. A warm cache then restores libduckdb-sys's build-script
-  output without the library (`unable to find library -lduckdb`). Each
-  `ci.yml` job that downloads it runs "Re-fetch prebuilt libduckdb if the
-  cache dropped it" after rust-cache; bumping `prefix-key` only defers this.
+  output without the library (`unable to find library -lduckdb`). The
+  `setup-rust` composite action (`.github/actions/setup-rust`) runs
+  "Re-fetch prebuilt libduckdb if the cache dropped it" after rust-cache for
+  every job that sets `DUCKDB_DOWNLOAD_LIB=1`; bumping the cache key only
+  defers this.
   Gotcha: libduckdb-sys's downloader (ureq/rustls with bundled roots) ignores
   a proxy CA. Behind a TLS-intercepting proxy, fetch
   `libduckdb-linux-amd64.zip` with curl into
@@ -271,9 +295,12 @@ functions then return `TIMESTAMPTZ[]`).
 Every change MUST meet these requirements:
 
 1. **`cargo test`** — ALL tests pass. Zero failures. Zero ignored.
-2. **`cargo clippy --all-targets`** — Zero warnings.
+2. **`cargo clippy --all-targets`** — Zero warnings (CI: `--locked -- -D warnings`),
+   including the `unsafe_code`, `undocumented_unsafe_blocks` and
+   `multiple_unsafe_ops_per_block` denials.
 3. **`cargo fmt -- --check`** — Zero formatting violations.
-4. **`cargo doc --no-deps`** — Builds without errors or warnings.
+4. **`cargo doc --no-deps`** — Builds without errors or warnings (CI adds
+   `--document-private-items` with `RUSTDOCFLAGS=-Dwarnings`).
 5. **Test count verified** — Actual test count matches documented count.
 6. **Documentation accurate** — All claims in CLAUDE.md, PERF.md, docs/ are
    verifiable and match current code state.
@@ -281,28 +308,35 @@ Every change MUST meet these requirements:
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **547 unit tests** covering all functions, edge cases, combine associativity,
+- **540 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
   modules -- `sequence_match` and `sequence_count` share one state type;
-  `window_funnel_events` shares `WindowFunnelState`)
+  `window_funnel_events` shares `WindowFunnelState`). `src/oracle_tests.rs`
+  checks `window_funnel` against an exhaustive reference and every state for
+  order/split/combine-tree invariance (below).
 - **1 doc-test** for the pattern parser
-- **28 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **29 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
   through live SQL — the registration/FFI path unit
   tests cannot reach, now covered inside `cargo test` (no external CLI)
-- **E2E tests** against real DuckDB v2.0.0 CLI: 12 workflow test steps
-  (2 platforms) plus 8 SQL logic test files with 78 directives (44 result-checked queries) covering
-  all 8 functions with multiple scenarios (basic, timeout, modes, GROUP BY,
-  no-match, NULL inputs, empty tables, all funnel modes, 5+ conditions,
-  all 8 direction/base combinations)
+- **E2E tests** against real DuckDB CLIs: 8 SQL logic test files with 78
+  directives (44 result-checked queries) covering all 8 functions with multiple
+  scenarios (basic, timeout, modes, GROUP BY, no-match, NULL inputs, empty
+  tables, all funnel modes, 5+ conditions, all 8 direction/base combinations),
+  and `scripts/compat-check.sh`: 21 asserted queries (all functions,
+  `TIMESTAMPTZ`, NULLs, error messages, the 540-overload count, a 1- vs
+  4-thread determinism check), run on Linux and macOS in DuckDB 2.0.0 and on
+  Linux in 1.3.2, 1.4.4, 1.5.0 and 1.5.6
 - **7 Criterion benchmark files** (sessionize, retention, window_funnel, sequence, sort,
   sequence_next_node, sequence_match_events) with combine benchmarks, realistic
   cardinality benchmarks, and throughput reporting up to 1B elements
-- **Mutation testing** (cargo-mutants 27.1.0, `-- --lib`): 88.4% (130/147)
+- **Mutation testing** (cargo-mutants 27.1.0, `-- --lib`; not re-run since the
+  0.10.1 test changes: duplicate and length-only tests were removed, the oracle
+  tests added): 88.4% (130/147)
   on v0.4.x. The 0.10.0 audit of the 9 non-FFI modules detected 570 of 607
   viable mutants (547 caught + 23 timeouts, 93.9%; 37 missed). After the
   `mutation_tests` modules and two `Matcher` tests, `window_funnel.rs`,
@@ -313,11 +347,13 @@ Every change MUST meet these requirements:
   `strict_once` matcher that only change sharing, and guards whose
   alternative branch returns the same value. The other six modules have
   only the audit figures.
-- **MSRV 1.88**: `cargo +1.88.0 check --all-targets` passes with quack-rs
-  0.19.0 (which declares 1.86.0) and libduckdb-sys / duckdb 1.20000.0 (1.88,
-  the crates.io `rust_version`; 1.10506.0 declared 1.85.1). The CI
-  job must call `cargo +1.88`: `rust-toolchain.toml` pins `stable`, which
-  overrides the toolchain the job installs, so a bare `cargo` runs stable.
+- **MSRV 1.88**: `cargo +1.88.0 check --all-targets --locked` passes with
+  quack-rs 0.19.0 (which declares 1.86.0) and libduckdb-sys / duckdb 1.20000.1
+  (1.88, the crates.io `rust_version`). Edition 2024 needs 1.85 and let chains
+  1.88, so the MSRV is not lowerable. `rust-toolchain.toml` pins the toolchain
+  CI and releases use (1.97.0); the `setup-rust` action exports
+  `RUSTUP_TOOLCHAIN`, which outranks the file, so the `msrv` job really runs 1.88.
+  Bump the pin when `scheduled.yml`'s stable and beta jobs pass.
 - All public items have documentation
 - Release profile: LTO, single codegen unit, `panic = "unwind"` (required —
   see "Panic containment" below), stripped symbols
@@ -328,34 +364,51 @@ Performance engineering is documented in [`PERF.md`](PERF.md), which contains
 optimization history with before/after measurements, algorithmic complexity
 analysis, and the benchmark improvement protocol.
 
-**Last recorded baseline (Criterion 0.8.2, 95% CI; PERF.md Session 15, before
-v0.8.0, not re-measured since — the `window_funnel` engine has since been
-replaced):**
+**Last recorded baseline (Criterion 0.8.2, 95% CI of the mean, PERF.md
+Session 21: shared 4-vCPU Xeon @ 2.80 GHz, rustc 1.97.0, `bench` profile).
+These are the Rust state functions without DuckDB; the Session 15 numbers they
+replace came from another machine and, for `window_funnel`, an engine replaced
+in 0.10.0:**
 
-| Function | Scale | Wall Clock | Throughput |
+| Function | Scale | Time | Throughput |
 |---|---|---|---|
-| `sessionize_update` | **1 billion** | **1.20 s** | **830 Melem/s** |
-| `retention_combine` | 100 million | 274 ms | 365 Melem/s |
-| `window_funnel` | 100 million | 791 ms | 126 Melem/s |
-| `sequence_match` | 100 million | 1.05 s | 95 Melem/s |
-| `sequence_count` | 100 million | 1.18 s | 85 Melem/s |
-| `sequence_match_events` | 100 million | 1.07 s | 93 Melem/s |
-| `sequence_next_node` | 10 million | 546 ms | 18 Melem/s |
+| `sessionize_update` | **1 billion** | **1.68 s** | **595 Melem/s** |
+| `retention_combine` | 100 million | 251 ms | 398 Melem/s |
+| `window_funnel_finalize` (8 conditions) | 100 million | 2.12 s | 47 Melem/s |
+| `window_funnel_events_finalize` | 100 million | 1.49 s | 67 Melem/s |
+| `sequence_match` | 100 million | 1.49 s | 67 Melem/s |
+| `sequence_count` | 100 million | 1.50 s | 67 Melem/s |
+| `sequence_match_events` | 100 million | 1.30 s | 77 Melem/s |
+| `sequence_next_node` | 10 million | 587 ms | 17 Melem/s |
+
+The 100M rows have 10 samples and wide intervals; PERF.md lists them. SQL
+timings come from `scripts/bench-sql.sh` (10M rows, 100,000 groups, 4 threads):
+1.5 to 1.9 s per aggregate query, `sequence_next_node` 3.3 s, `retention`
+0.46 s. Session 21 compared v0.10.1 and this branch on the same machine,
+alternating runs: no change beyond the run-to-run spread except
+`sequence_next_node`, about twice as fast. Compare against numbers measured on
+the same machine in the same session, never against the table above from a
+different machine.
 
 Key optimizations: u32 bitmask conditions (eliminates per-event heap alloc),
 in-place O(N) combine (replaces O(N^2) merge-allocate), a
 feasibility-then-greedy sequence matcher (replaced a backtracking search that
 was quadratic per group for patterns with skipping time constraints),
-fast-path linear scans for common pattern shapes, presorted detection, and `Arc<str>` for reference-counted
-string sharing in `sequence_next_node`.
+fast-path linear scans for common pattern shapes, presorted detection, and, for
+`sequence_next_node`, one byte buffer of values per state with 24-byte records
+(replaced an `Arc<str>` per event).
 
 ## ClickHouse Parity Status
 
 All six ClickHouse behavioral parametric functions are implemented and were
-differentially tested against ClickHouse 26.9.8.3 (`clickhouse local`) on
-random event groups (ties, multi-condition events, every mode combination).
-Every remaining difference is listed below with its cause. Treat any other
-difference as a bug. To re-check, download the ClickHouse static binary
+differentially tested against ClickHouse 26.10.2.103 (`clickhouse local`;
+`windowFunnel` also on 26.9.8.3, with identical results) on random event
+groups (ties, multi-condition events, every mode combination). The counts are
+in `docs/src/internals/clickhouse-compatibility.md`. Every remaining
+difference is listed below with its cause. One explanation is only partly
+verified: of 1,274 `sequence_match_events` differences triaged, 975 were
+reproduced as an abandoned attempt, and the other 299 were traced to the same
+cause for one case only (see that page). Treat any other difference as a bug. To re-check, download the ClickHouse static binary
 (`clickhouse-common-static-<ver>-amd64.tgz` from the ClickHouse GitHub
 release) and compare per group; for `window_funnel`, an exhaustive reference
 (ClickHouse's algorithm keeping every chain, ties ordered canonically) must
@@ -390,8 +443,9 @@ alias (ClickHouse 26.9 rejects it). `'timestamp_dedup'` (0x04) is an alias of
 - `'timestamp_dedup'` mode: alias of `strict_increase` in `window_funnel`
 - `(?t!=N)` time constraint: Not-equal operator in sequence patterns
   (`.` and `.*` and the other five time operators match ClickHouse)
-- No experimental flags required (ClickHouse's `sequenceNextNode` requires
-  `SET allow_experimental_funnel_functions = 1`)
+- No settings required (ClickHouse's `sequenceNextNode` requires
+  `SET enable_funnel_functions = 1`; the former name
+  `allow_experimental_funnel_functions` is still accepted there)
 
 ### Known Semantic Differences
 
@@ -411,8 +465,9 @@ Deliberate (ClickHouse is defective or order-dependent):
    by the last `(?N)` or `.`; ClickHouse resets at `.*` to the next event (so
    `(?1).*(?t>0)(?2)` never matches there). A constraint before any `(?N)`/`.`
    is a parse error here.
-4. **`sequenceMatchEvents`** can report an abandoned attempt in ClickHouse;
-   we report the matching events.
+4. **`sequenceMatchEvents`** can report an abandoned attempt in ClickHouse
+   (also one that shares its first step with the successful match); we report
+   the matching events.
 5. **ClickHouse UB**: its trailing-skip loop for patterns ending in `.*` /
    `(?t<…)` / `(?t<=…)` / `(?t>=0)` reads past the action list; results vary
    between runs.
@@ -429,7 +484,9 @@ Other:
    consecutive time constraints after an event; ClickHouse accepts an empty
    pattern and `u64` thresholds.
 9. **Empty input**: `retention` → `[]`, `sequence_match`/`count` → NULL
-   (ClickHouse: zeros).
+   (ClickHouse: zeros) over zero rows. Rows with no true condition and a
+   `.*`-only pattern: `sequence_match` true, `sequence_count` 0, as in
+   ClickHouse.
 10. **`sequenceNextNode` limit**: ClickHouse 64 conditions, ours 32.
 
 ## Testing
@@ -442,12 +499,19 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 - **Edge cases**: Threshold boundaries, NULL handling, empty inputs
 - **Combine correctness**: Empty combine, boundary detection, associativity,
   config propagation via `AggregateTestHarness`
-- **Property-based tests**: 33 proptest tests verifying algebraic properties
+- **Property-based tests**: 37 proptest tests verifying algebraic properties
   (associativity, commutativity, identity, idempotency, monotonicity),
   including tests at the 32-condition limit, a brute-force check of the
   `strict_once` matching, and 2 differential tests checking the pattern
   matcher against the original backtracking search
   (`src/pattern/reference_nfa.rs`, test-only) result for result
+- **Oracle and invariance tests** (`src/oracle_tests.rs`): `window_funnel` is
+  compared with an exhaustive reference over every mode combination, and every
+  state (`window_funnel`, `sequence_*`, `retention`, `sequence_next_node`,
+  `sessionize`) must give the same answer under input permutation, any split
+  into partial states, any combine tree, and combine into a fresh target
+- **Parser never panics**: `pattern::parser::fuzz_tests` feeds random byte
+  strings and pattern-like strings to the parser
 - **Mutation-testing-guided tests**: 51 tests from the v0.4.x cargo-mutants
   analysis, plus 16 from the 0.10.0 runs (the `mutation_tests` modules and
   two `Matcher` tests)
@@ -463,12 +527,14 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   events, best-chain selection, reentry resets, length == `finalize()` parity
   across modes
 - **`sequence_next_node` tests**: All 8 direction/base combinations,
-  multi-step patterns, combine, NULL handling, Arc\<str\> sharing
+  multi-step patterns, combine, NULL versus empty-string values, value sharing
+  and range rebasing in the byte arena
 
-Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 547 unit tests take about 2 s (the doc-test
-about 1 s). The 28 in-process integration tests add 20–35 s when the release
-`cdylib` must be rebuilt (they build and `LOAD` it) and about 5 s once it is
-cached.
+Run with `DUCKDB_DOWNLOAD_LIB=1 cargo test`. The 540 unit tests take a few
+seconds (the doc-test about 1 s). The 29 in-process integration tests add
+20–35 s when the release `cdylib` must be rebuilt (they build and `LOAD` it)
+and about 5 s once it is cached. CI runs the same tests with
+`cargo nextest run --all-targets` plus `cargo test --doc`.
 
 **In-process integration tests** (`tests/extension_load.rs`, run by `cargo test`):
 - Build the release `cdylib`, append the DuckDB metadata footer (a Rust port of
@@ -480,28 +546,39 @@ cached.
   cannot, without needing the external `duckdb` CLI
 
 **E2E tests** (against real DuckDB CLI):
-- 12 workflow test steps per platform (Linux + macOS) in `e2e.yml`
+- `e2e.yml` (reusable; `ci.yml` calls it): per platform (Linux + macOS) the
+  community Makefile build, the SQL logic tests, and `scripts/compat-check.sh`;
+  a `compat` job then loads the Linux binary into older DuckDB CLIs
 - 8 SQL logic test files with 78 directives (44 result-checked queries) in `test/sql/`
+- `scripts/crash-shapes.sh` runs the three query shapes of duckdb/duckdb#26109
+  against a CLI and reports which crash (not part of CI: the outcome is a
+  property of the DuckDB release, see the matrix under DuckDB FFI Gotchas)
 - Covers all 8 functions with basic usage, timeouts, all 6 modes, GROUP BY,
   no-match, NULL inputs, empty tables, 5+ conditions, all direction x base combinations
 - Requires: `cargo build --release`, metadata append, `duckdb -unsigned`
 
 ## CI/CD
 
-GitHub Actions workflows in `.github/workflows/`:
+GitHub Actions workflows in `.github/workflows/` (details:
+`docs/src/operations/ci-cd.md`). Every `uses:` is pinned to a commit SHA, every
+`cargo` call is `--locked`, and the toolchain, cache and libduckdb handling is
+the composite action `.github/actions/setup-rust`.
 
-- **ci.yml**: check, wasm-check (compile for `wasm32-unknown-emscripten`),
-  test, clippy, fmt, doc, MSRV, bench-compile, deny, semver, coverage,
-  cross-platform (Linux + macOS), extension-build, ci-gate (14 jobs)
+- **ci.yml**: fmt, clippy, test (Linux + macOS, nextest + doc-test), doc, msrv,
+  wasm-check (compile for `wasm32-unknown-emscripten`), bench-compile, deny,
+  hygiene (machete, typos, actionlint, zizmor, shellcheck, SPDX headers),
+  coverage (informational), e2e (calls `e2e.yml`), and `ci-gate`, the only
+  required status check
+- **e2e.yml**: reusable; builds the stamped extension on Linux and macOS, runs
+  `test/sql` and `scripts/compat-check.sh`, then a `compat` job loads the same
+  binary into DuckDB v1.3.2, v1.4.4, v1.5.0 and v1.5.6 and asserts the results
+- **scheduled.yml**: weekly canaries (RustSec advisories, stable and beta
+  toolchains, `cargo update`, DuckDB nightly); red means look, not blocked
 - **codeql.yml**: CodeQL static analysis for Rust (push, PR, weekly schedule)
-- **e2e.yml**: Builds extension, tests all 8 functions against real DuckDB CLI,
-  and a `compat` job loads the same binary into DuckDB v1.3.2, v1.4.4, v1.5.0
-  v1.5.6 and v2.0.0 and asserts the results
-- **release.yml**: Builds release artifacts for x86_64 and aarch64 on Linux/macOS,
-  creates GitHub release on tag push with SemVer validation
-- **community-submission.yml**: On-demand workflow for community extension
-  submission -- validates, builds, tests, pins ref, generates submission package
-- **pages.yml**: Deploys mdBook documentation to GitHub Pages
+- **release.yml**: validates the tag against `Cargo.toml`, `description.yml` and
+  `CHANGELOG.md`, builds four platforms without a cache, attaches
+  `SHA256SUMS.txt` and build-provenance attestations; steps in `RELEASING.md`
+- **pages.yml**: builds the mdBook on pull requests, deploys on `main`
 
 ## Common Tasks
 
@@ -538,11 +615,13 @@ stamped for the stable C API, v1.2.0). To build against the new headers:
 3. Update `DUCKDB_VERSION` and the `compat` matrix in `.github/workflows/e2e.yml`.
    DuckDB 2.0.0 renamed its CLI assets (`duckdb-cli-linux-amd64.tar.gz`,
    `duckdb-cli-osx-universal.tar.gz`; older releases keep
-   `duckdb_cli-linux-amd64.zip`), so `e2e.yml` and `scripts/setup.sh` download
-   `.tar.gz` and the `compat` job falls back to the `.zip` name
-4. Update `DUCKDB_RELEASE_VERSION` in `scripts/setup.sh`
-4a. Re-run the stable-prefix check (Stable C API note below) in case a
-   quack-rs upgrade started using a newer C API function
+   `duckdb_cli-linux-amd64.zip`); `scripts/install-duckdb-cli.sh` handles both
+   names, so only the version strings change
+4. Re-run the crash-shape matrix (`scripts/crash-shapes.sh <extension> <duckdb>...`) on the new
+   release and update the matrix under DuckDB FFI Gotchas, the README "Known
+   limitations" and the FAQ
+4a. Run `scripts/check-stable-api.py` (Stable C API note below) in case a
+   quack-rs upgrade started using a newer C API function; CI also runs it
 5. Update DuckDB-version references in docs (`CLAUDE.md`, `README.md`,
    `docs/src/**/*.md`, `CONTRIBUTING.md`, `SECURITY.md`)
 6. Check whether the new `libduckdb-sys`/`duckdb`/`criterion` MSRVs raise
@@ -587,10 +666,12 @@ Hard-won knowledge from developing this extension. Consult before making changes
 
 - **Stable C API (`C_STRUCT`, `-dv v1.2.0`)**: the extension dereferences only
   stable-prefix slots of `duckdb_ext_api_v1` (76 of 548 slots, highest 306;
-  the stable prefix is 357 slots). Measured by disassembling an unstripped
-  release build (`cargo build --profile profiling --lib`) and collecting the
-  `__DUCKDB_*` statics that are *loaded* (every one is stored at init).
-  Re-run that check before using any new C API function: a slot at or above
+  the stable prefix is 357 slots). `scripts/check-stable-api.py` measures it
+  by disassembling an unstripped release build (`cargo build --profile
+  profiling --lib`) and collecting the `___DUCKDB_*` statics that are *loaded*
+  (every one is stored at init); CI runs it on Linux (`e2e.yml`) and
+  `scripts/check.sh` runs it too. The FFI-view refactor left the figures
+  unchanged (76, 306). A slot at or above
   357 forces `USE_UNSTABLE_C_API=1`, which pins the binary to one DuckDB
   release and is what dropped v0.9.1 from the community channel when DuckDB
   v1.5.6 shipped. With the stable stamp, `-dv` is the C API version
@@ -628,17 +709,32 @@ Hard-won knowledge from developing this extension. Consult before making changes
   panic kills the user's DuckDB process. `release_profile_keeps_panic_guards_effective`
   enforces the profile. Never write a raw `unsafe extern "C" fn` callback.
 
-- **C API aggregates crash in three query shapes (duckdb/duckdb#26109,
-  present in DuckDB 1.5.6 and earlier; not reproduced on 2.0.0)**: `agg(.. ORDER BY ..)`, `OVER ()`, and frames
-  written `UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` (`OVER (PARTITION BY
-  u)` and bounded frames covering the whole partition do not crash;
-  verified on 1.5.6, where all three exit 139; on 2.0.0 none crashes for any of the 8
-  functions, and the 7 event functions match the plain aggregate). DuckDB passes a one-element state vector
-  with `count > 1` because the C API cannot set `simple_update`;
-  `CAPIAggregateUpdate` does not flatten it. Valgrind shows the invalid read;
-  the process usually segfaults. The extension cannot detect it (reading
-  `states[1]` is the out-of-bounds read) or refuse it (no aggregate bind hook
-  in the C API). Documented in README "Known Limitations" and the FAQ.
+- **C API aggregates crash in some query shapes on DuckDB before 2.0.0
+  (duckdb/duckdb#26109)**: DuckDB passes a one-element state vector with
+  `count > 1`, because the C API cannot set `simple_update`, and
+  `CAPIAggregateUpdate` does not flatten it. The extension cannot detect it
+  (reading `states[1]` is the out-of-bounds read) or refuse it (no aggregate
+  bind hook in the stable C API). Valgrind shows the invalid read; the process
+  usually exits 139. VALIDATED per release with `scripts/crash-shapes.sh`
+  (`window_funnel`, 10 rows):
+
+  | Query shape | 1.3.2 | 1.4.4 | 1.5.0 | 1.5.6 | 2.0.0 |
+  |---|---|---|---|---|---|
+  | `f(.. ORDER BY ts)`, `OVER ()`, `UNBOUNDED..UNBOUNDED FOLLOWING` | crash | crash | crash | crash | ok |
+  | `OVER (PARTITION BY g)`, `OVER (PARTITION BY 1)` (no `ORDER BY`) | crash | crash | ok | ok | ok |
+  | `PARTITION BY g ORDER BY ts` with a bounded or running frame | ok | ok | ok | ok | ok |
+
+  On 2.0.0 none crashes for any of the 8 functions, and the 7 event functions
+  match the plain aggregate. Documented in README "Known limitations" and the
+  FAQ. A related upstream defect: states of groups never reached (a
+  `GROUP BY .. LIMIT`, an interrupt) are never destroyed, so `sequence_next_node`
+  leaks the bytes it held; the README records the measured sizes.
+
+- **DuckDB 2.0's C API v2 is not used**: it adds an aggregate bind callback
+  (`duckdb_v2_aggregate_function_*`, which would let the extension refuse the
+  shapes above), but it is marked unstable in 2.0.0. Using it would pin the
+  binary to one release (`C_STRUCT_UNSTABLE`), the failure that removed
+  v0.9.1 from the community channel. Revisit when it joins the stable prefix.
 
 - **Window usage needs no special registration**: `sessionize` is registered as
   a plain aggregate (`AggregateFunctionBuilder`); DuckDB drives any aggregate
@@ -685,9 +781,15 @@ Hard-won knowledge from developing this extension. Consult before making changes
   An O(n) `windows(2).all()` check before `sort_unstable_by_key` avoids O(n log n)
   for the common case.
 
-- **`Arc<str>` not `String` for shared event values**: `sequence_next_node` stores
-  per-event string values. `Arc::clone` is ~1ns (atomic increment) vs `String::clone`
-  at ~20-80ns (byte copy). Compounds in combine operations.
+- **`sequence_next_node` keeps values in one byte buffer per state**: each event
+  is a 24-byte `Copy` record with a `(start, len)` range into the buffer, and a
+  value equal to the previous event's is stored once. This replaced an
+  `Arc<str>` per event (0.10.1), whose allocation was infallible (an abort
+  under memory pressure instead of a SQL error) and was lost wholesale when
+  DuckDB abandons a grouped scan. Measured on DuckDB 2.0.0, 10M rows in 100k
+  groups, 4 threads: CPU time median 5.08 s to 2.66 s. Growth goes through
+  `try_push` / `try_combine_in_place`, which return `StoreError` that the FFI
+  reports as a SQL error; do not reintroduce a per-event allocation.
 
 - **Radix sort is wrong for embedded-key structs**: LSD radix sort (8-bit, 8 passes)
   on 16-byte `Event` structs was 4.3x slower than pdqsort at 100M elements due to

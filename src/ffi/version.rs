@@ -10,21 +10,20 @@
 //! Registered via [`quack_rs::scalar::ScalarFunctionBuilder`] with the
 //! panic-safe [`quack_rs::scalar_callback!`] macro.
 
-use libduckdb_sys::*;
+use super::view::{Output, VarcharKind};
+use libduckdb_sys::duckdb_data_chunk_get_size;
 use quack_rs::scalar::ScalarFunctionBuilder;
 use quack_rs::scalar_callback;
 use quack_rs::types::TypeId;
-use quack_rs::vector::VectorWriter;
 
 scalar_callback!(version_callback, |_info, input, output| {
-    // SAFETY: `input` and `output` are valid handles provided by DuckDB; the
-    // output VARCHAR vector has room for `duckdb_data_chunk_get_size` rows.
-    unsafe {
-        let rows = duckdb_data_chunk_get_size(input) as usize;
-        let mut writer = VectorWriter::new(output);
-        for i in 0..rows {
-            writer.write_varchar(i, env!("CARGO_PKG_VERSION"));
-        }
+    // SAFETY: `input` is the chunk of the running scalar callback.
+    let rows = unsafe { duckdb_data_chunk_get_size(input) };
+    // SAFETY: `output` is the callback's VARCHAR result vector with room for
+    // one value per input row.
+    let mut out = unsafe { Output::<VarcharKind>::from_raw(output, rows, 0) };
+    for i in 0..out.count() {
+        out.write(i, env!("CARGO_PKG_VERSION"));
     }
 });
 
@@ -36,14 +35,10 @@ scalar_callback!(version_callback, |_info, input, output| {
 /// SELECT behavioral_version();  -- e.g. '0.8.0'
 /// ```
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_behavioral_version(
+pub fn register_behavioral_version(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     let builder = ScalarFunctionBuilder::new("behavioral_version")

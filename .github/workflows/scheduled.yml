@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
+name: Scheduled
+
+# Things that can break without a commit: a new RustSec advisory, a new Rust
+# release (rust-toolchain.toml pins one), a newer compatible dependency, and
+# the next DuckDB release. A red run here is a heads-up, not a blocked merge.
+on:
+  schedule:
+    - cron: "23 4 * * 1" # Mondays, 04:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 5
+  RUST_BACKTRACE: 1
+  DUCKDB_DOWNLOAD_LIB: "1"
+
+jobs:
+  advisories:
+    name: Advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories
+
+  # The pinned toolchain is what CI and releases use. These two jobs show what
+  # the next stable and beta Rust releases would change (new lints, new
+  # errors) before the pin is bumped.
+  toolchain:
+    name: Rust ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy
+          cache-key: canary-${{ matrix.toolchain }}
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  # Cargo.lock pins what CI tests. This job tests what a fresh `cargo update`
+  # would pick, which is what a user building from source without --locked
+  # gets.
+  latest-deps:
+    name: Latest compatible dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: latest-deps
+      - run: cargo update
+      - run: cargo test
+
+  # The binary is stamped for the stable C API, so it must keep loading into
+  # DuckDB releases that do not exist yet. Today's nightly stands in for the
+  # next one.
+  duckdb-nightly:
+    name: Extension in DuckDB nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: duckdb-nightly
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Build the extension
+        run: |
+          make configure
+          make release
+      - name: Load into the DuckDB nightly Python package
+        run: |
+          python -m pip install --pre duckdb
+          python scripts/nightly-smoke.py build/release/behavioral.duckdb_extension

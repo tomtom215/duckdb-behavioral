@@ -1,47 +1,46 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
-name: Deploy Documentation
+name: Documentation site
 
+# Pull requests build the book (so broken links and preprocessor errors fail
+# before merge); pushes to main also deploy it to GitHub Pages.
 on:
   push:
     branches: [main]
+    paths:
+      - "docs/**"
+      - "demo/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "demo/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: Build documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
-      - name: Install mdBook and preprocessors
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.local/bin"
-
-          MDBOOK_URL="https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz"
-          MDBOOK_SHA256="9ef07fd288ba58ff3b99d1c94e6d414d431c9a61fdb20348e5beb74b823d546b"
-          curl -sSL "$MDBOOK_URL" -o /tmp/mdbook.tar.gz
-          echo "$MDBOOK_SHA256  /tmp/mdbook.tar.gz" | sha256sum -c -
-          tar -xz -C "$HOME/.local/bin" -f /tmp/mdbook.tar.gz
-
-          MERMAID_URL="https://github.com/badboy/mdbook-mermaid/releases/download/v0.14.0/mdbook-mermaid-v0.14.0-x86_64-unknown-linux-gnu.tar.gz"
-          MERMAID_SHA256="37364965fb190cf9929d93c930c6b6c69b2fed05f7658ea2d312882ed59c645e"
-          curl -sSL "$MERMAID_URL" -o /tmp/mdbook-mermaid.tar.gz
-          echo "$MERMAID_SHA256  /tmp/mdbook-mermaid.tar.gz" | sha256sum -c -
-          tar -xz -C "$HOME/.local/bin" -f /tmp/mdbook-mermaid.tar.gz
-
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Prebuilt, checksum-verified binaries (taiki-e/install-action's manifest).
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: mdbook@0.4.40,mdbook-mermaid@0.14.0
 
       - name: Install Mermaid assets
         run: mdbook-mermaid install docs
@@ -51,29 +50,27 @@ jobs:
 
       - name: Copy demo to book output
         run: |
-          if [ ! -d docs/book ]; then
-            echo "::error::docs/book directory not found — mdbook build may have failed."
-            exit 1
-          fi
-          if [ -f demo/index.html ]; then
-            cp demo/index.html docs/book/demo.html
-          else
-            echo "::warning::demo/index.html not found, skipping demo page."
-          fi
+          test -d docs/book || { echo "::error::docs/book not found: mdbook build failed"; exit 1; }
+          cp demo/index.html docs/book/demo.html
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name != 'pull_request'
         with:
           path: docs/book
 
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write # publish the site
+      id-token: write # prove the deployment's origin to Pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

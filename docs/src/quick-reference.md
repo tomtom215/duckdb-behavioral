@@ -24,10 +24,12 @@ sessionize(timestamp_col, INTERVAL 'gap') OVER (
 ```
 
 **Key facts:** Aggregate designed to be used with `OVER (... ORDER BY ...)`,
-where it returns 1-indexed session IDs per row. Without `OVER` it returns the
-number of sessions in the group. Never use `OVER ()` or a `BETWEEN UNBOUNDED
-PRECEDING AND UNBOUNDED FOLLOWING` frame: those shapes crash DuckDB
-([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109)).
+where it returns 1-indexed session IDs per row; order ascending. Without `OVER`
+its result depends on scan order, so use the window form. On DuckDB before
+2.0.0 never use `OVER ()`, a `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED
+FOLLOWING` frame, or a window with only `PARTITION BY`: those shapes crash
+DuckDB ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109);
+[which releases](faq.md#which-query-shapes-crash-duckdb)).
 
 ---
 
@@ -59,13 +61,12 @@ satisfies several consecutive conditions fills several steps (unless
 
 | Mode | Effect |
 |---|---|
-| `strict` | Matched condition must not refire before next step |
-| `strict_deduplication` | Alias for `strict` |
-| `strict_order` | No earlier conditions between matched steps |
+| `strict_deduplication` | A condition firing again for a step already reached stops the scan (`'strict'` is an alias) |
+| `strict_order` | An event matching no condition, or a step arriving before its predecessor, stops the scan once a chain has been entered |
 | `strict_increase` | Strictly increasing timestamps between steps |
-| `strict_once` | Each event advances at most one step |
-| `allow_reentry` | Reset funnel when condition 1 fires again |
-| `timestamp_dedup` | Skip events with same timestamp as previous step |
+| `strict_once` | An event fills at most one step |
+| `allow_reentry` | Needs `strict_order`; a too-early step is skipped, not fatal |
+| `timestamp_dedup` | Extension: same as `strict_increase` |
 
 Combine modes: `'strict_increase, strict_once'`
 

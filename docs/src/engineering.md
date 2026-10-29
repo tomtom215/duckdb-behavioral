@@ -25,7 +25,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | Feasibility-then-greedy pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 547 unit tests, 28 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
+| **Software quality** | 540 unit tests, 29 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
@@ -123,7 +123,7 @@ graph TB
   Its unit tests exercise Rust structs directly, without a DuckDB
   connection.
 
-- **FFI bridge** (`src/ffi/`, 9 files): Contains all `unsafe` code. Each
+- **FFI bridge** (`src/ffi/`, 10 files): Contains all `unsafe` code. Each
   aggregate has an FFI module wiring the DuckDB aggregate callbacks
   (`state_size`, `init`, `update`, `combine`, `finalize`, `destroy`); `version.rs`
   registers the `behavioral_version()` scalar. The update, combine, and
@@ -143,7 +143,7 @@ graph TB
 
 This architecture enables:
 
-- **Independent unit testing**: The 547 unit tests exercise Rust structs
+- **Independent unit testing**: The 540 unit tests exercise Rust structs
   directly and run in about two seconds, without loading the extension.
 - **Safe evolution**: Updating the DuckDB version only requires updating
   `libduckdb-sys` in `Cargo.toml` and re-running E2E tests. Business logic
@@ -163,8 +163,8 @@ This architecture enables:
 graph TB
     subgraph "Complementary Test Levels"
         L3["Mutation Testing<br/>93.9% detected (570/607, 0.10.0 audit)<br/>cargo-mutants"]
-        L2["Integration + E2E<br/>28 in-process LOAD tests<br/>8 sqllogictest files on the DuckDB CLI"]
-        L1["Unit Tests (547)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (33 proptest), mutation-guided (67)"]
+        L2["Integration + E2E<br/>29 in-process LOAD tests<br/>8 sqllogictest files on the DuckDB CLI"]
+        L1["Unit Tests (540)<br/>State lifecycle, edge cases, combine correctness<br/>Property-based (37 proptest), mutation-guided (67)"]
     end
 
     style L1 fill:#f5f5f5,stroke:#333333,stroke-width:2px,color:#1a1a1a
@@ -174,7 +174,7 @@ graph TB
 
 This project implements a rigorous multi-level testing strategy:
 
-**Level 1: Unit Tests (547 tests)**
+**Level 1: Unit Tests (540 tests)**
 
 Organized by category within each module:
 
@@ -184,7 +184,7 @@ Organized by category within each module:
   at type boundaries (`u32::MAX`, `i64::MIN`)
 - **Combine correctness** -- empty-into-empty, empty-into-populated,
   populated-into-empty, associativity verification, configuration propagation
-- **Property-based tests (33 proptest)** -- algebraic properties required by
+- **Property-based tests (37 proptest)** -- algebraic properties required by
   DuckDB's segment tree: combine associativity, commutativity, identity element,
   idempotency, monotonicity; plus two differential tests that check the
   sequence matcher against the original backtracking search on random
@@ -207,7 +207,7 @@ missed:
    configuration)
 
 This same load → register → execute chain also runs **in-process inside
-`cargo test`** (`tests/extension_load.rs`, 28 tests; run with
+`cargo test`** (`tests/extension_load.rs`, 29 tests; run with
 `DUCKDB_DOWNLOAD_LIB=1 cargo test`). It
 builds the real release `cdylib`, appends the DuckDB metadata footer, and
 `LOAD`s it via `quack_rs::testing::InMemoryDb::open_unsigned()` — so the entire
@@ -255,11 +255,11 @@ Rust aggregate state (not an end-to-end SQL query), backed by:
 | O(1) state (`sessionize_update`) | **1 billion elements** | Compute-bound; no per-event memory |
 | O(1) state (`retention_combine`) | **100 million states** | Current bench caps at 100M (1B was measured once, in PERF.md Session 4) |
 | Event-collecting (window_funnel, sequence_*) | **100 million elements** | 1.6 GB working set at 16 bytes/event |
-| String-carrying (sequence_next_node) | **10 million elements** | 32 bytes/event with `Arc<str>` allocation |
+| String-carrying (sequence_next_node) | **10 million elements** | 24 bytes/event plus the value bytes |
 
 ### Optimization History
 
-Optimization sessions recorded in `PERF.md` (Sessions 1 through 18, with
+Optimization sessions recorded in `PERF.md` (Sessions 1 through 21, with
 before/after measurements), each following a documented protocol:
 
 1. Establish baseline with 3 Criterion runs
@@ -283,7 +283,7 @@ Five attempted optimizations were negative results:
 - **LSD radix sort**: 4.3x slower than pdqsort for 16-byte embedded-key structs
 - **Branchless sessionize**: 5--10% regression; branch predictor handles 90/10
   patterns efficiently
-- **String pool with index vectors**: 10--55% slower than Arc\<str\> at most scales
+- **String pool with index vectors**: 10--55% slower than Arc\<str\> at most scales (0.10.1 later replaced `Arc<str>` itself with one byte buffer per state, for fallible allocation and half the CPU time)
 - **Compiled pattern preservation**: Caching parsed patterns did not improve performance
 - **First-condition pre-check**: Adding an early-exit branch for non-matching first conditions increased overhead
 
@@ -391,13 +391,18 @@ finalize    -- Produces the final result from the accumulated state
 
 Because `duckdb_aggregate_function_set_varargs` does not exist, each function
 that accepts a variable number of boolean conditions registers one overload
-per arity via a function set:
+per arity (and, for every function with a timestamp argument, one per timestamp
+type, `TIMESTAMP` and `TIMESTAMPTZ`) via a function set:
 
 | Function | Conditions | Overloads |
 |---|---|---|
-| `retention`, `sequence_match`, `sequence_count`, `sequence_match_events` | 2--32 | 31 each |
-| `window_funnel`, `window_funnel_events` | 1--32, with and without a mode `VARCHAR` | 64 each |
-| `sequence_next_node` | base condition + 1--32 event conditions | 32 |
+| `retention` (no timestamp) | 2--32 | 31 |
+| `sequence_match`, `sequence_count`, `sequence_match_events` | 2--32 | 62 each |
+| `window_funnel`, `window_funnel_events` | 1--32, with and without a mode `VARCHAR` | 128 each |
+| `sequence_next_node` | base condition + 1--32 event conditions | 64 |
+
+With `sessionize` (2) and `behavioral_version` (1) that is 540 overloads, a
+number `tests/extension_load.rs` and `scripts/compat-check.sh` assert.
 
 `sessionize` and the `behavioral_version()` scalar have a single signature.
 
@@ -454,15 +459,15 @@ incorrect results that passed all unit tests but failed E2E validation.
 
 | Metric | Value |
 |---|---|
-| Unit tests | 547 |
+| Unit tests | 540 |
 | Doc-tests | 1 |
-| In-process integration tests | 21 (`tests/extension_load.rs`) |
+| In-process integration tests | 29 (`tests/extension_load.rs`) |
 | SQL logic tests | 8 files: 44 `query` + 34 `statement` directives |
-| Property-based tests | 29 (proptest) |
+| Property-based tests | 37 (proptest) |
 | Mutation-guided tests | 67 |
 | Mutation kill rate | 93.9% detected (570/607 viable, 0.10.0 audit of the non-FFI modules) |
 | Clippy warnings | 0 (pedantic + nursery + cargo) |
-| Unsafe code | Confined to `src/ffi/` (9 files) |
+| Unsafe code | Confined to `src/ffi/` (10 files); `unsafe_code = "deny"` everywhere else, and every block needs a `// SAFETY:` note and a single operation (clippy-enforced) |
 | MSRV | Rust 1.88 |
 | Criterion benchmark files | 7 |
 | Max benchmark scale | 1 billion elements (`sessionize_update`) |

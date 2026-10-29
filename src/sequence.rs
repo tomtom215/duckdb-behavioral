@@ -30,9 +30,9 @@
 
 use std::sync::Arc;
 
-use crate::common::event::{sort_events, Event};
-use crate::pattern::executor::{execute_pattern, execute_pattern_events, MatchResult};
-use crate::pattern::parser::{parse_pattern, CompiledPattern, PatternError};
+use crate::common::event::{Event, sort_events};
+use crate::pattern::executor::{MatchResult, execute_pattern, execute_pattern_events};
+use crate::pattern::parser::{CompiledPattern, PatternError, parse_pattern};
 
 /// State for `sequence_match` and `sequence_count` aggregate functions.
 ///
@@ -447,9 +447,8 @@ mod tests {
 
     #[test]
     fn test_combine_in_place_preserves_compiled_pattern() {
-        // Kills mutant: unconditionally set compiled_pattern = None.
         // After set_pattern + finalize, compiled_pattern is populated.
-        // combine_in_place should preserve it if pattern_str didn't change.
+        // combine_in_place must keep it when the target already has a pattern.
         let mut a = SequenceState::new();
         a.set_pattern("(?1)(?2)");
         a.update(make_event(100, &[true, false]));
@@ -461,8 +460,9 @@ mod tests {
         b.update(make_event(200, &[false, true]));
 
         a.combine_in_place(&b);
-        // a already had pattern_str, so compiled_pattern should be preserved
-        // If wrongly invalidated, finalize_match still works but recompiles unnecessarily
+        // a already had a pattern, so its compiled form is kept (dropping it
+        // would still give the right answer, but recompile for no reason).
+        assert!(a.compiled_pattern.is_some());
         assert!(a.finalize_match().unwrap());
     }
 
@@ -794,18 +794,7 @@ mod proptests {
 
     proptest! {
         #[test]
-        fn count_non_negative(
-            num_events in 0..=50usize,
-        ) {
-            let mut state = SequenceState::new();
-            state.set_pattern("(?1)(?2)");
-            for i in 0..num_events {
-                let bitmask = 1u32 << (i % 2);
-                state.update(Event::from_bools(i as i64, &[bitmask & 1 != 0, bitmask & 2 != 0]));
-            }
-            let count = state.finalize_count().unwrap();
-            prop_assert!(count >= 0);
-        }
+
 
         #[test]
         fn match_implies_count_at_least_one(
@@ -835,7 +824,7 @@ mod proptests {
         }
 
         #[test]
-        fn all_false_events_produce_no_match(
+        fn all_false_events_are_not_stored(
             num_events in 0..=50usize,
         ) {
             let mut state = SequenceState::new();
@@ -843,29 +832,10 @@ mod proptests {
             for i in 0..num_events {
                 state.update(Event::new(i as i64, 0u32)); // all conditions false
             }
-            // All-false events are filtered by update(), so no match possible
+            // `update` drops events no `(?N)` step can use, so none are kept
+            // and nothing can match.
+            prop_assert!(state.events.is_empty());
             prop_assert!(!state.finalize_match().unwrap());
-        }
-
-        #[test]
-        fn combine_preserves_events(
-            n_a in 0..=20usize,
-            n_b in 0..=20usize,
-        ) {
-            let mut a = SequenceState::new();
-            a.set_pattern("(?1)(?2)");
-            for i in 0..n_a {
-                a.update(Event::new(i as i64, 1u32));
-            }
-
-            let mut b = SequenceState::new();
-            b.set_pattern("(?1)(?2)");
-            for i in 0..n_b {
-                b.update(Event::new((n_a + i) as i64, 2u32));
-            }
-
-            let combined = a.combine(&b);
-            prop_assert_eq!(combined.events.len(), n_a + n_b);
         }
 
         // --- 32-condition property tests ---

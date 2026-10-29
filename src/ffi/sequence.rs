@@ -7,15 +7,13 @@
 //! registration, [`quack_rs::aggregate::FfiState`] for safe state management,
 //! and [`quack_rs::vector::VectorReader`] for safe vector reading.
 
-use super::RawStringSlots;
+use super::view::{BoolKind, Combine, Finalize, I64Kind, States, Update};
 use crate::common::config::{conflict_message, out_of_memory_message};
 use crate::common::event::Event;
-use crate::pattern::parser::{parse_pattern, CompiledPattern};
+use crate::pattern::parser::{CompiledPattern, parse_pattern};
 use crate::sequence::SequenceState;
-use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::AggregateFunctionSetBuilder;
 use quack_rs::types::TypeId;
-use quack_rs::vector::{VectorReader, VectorWriter};
 use std::sync::Arc;
 
 /// Minimum number of boolean condition parameters for sequence functions.
@@ -29,14 +27,10 @@ impl quack_rs::aggregate::AggregateState for SequenceState {}
 ///
 /// Signature: `sequence_match(VARCHAR, TIMESTAMP, BOOLEAN, BOOLEAN [, ...]) -> BOOLEAN`
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_sequence_match(
+pub fn register_sequence_match(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     let mut builder = AggregateFunctionSetBuilder::new("sequence_match").returns(TypeId::Boolean);
@@ -65,14 +59,10 @@ pub unsafe fn register_sequence_match(
 ///
 /// Signature: `sequence_count(VARCHAR, TIMESTAMP, BOOLEAN, BOOLEAN [, ...]) -> BIGINT`
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_sequence_count(
+pub fn register_sequence_count(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     let mut builder = AggregateFunctionSetBuilder::new("sequence_count").returns(TypeId::BigInt);
@@ -97,34 +87,40 @@ pub unsafe fn register_sequence_count(
     unsafe { con.register_aggregate_set(builder) }
 }
 
+// SAFETY (the callbacks below): DuckDB calls them with the handles
+// `Update::from_raw`, `Combine::from_raw` and `Finalize::from_raw` require, for
+// the aggregates registered in `register_sequence_match` and
+// `register_sequence_count`: `FfiState<SequenceState>` states, arguments
+// (VARCHAR pattern, TIMESTAMP | TIMESTAMPTZ, BOOLEAN...), and a BOOLEAN or
+// BIGINT result.
+
 // -- sequence_match finalize --
 
-// SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB BOOLEAN vector. A NULL pattern finalizes as NULL; any other error aborts the query.
+// A NULL pattern finalizes as NULL; any other error aborts the query.
 quack_rs::aggregate_finalize_callback!(
     match_state_finalize,
     |info, source, result, count, offset| {
-        unsafe {
-            let info = AggregateFunctionInfo::new(info);
-            let mut writer = VectorWriter::new(result);
-
-            for i in 0..count as usize {
-                let idx = offset as usize + i;
-
-                let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
-                    writer.set_null(idx);
-                    continue;
-                };
-
-                match state.finalize_match() {
-                    Ok(matched) => writer.write_bool(idx, matched),
-                    // A NULL pattern finalizes as NULL; any other error (an
-                    // invalid pattern) aborts the query.
-                    Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
-                    Err(e) => {
-                        info.set_error(&format!("sequence_match: {e}"));
-                        writer.set_null(idx);
-                    }
+        // SAFETY: see above.
+        let Finalize {
+            info,
+            mut states,
+            mut out,
+        } = unsafe {
+            Finalize::<SequenceState, BoolKind>::from_raw(info, source, result, count, offset)
+        };
+        for i in 0..out.count() {
+            let Some(state) = states.get_mut(i) else {
+                out.set_null(i);
+                continue;
+            };
+            match state.finalize_match() {
+                Ok(matched) => out.write(i, matched),
+                // A NULL pattern finalizes as NULL; any other error (an
+                // invalid pattern) aborts the query.
+                Err(_) if state.pattern_str.is_none() => out.set_null(i),
+                Err(e) => {
+                    info.set_error(&format!("sequence_match: {e}"));
+                    out.set_null(i);
                 }
             }
         }
@@ -133,32 +129,30 @@ quack_rs::aggregate_finalize_callback!(
 
 // -- sequence_count finalize --
 
-// SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB BIGINT vector. A NULL pattern finalizes as NULL; any other error aborts the query.
 quack_rs::aggregate_finalize_callback!(
     count_state_finalize,
     |info, source, result, count, offset| {
-        unsafe {
-            let info = AggregateFunctionInfo::new(info);
-            let mut writer = VectorWriter::new(result);
-
-            for i in 0..count as usize {
-                let idx = offset as usize + i;
-
-                let Some(state) = FfiState::<SequenceState>::with_state_mut(*source.add(i)) else {
-                    writer.set_null(idx);
-                    continue;
-                };
-
-                match state.finalize_count() {
-                    Ok(n) => writer.write_i64(idx, n),
-                    // A NULL pattern finalizes as NULL; any other error (an
-                    // invalid pattern) aborts the query.
-                    Err(_) if state.pattern_str.is_none() => writer.set_null(idx),
-                    Err(e) => {
-                        info.set_error(&format!("sequence_count: {e}"));
-                        writer.set_null(idx);
-                    }
+        // SAFETY: see above.
+        let Finalize {
+            info,
+            mut states,
+            mut out,
+        } = unsafe {
+            Finalize::<SequenceState, I64Kind>::from_raw(info, source, result, count, offset)
+        };
+        for i in 0..out.count() {
+            let Some(state) = states.get_mut(i) else {
+                out.set_null(i);
+                continue;
+            };
+            match state.finalize_count() {
+                Ok(n) => out.write(i, n),
+                // A NULL pattern finalizes as NULL; any other error (an
+                // invalid pattern) aborts the query.
+                Err(_) if state.pattern_str.is_none() => out.set_null(i),
+                Err(e) => {
+                    info.set_error(&format!("sequence_count: {e}"));
+                    out.set_null(i);
                 }
             }
         }
@@ -167,25 +161,28 @@ quack_rs::aggregate_finalize_callback!(
 
 // -- Shared update/combine callbacks --
 
-// SAFETY: `input` is a valid DuckDB data chunk with columns (VARCHAR, TIMESTAMP,
-// BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
 quack_rs::aggregate_update_callback!(sequence_match_update, |info, input, states| {
-    unsafe { update_impl(info, input, states, "sequence_match") }
+    // SAFETY: see above.
+    let call = unsafe { Update::<SequenceState>::from_raw(info, input, states) };
+    update_impl(call, "sequence_match");
 });
 
-// SAFETY: as for `sequence_match_update`.
 quack_rs::aggregate_update_callback!(sequence_count_update, |info, input, states| {
-    unsafe { update_impl(info, input, states, "sequence_count") }
+    // SAFETY: see above.
+    let call = unsafe { Update::<SequenceState>::from_raw(info, input, states) };
+    update_impl(call, "sequence_count");
 });
 
-// SAFETY: `source` and `target` point to `count` aggregate state pointers.
 quack_rs::aggregate_combine_callback!(sequence_match_combine, |info, source, target, count| {
-    unsafe { combine_impl(info, source, target, count, "sequence_match") }
+    // SAFETY: see above.
+    let call = unsafe { Combine::<SequenceState>::from_raw(info, source, target, count) };
+    combine_impl(call, "sequence_match");
 });
 
-// SAFETY: as for `sequence_match_combine`.
 quack_rs::aggregate_combine_callback!(sequence_count_combine, |info, source, target, count| {
-    unsafe { combine_impl(info, source, target, count, "sequence_count") }
+    // SAFETY: see above.
+    let call = unsafe { Combine::<SequenceState>::from_raw(info, source, target, count) };
+    combine_impl(call, "sequence_count");
 });
 
 /// Quotes a pattern for an error message, shortening a long one so the
@@ -207,183 +204,155 @@ fn quote_pattern(pattern: &str) -> String {
 /// aborts the query with the parser's position-annotated message); a
 /// different pattern later in the group is an error. `func` names the SQL
 /// function in error messages.
-///
-/// # Safety
-///
-/// Requires a valid `info` handle plus valid `input` data chunk and `states`
-/// aggregate state pointers, one initialised state per input row.
-pub(super) unsafe fn update_impl(
-    info: duckdb_function_info,
-    input: duckdb_data_chunk,
-    states: *mut duckdb_aggregate_state,
-    func: &str,
-) {
-    // SAFETY: forwarded from this function's contract.
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let row_count = duckdb_data_chunk_get_size(input) as usize;
-        let col_count = duckdb_data_chunk_get_column_count(input) as usize;
-        let pattern_reader = VectorReader::new(input, 0);
-        let ts_reader = VectorReader::new(input, 1);
-        let cond_readers: Vec<VectorReader> = (2..col_count)
-            .map(|c| VectorReader::new(input, c))
-            .collect();
-        let pattern_slots = RawStringSlots::new(input, 0);
-        // The last distinct pattern in this chunk: its raw slot, text and
-        // compiled form.
-        let mut last_pattern: Option<([u8; 16], Arc<str>, Arc<CompiledPattern>)> = None;
+pub(super) fn update_impl(call: Update<SequenceState>, func: &str) {
+    let Update {
+        info,
+        chunk,
+        mut states,
+    } = call;
+    // SAFETY: column 0 is registered as VARCHAR (the pattern).
+    let patterns = unsafe { chunk.varchars(0) };
+    // SAFETY: column 1 is registered as TIMESTAMP or TIMESTAMPTZ.
+    let timestamps = unsafe { chunk.timestamps(1) };
+    // SAFETY: every column after the timestamp is registered as BOOLEAN.
+    let conditions = unsafe { chunk.bool_range(2..chunk.cols()) };
+    // The last distinct pattern in this chunk: its raw slot, text and
+    // compiled form.
+    let mut last_pattern: Option<([u8; 16], Arc<str>, Arc<CompiledPattern>)> = None;
 
-        // DuckDB hands consecutive rows of one group the same state, so work
-        // per run of equal state pointers: with one large group the whole
-        // chunk is one run, and the per-row cost is just building the event.
-        let mut start = 0;
-        while start < row_count {
-            let state_ptr = *states.add(start);
-            let mut end = start + 1;
-            while end < row_count && *states.add(end) == state_ptr {
-                end += 1;
+    // DuckDB hands consecutive rows of one group the same state, so work per
+    // run of equal state pointers: with one large group the whole chunk is
+    // one run, and the per-row cost is just building the event.
+    let mut start = 0;
+    while start < chunk.rows() {
+        let end = states.run_end(start);
+        let run = start..end;
+        start = end;
+        let Some(state) = states.get_mut(run.start) else {
+            continue;
+        };
+
+        // 1. Patterns. Rows of the run that repeat the previous row's raw
+        //    slot carry the same string, already checked for this state.
+        let mut checked_slot: Option<[u8; 16]> = None;
+        for i in run.clone() {
+            if !timestamps.is_valid(i) || !patterns.is_valid(i) {
+                continue;
             }
-            let run = start..end;
-            start = end;
-            let Some(state) = FfiState::<SequenceState>::with_state_mut(state_ptr) else {
+            let slot = patterns.slot(i);
+            if checked_slot == Some(slot) {
+                continue;
+            }
+            checked_slot = Some(slot);
+            // Parse each distinct value once per chunk and share it, so a
+            // state takes it without allocating.
+            if !matches!(&last_pattern, Some((cached, _, _)) if *cached == slot) {
+                let Some(s) = patterns.get(i) else {
+                    continue;
+                };
+                match &mut last_pattern {
+                    Some((cached, text, _)) if &**text == s => *cached = slot,
+                    _ => match parse_pattern(s) {
+                        Err(e) => {
+                            info.set_error(&format!(
+                                "invalid sequence pattern {}: {e}",
+                                quote_pattern(s)
+                            ));
+                            return;
+                        }
+                        // As in ClickHouse, a condition number beyond those
+                        // passed is an error, not a step that never matches.
+                        Ok(p) if p.max_condition().is_some_and(|n| n > conditions.len()) => {
+                            info.set_error(&format!(
+                                "invalid sequence pattern {}: condition (?{}) is out of \
+                                 range; {} conditions were passed",
+                                quote_pattern(s),
+                                p.max_condition().unwrap_or(0),
+                                conditions.len()
+                            ));
+                            return;
+                        }
+                        Ok(p) => last_pattern = Some((slot, Arc::from(s), Arc::new(p))),
+                    },
+                }
+            }
+            let Some((_, text, compiled)) = last_pattern.as_ref() else {
                 continue;
             };
-
-            // 1. Patterns. Rows of the run that repeat the previous row's raw
-            //    slot carry the same string, already checked for this state.
-            let mut checked_slot: Option<[u8; 16]> = None;
-            for i in run.clone() {
-                if !ts_reader.is_valid(i) || !pattern_reader.is_valid(i) {
-                    continue;
-                }
-                let slot = pattern_slots.get(i);
-                if checked_slot == Some(slot) {
-                    continue;
-                }
-                checked_slot = Some(slot);
-                // Parse each distinct value once per chunk and share it, so a
-                // state takes it without allocating.
-                if !matches!(&last_pattern, Some((cached, _, _)) if *cached == slot) {
-                    let s = pattern_reader.read_str(i);
-                    match &mut last_pattern {
-                        Some((cached, text, _)) if &**text == s => *cached = slot,
-                        _ => match parse_pattern(s) {
-                            Err(e) => {
-                                info.set_error(&format!(
-                                    "invalid sequence pattern {}: {e}",
-                                    quote_pattern(s)
-                                ));
-                                return;
-                            }
-                            // As in ClickHouse, a condition number beyond
-                            // those passed is an error, not a step that never
-                            // matches.
-                            Ok(p) if p.max_condition().is_some_and(|n| n > cond_readers.len()) => {
-                                info.set_error(&format!(
-                                    "invalid sequence pattern {}: condition (?{}) is out of \
-                                     range; {} conditions were passed",
-                                    quote_pattern(s),
-                                    p.max_condition().unwrap_or(0),
-                                    cond_readers.len()
-                                ));
-                                return;
-                            }
-                            Ok(p) => last_pattern = Some((slot, Arc::from(s), Arc::new(p))),
-                        },
-                    }
-                }
-                let (_, text, compiled) = last_pattern.as_ref().expect("set above");
-                match &state.pattern_str {
-                    None => state.set_compiled_pattern(text, compiled),
-                    Some(existing) if Arc::ptr_eq(existing, text) => {}
-                    // The same pattern from an earlier chunk: adopt this
-                    // chunk's copy so later checks compare pointers.
-                    Some(existing) if existing == text => state.replace_pattern(text, compiled),
-                    Some(existing) => {
-                        info.set_error(&conflict_message(
-                            func,
-                            "pattern",
-                            &quote_pattern(existing),
-                            &quote_pattern(text),
-                        ));
-                        return;
-                    }
+            match &state.pattern_str {
+                None => state.set_compiled_pattern(text, compiled),
+                Some(existing) if Arc::ptr_eq(existing, text) => {}
+                // The same pattern from an earlier chunk: adopt this chunk's
+                // copy so later checks compare pointers.
+                Some(existing) if existing == text => state.replace_pattern(text, compiled),
+                Some(existing) => {
+                    info.set_error(&conflict_message(
+                        func,
+                        "pattern",
+                        &quote_pattern(existing),
+                        &quote_pattern(text),
+                    ));
+                    return;
                 }
             }
-
-            // 2. Events. Reserve the run once, fallibly (an allocation failure
-            //    becomes a SQL error instead of aborting the host process);
-            //    `extend` then writes into the reserved space.
-            let needed = run.len();
-            if state.events.capacity() - state.events.len() < needed
-                && state.events.try_reserve(needed).is_err()
-            {
-                info.set_error(&out_of_memory_message(func, state.events.len() + needed));
-                return;
-            }
-            state.events.extend(run.filter_map(|i| {
-                if !ts_reader.is_valid(i) {
-                    return None;
-                }
-                let mut bitmask: u32 = 0;
-                for (c, reader) in cond_readers.iter().enumerate() {
-                    if reader.is_valid(i) && reader.read_bool(i) {
-                        bitmask |= 1 << c;
-                    }
-                }
-                // Only events with a true condition can match a `(?N)` step
-                // (as in `SequenceState::update`).
-                (bitmask != 0).then(|| Event::new(ts_reader.read_i64(i), bitmask))
-            }));
         }
+
+        // 2. Events. Reserve the run once, fallibly (an allocation failure
+        //    becomes a SQL error instead of aborting the host process);
+        //    `extend` then writes into the reserved space.
+        let needed = run.len();
+        if state.events.capacity() - state.events.len() < needed
+            && state.events.try_reserve(needed).is_err()
+        {
+            info.set_error(&out_of_memory_message(func, state.events.len() + needed));
+            return;
+        }
+        state.events.extend(run.filter_map(|i| {
+            let timestamp_us = timestamps.get(i)?;
+            let mut bitmask: u32 = 0;
+            for (c, condition) in conditions.iter().enumerate() {
+                if condition.is_true(i) {
+                    bitmask |= 1 << c;
+                }
+            }
+            // Only events with a true condition can match a `(?N)` step (as
+            // in `SequenceState::update`).
+            (bitmask != 0).then(|| Event::new(timestamp_us, bitmask))
+        }));
     }
 }
 
 /// Combine shared by the `sequence_*` functions: appends the source's events
 /// and rejects a target and source holding different patterns.
-///
-/// # Safety
-///
-/// Requires a valid `info` handle and `source`/`target` arrays of `count`
-/// state pointers, with `source[i]` and `target[i]` distinct states (as
-/// `DuckDB` guarantees), so the shared and mutable borrows do not alias.
-pub(super) unsafe fn combine_impl(
-    info: duckdb_function_info,
-    source: *mut duckdb_aggregate_state,
-    target: *mut duckdb_aggregate_state,
-    count: idx_t,
-    func: &str,
-) {
-    // SAFETY: forwarded from this function's contract.
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        for i in 0..count as usize {
-            let Some(src) = FfiState::<SequenceState>::with_state(*source.add(i)) else {
-                continue;
-            };
-            let Some(tgt) = FfiState::<SequenceState>::with_state_mut(*target.add(i)) else {
-                continue;
-            };
-            if let (Some(a), Some(b)) = (tgt.pattern_str.as_deref(), src.pattern_str.as_deref()) {
-                if a != b {
-                    info.set_error(&conflict_message(
-                        func,
-                        "pattern",
-                        &quote_pattern(a),
-                        &quote_pattern(b),
-                    ));
-                    return;
-                }
-            }
-            if tgt.events.try_reserve(src.events.len()).is_err() {
-                info.set_error(&out_of_memory_message(
-                    func,
-                    tgt.events.len() + src.events.len(),
-                ));
-                return;
-            }
-            tgt.combine_in_place(src);
+pub(super) fn combine_impl(call: Combine<SequenceState>, func: &str) {
+    let Combine {
+        info,
+        source,
+        mut target,
+    } = call;
+    for i in 0..source.count() {
+        let Some((src, tgt)) = States::pair(&source, &mut target, i) else {
+            continue;
+        };
+        if let (Some(a), Some(b)) = (tgt.pattern_str.as_deref(), src.pattern_str.as_deref())
+            && a != b
+        {
+            info.set_error(&conflict_message(
+                func,
+                "pattern",
+                &quote_pattern(a),
+                &quote_pattern(b),
+            ));
+            return;
         }
+        if tgt.events.try_reserve(src.events.len()).is_err() {
+            info.set_error(&out_of_memory_message(
+                func,
+                tgt.events.len() + src.events.len(),
+            ));
+            return;
+        }
+        tgt.combine_in_place(src);
     }
 }
 

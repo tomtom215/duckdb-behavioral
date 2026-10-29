@@ -4,7 +4,7 @@
 [package]
 name = "duckdb-behavioral"
 version = "0.10.1"
-edition = "2021"
+edition = "2024"
 rust-version = "1.88"
 authors = ["Tom F <tomtom215@users.noreply.github.com>"]
 description = "Behavioral analytics functions for DuckDB: sessionize, retention, funnels, sequence matching"
@@ -14,6 +14,10 @@ homepage = "https://tomtom215.github.io/duckdb-behavioral"
 documentation = "https://tomtom215.github.io/duckdb-behavioral"
 keywords = ["duckdb", "analytics", "funnel", "retention", "behavioral"]
 categories = ["database", "science"]
+# A DuckDB loadable extension: distributed as a `.duckdb_extension` binary
+# (GitHub releases, DuckDB Community Extensions), not as a crate. The Rust API
+# is internal; SQL is the interface.
+publish = false
 
 [lib]
 name = "behavioral"
@@ -21,7 +25,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 quack-rs = "=0.19.0"
-libduckdb-sys = { version = "=1.20000.0", features = ["loadable-extension"] }
+libduckdb-sys = { version = "=1.20000.1", features = ["loadable-extension"] }
 smallvec = { version = "1", features = ["const_new"] }
 
 [dev-dependencies]
@@ -30,7 +34,7 @@ smallvec = { version = "1", features = ["const_new"] }
 # `DUCKDB_DOWNLOAD_LIB=1 cargo test`) instead of compiling DuckDB's C++ tree from
 # source. Offline alternative: set DUCKDB_LIB_DIR to a directory containing
 # libduckdb (plus LD_LIBRARY_PATH on Linux). Never set either for release builds.
-duckdb = "=1.20000.0"
+duckdb = "=1.20000.1"
 # `bundled-test-prebuilt` exposes `quack_rs::testing::InMemoryDb` (used by the
 # in-process extension-load integration test, `tests/extension_load.rs`) while
 # linking the same prebuilt libduckdb as the `duckdb` dev-dependency above.
@@ -90,8 +94,14 @@ lto = "thin"
 [lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 missing_docs = "warn"
+# All `unsafe` lives in `src/ffi`, which opts out with `#[allow(unsafe_code)]`
+# in lib.rs; the pure-Rust core cannot grow an unsafe block by accident.
+unsafe_code = "deny"
 
 [lints.clippy]
+# Every unsafe block is one operation with a `// SAFETY:` note above it.
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
 # Lint groups (priority -1 so individual overrides take precedence)
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }

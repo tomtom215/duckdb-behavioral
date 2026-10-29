@@ -9,12 +9,11 @@
 //! `LIST(TIMESTAMP)` via [`quack_rs::vector::complex::ListVector`] instead of
 //! the step count.
 
-use crate::window_funnel::WindowFunnelState;
-use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
-use quack_rs::types::{LogicalType, TypeId};
-use quack_rs::vector::complex::ListVector;
-
+use super::view::{Combine, Finalize, TimestampListKind, Update};
 use super::window_funnel::{combine_impl, update_impl};
+use crate::window_funnel::WindowFunnelState;
+use quack_rs::aggregate::AggregateFunctionSetBuilder;
+use quack_rs::types::{LogicalType, TypeId};
 
 /// Minimum number of boolean condition parameters for `window_funnel_events`.
 const MIN_CONDITIONS: usize = 1;
@@ -33,14 +32,10 @@ const MAX_CONDITIONS: usize = 32;
 /// timestamp per step reached by `window_funnel` with the same arguments.
 /// Empty list when no entry condition matches.
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_window_funnel_events(
+pub fn register_window_funnel_events(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     let mut builder = AggregateFunctionSetBuilder::new("window_funnel_events")
@@ -84,64 +79,50 @@ pub unsafe fn register_window_funnel_events(
     unsafe { con.register_aggregate_set(builder) }
 }
 
-// SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, TIMESTAMP,
-// BOOLEAN...) as registered. `states` points to `row_count` aggregate state pointers.
+// SAFETY (the callbacks below): DuckDB calls them with the handles
+// `Update::from_raw`, `Combine::from_raw` and `Finalize::from_raw` require, for
+// the aggregate registered in `register_window_funnel_events`:
+// `FfiState<WindowFunnelState>` states, the columns each overload declares, and
+// a `LIST(TIMESTAMP | TIMESTAMPTZ)` result.
 quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
+    // SAFETY: see above.
+    let call = unsafe { Update::<WindowFunnelState>::from_raw(info, input, states) };
     // No mode parameter: INTERVAL(0), TIMESTAMP(1), BOOLEAN(2..N)
-    unsafe {
-        update_impl(info, input, states, false, "window_funnel_events");
-    }
+    update_impl(call, false, "window_funnel_events");
 });
 
-// SAFETY: `input` is a valid DuckDB data chunk with columns (INTERVAL, VARCHAR,
-// TIMESTAMP, BOOLEAN...) as registered. The VARCHAR at column 1 contains the mode
-// string. `states` points to `row_count` aggregate state pointers.
 quack_rs::aggregate_update_callback!(state_update_with_mode, |info, input, states| {
+    // SAFETY: see above.
+    let call = unsafe { Update::<WindowFunnelState>::from_raw(info, input, states) };
     // With mode parameter: INTERVAL(0), VARCHAR(1), TIMESTAMP(2), BOOLEAN(3..N)
-    unsafe {
-        update_impl(info, input, states, true, "window_funnel_events");
-    }
+    update_impl(call, true, "window_funnel_events");
 });
 
-// SAFETY: `source` and `target` point to `count` aggregate state pointers.
 quack_rs::aggregate_combine_callback!(events_combine, |info, source, target, count| {
-    unsafe { combine_impl(info, source, target, count, "window_funnel_events") }
+    // SAFETY: see above.
+    let call = unsafe { Combine::<WindowFunnelState>::from_raw(info, source, target, count) };
+    combine_impl(call, "window_funnel_events");
 });
 
-// SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB LIST(TIMESTAMP) vector. Each list entry is populated with the
-// winning chain's step timestamps. Empty list when no entry condition matches.
-quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
-    unsafe {
-        let mut list_offset = ListVector::get_size(result) as u64;
-
-        for i in 0..count as usize {
-            let idx = offset as usize + i;
-
-            let Some(state) = FfiState::<WindowFunnelState>::with_state_mut(*source.add(i)) else {
-                // Empty list for null state
-                ListVector::set_entry(result, idx, list_offset, 0);
-                continue;
-            };
-
-            let timestamps = state.finalize_events();
-            let ts_count = timestamps.len() as u64;
-
-            // Reserve space in the list child vector
-            ListVector::reserve(result, (list_offset + ts_count) as usize);
-
-            // Write timestamps into the child vector
-            let mut child_writer = ListVector::child_writer(result);
-            for (j, &ts) in timestamps.iter().enumerate() {
-                child_writer.write_i64(list_offset as usize + j, ts);
-            }
-
-            // Set the list entry metadata
-            ListVector::set_entry(result, idx, list_offset, ts_count);
-
-            list_offset += ts_count;
-            ListVector::set_size(result, list_offset as usize);
-        }
+// Each list entry is the winning chain's step timestamps; an empty list when
+// no entry condition matches (or the state pointer is null).
+quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
+    // SAFETY: see above.
+    let Finalize {
+        mut states,
+        mut out,
+        ..
+    } = unsafe {
+        Finalize::<WindowFunnelState, TimestampListKind>::from_raw(
+            info, source, result, count, offset,
+        )
+    };
+    for i in 0..out.count() {
+        let timestamps = states
+            .get_mut(i)
+            .map(WindowFunnelState::finalize_events)
+            .unwrap_or_default();
+        out.push(i, &timestamps);
     }
 });
 

@@ -64,8 +64,9 @@ pub struct MatchResult {
 ///
 /// # Algorithm
 ///
-/// - **Adjacent conditions only** (`(?1)(?2)(?3)`): O(n) scan with a sliding
-///   window of `k` events.
+/// - **Adjacent conditions only** (`(?1)(?2)(?3)`): a sliding window of `k`
+///   events, O(n · k) worst case (k is at most 1024; a mismatch advances one
+///   event, so typical input costs O(n)).
 /// - **Wildcard-separated conditions** (`(?1).*(?2).*(?3)`): O(n) single-pass
 ///   linear scan with a step counter.
 /// - **Everything else** (time constraints, `.`, mixed shapes): the
@@ -82,9 +83,22 @@ pub fn execute_pattern(
     events: &[Event],
     count_all: bool,
 ) -> Result<MatchResult, PatternError> {
-    if events.is_empty() || pattern.steps.is_empty() {
+    if pattern.steps.is_empty() {
         return Ok(MatchResult {
             matched: false,
+            count: 0,
+        });
+    }
+    if events.is_empty() {
+        // No event can fill a `(?N)` or `.` step, but `.*` alone still matches
+        // the empty sequence, as in ClickHouse's `sequenceMatch('.*')`. There
+        // is nothing to count, so the count stays 0 in both engines.
+        let matches_empty = pattern
+            .steps
+            .iter()
+            .all(|step| matches!(step, PatternStep::AnyEvents));
+        return Ok(MatchResult {
+            matched: matches_empty,
             count: 0,
         });
     }
@@ -199,7 +213,11 @@ fn with_conditions<R>(pattern: &CompiledPattern, f: impl FnOnce(&[usize]) -> R) 
 /// Fast path for adjacent-condition patterns like `(?1)(?2)(?3)`.
 ///
 /// Scans with a sliding window of `k` events, checking each window for a
-/// consecutive match of all conditions. O(n) time, O(1) space.
+/// consecutive match of all conditions. O(1) space. Each window is checked
+/// until its first mismatch and then advances one event, so the time is
+/// O(n) when mismatches come early and O(n · k) when they come late (a
+/// 1,000-step pattern over 1M events with a mismatch at every 999th took
+/// 0.86 s in the audit).
 fn fast_adjacent(events: &[Event], conditions: &[usize], count_all: bool) -> MatchResult {
     let k = conditions.len();
     if events.len() < k {
@@ -1871,9 +1889,6 @@ mod differential_tests {
         events: &[Event],
         count_all: bool,
     ) -> Option<(bool, usize)> {
-        if events.is_empty() {
-            return Some((false, 0));
-        }
         reference_nfa::execute_pattern_nfa(pattern, events, count_all)
             .ok()
             .map(|r| (r.matched, r.count))

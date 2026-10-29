@@ -1,7 +1,21 @@
 # SQL Cookbook
 
-Practical recipes for common behavioral analytics patterns. Each recipe is
-self-contained — copy and paste into a DuckDB session with the extension loaded.
+Practical recipes for common behavioral analytics patterns. They run in a
+DuckDB session with the extension loaded, over the tables described below; the
+[Use Cases](use-cases.md) page has complete worked examples that create their own data.
+
+Tables the recipes assume (adapt names and types to your data):
+
+```sql
+-- events: one row per user action
+CREATE TABLE events (
+  user_id INTEGER, event_time TIMESTAMP, event_type VARCHAR,
+  page VARCHAR, page_url VARCHAR, referrer VARCHAR,
+  device_type VARCHAR, test_group VARCHAR, plan VARCHAR
+);
+-- activity / user_activity: one row per user per active day (retention recipes)
+CREATE TABLE activity (user_id INTEGER, activity_date DATE, cohort_week DATE, signup_week DATE);
+```
 
 ---
 
@@ -89,12 +103,13 @@ FROM events GROUP BY user_id;
 
 ### Funnel with Re-entry
 
-Allow the funnel to restart when the first condition fires again, tracking the
-best attempt:
+Keep a strict-order funnel running when a step arrives before its predecessor
+has been reached (it is skipped instead of stopping the scan). `allow_reentry`
+only works together with `strict_order`:
 
 ```sql
 SELECT user_id,
-  window_funnel(INTERVAL '1 hour', 'allow_reentry', event_time,
+  window_funnel(INTERVAL '1 hour', 'strict_order, allow_reentry', event_time,
     event_type = 'page_view',
     event_type = 'add_to_cart',
     event_type = 'purchase'
@@ -371,7 +386,9 @@ ORDER BY browse_cart_cycles DESC;
 ### Multi-Step Pattern with Wildcards
 
 Detect users who viewed, added to cart, then purchased — but NOT immediately
-(at least one event between cart and purchase):
+(exactly one event between cart and purchase; `.` consumes one event, `..*`
+would allow one or more). Events that satisfy none of the passed conditions are
+dropped before matching, so the in-between event has to satisfy one of them:
 
 ```sql
 SELECT user_id,

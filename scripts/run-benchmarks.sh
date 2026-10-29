@@ -24,6 +24,9 @@
 #   - Estimated time: 30-60 minutes for the full suite
 #
 
+# The summary writer prints Markdown with literal backticks inside single
+# quotes; they are not meant to be command substitutions.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

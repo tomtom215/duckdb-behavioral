@@ -2,14 +2,20 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 # =============================================================================
-# check.sh — Run all quality checks for duckdb-behavioral
+# check.sh — run the quality checks CI runs, locally.
 #
 # Usage:
-#   ./scripts/check.sh          # Run all checks
-#   ./scripts/check.sh --quick  # Skip benchmarks and doc build
+#   ./scripts/check.sh            # everything
+#   ./scripts/check.sh --quick    # skip the doc build and benchmark compilation
+#
+# Tools that are not installed (cargo-nextest, cargo-deny, cargo-machete,
+# typos, shellcheck) are reported as SKIP, not as failures; CI always runs
+# them. Exit status is non-zero if any check that ran failed.
 # =============================================================================
 
 set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # Dev/test builds link a prebuilt libduckdb (the `duckdb` dev-dependency has no
 # `bundled` feature). Use the cached download unless the caller points
@@ -18,76 +24,82 @@ if [[ -z "${DUCKDB_LIB_DIR:-}" ]]; then
     export DUCKDB_DOWNLOAD_LIB="${DUCKDB_DOWNLOAD_LIB:-1}"
 fi
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
-
-QUICK=false
-if [[ "${1:-}" == "--quick" ]]; then
-    QUICK=true
-fi
+quick=false
+case "${1:-}" in
+    "") ;;
+    --quick) quick=true ;;
+    *)
+        echo "usage: $0 [--quick]" >&2
+        exit 2
+        ;;
+esac
 
 passed=0
 failed=0
 skipped=0
 
-run_check() {
+# check <name> <command...>
+check() {
     local name="$1"
     shift
-    printf "${BOLD}[CHECK]${NC} %s ... " "$name"
-    if "$@" > /dev/null 2>&1; then
-        printf "${GREEN}PASS${NC}\n"
-        ((passed++))
+    local log
+    log="$(mktemp)"
+    printf '[CHECK] %s ... ' "$name"
+    if "$@" > "$log" 2>&1; then
+        echo "PASS"
+        passed=$((passed + 1))
     else
-        printf "${RED}FAIL${NC}\n"
-        ((failed++))
-        # Re-run to show error output
-        "$@" 2>&1 | tail -20
+        echo "FAIL"
+        failed=$((failed + 1))
+        tail -n 25 "$log"
+    fi
+    rm -f "$log"
+}
+
+# optional <name> <tool> <command...>: run only if <tool> is on PATH.
+optional() {
+    local name="$1" tool="$2"
+    shift 2
+    if command -v "$tool" > /dev/null 2>&1; then
+        check "$name" "$@"
+    else
+        printf '[SKIP] %s (%s not installed)\n' "$name" "$tool"
+        skipped=$((skipped + 1))
     fi
 }
 
-skip_check() {
-    local name="$1"
-    printf "${BOLD}[SKIP]${NC} %s ${YELLOW}(--quick)${NC}\n" "$name"
-    ((skipped++))
-}
-
-echo ""
-echo "========================================="
-echo "  duckdb-behavioral Quality Checks"
-echo "========================================="
-echo ""
-
-# Core checks (always run)
-run_check "Format check"   cargo fmt -- --check
-run_check "Clippy lints"   cargo clippy --all-targets
-run_check "Unit tests"     cargo test
-run_check "Compilation"    cargo check --all-targets
-
-# Extended checks (skip with --quick)
-if $QUICK; then
-    skip_check "Documentation build"
-    skip_check "Benchmark compilation"
+check "Format" cargo fmt --all -- --check
+check "Clippy" cargo clippy --all-targets --locked -- -D warnings
+if command -v cargo-nextest > /dev/null 2>&1; then
+    check "Tests" cargo nextest run --all-targets --locked
 else
-    run_check "Documentation build" cargo doc --no-deps
-    run_check "Benchmark compilation" cargo bench --no-run
+    check "Tests" cargo test --all-targets --locked
+fi
+check "Doc-tests" cargo test --doc --locked
+
+if $quick; then
+    printf '[SKIP] Documentation build (--quick)\n[SKIP] Benchmark compilation (--quick)\n'
+    skipped=$((skipped + 2))
+else
+    RUSTDOCFLAGS="-Dwarnings" check "Documentation" cargo doc --no-deps --document-private-items --locked
+    check "Benchmarks compile" cargo bench --no-run --locked
 fi
 
-echo ""
-echo "========================================="
-printf "  Results: ${GREEN}%d passed${NC}" "$passed"
-if [[ $failed -gt 0 ]]; then
-    printf ", ${RED}%d failed${NC}" "$failed"
+# Builds an unstripped release library (about 40 s), so --quick skips it.
+if $quick; then
+    printf '[SKIP] Stable C API surface (--quick)\n'
+    skipped=$((skipped + 1))
+else
+    optional "Stable C API surface" objdump bash -c \
+        'env -u DUCKDB_DOWNLOAD_LIB -u DUCKDB_LIB_DIR cargo build --profile profiling --lib --locked &&
+         python3 -I scripts/check-stable-api.py target/profiling/libbehavioral.so'
 fi
-if [[ $skipped -gt 0 ]]; then
-    printf ", ${YELLOW}%d skipped${NC}" "$skipped"
-fi
-echo ""
-echo "========================================="
-echo ""
 
-if [[ $failed -gt 0 ]]; then
-    exit 1
-fi
+optional "Cargo deny" cargo-deny cargo deny check advisories bans licenses sources
+optional "Unused dependencies" cargo-machete cargo machete
+optional "Spelling" typos typos
+optional "Shell scripts" shellcheck shellcheck scripts/*.sh
+
+echo
+printf 'Results: %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"
+[[ $failed -eq 0 ]]

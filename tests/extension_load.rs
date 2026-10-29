@@ -141,19 +141,24 @@ fn append_metadata(raw_lib: &Path, out: &Path) {
 
 /// Builds + signs the extension once per test process and returns its path.
 ///
-/// The signed artifact name is namespaced by process id. `cargo nextest` runs
-/// each test in its own process, so several may build/sign concurrently; a
-/// per-pid filename keeps each writer on its own file (the underlying
-/// `cargo build` is itself idempotent and serialized by cargo's own lock).
+/// `cargo nextest` runs each test in its own process, so several may sign
+/// concurrently. Each writes a private temporary file and renames it over one
+/// shared name: the content is identical, a rename is atomic, and a process
+/// that already loaded the previous file keeps its own inode. (A per-pid file
+/// name instead left one 600 kB file behind per test process, per run.)
 fn extension_path() -> &'static Path {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
     PATH.get_or_init(|| {
         let raw = build_release_cdylib();
-        let out = raw.with_file_name(format!(
-            "behavioral.test.{}.duckdb_extension",
+        let tmp = raw.with_file_name(format!(
+            "behavioral.test.{}.duckdb_extension.tmp",
             std::process::id()
         ));
-        append_metadata(&raw, &out);
+        append_metadata(&raw, &tmp);
+        // DuckDB derives the init symbol from the file name up to the first
+        // dot, so the shared name must start with the extension name.
+        let out = raw.with_file_name("behavioral.test.duckdb_extension");
+        std::fs::rename(&tmp, &out).expect("publish signed test extension");
         out
     })
     .as_path()
@@ -170,30 +175,42 @@ fn load_extension() -> InMemoryDb {
     db
 }
 
-/// The extension loads without error and registers all eight aggregate
-/// functions plus the `behavioral_version()` diagnostic scalar in the catalog. A missing registration here is exactly the class of bug that passed
+/// The extension loads without error and registers every overload of the
+/// eight aggregate functions plus the `behavioral_version()` diagnostic
+/// scalar. A missing registration here is exactly the class of bug that passed
 /// the unit suite while shipping a broken extension.
+///
+/// The counts are exact: each function registers one overload per condition
+/// count and per timestamp type (`TIMESTAMP` and `TIMESTAMPTZ`), so a changed
+/// `overloads(range, ..)` bound or a dropped timestamp type moves a number.
 #[test]
 fn loads_and_registers_all_functions() {
     let db = load_extension();
-    for func in [
-        "sessionize",
-        "retention",
-        "window_funnel",
-        "window_funnel_events",
-        "sequence_match",
-        "sequence_count",
-        "sequence_match_events",
-        "sequence_next_node",
-        "behavioral_version",
-    ] {
+    let expected: [(&str, i64); 9] = [
+        ("sessionize", 2),             // 1 signature x 2 timestamp types
+        ("retention", 31),             // 2..=32 conditions
+        ("window_funnel", 128),        // 1..=32 conditions x {no mode, mode} x 2 types
+        ("window_funnel_events", 128), // as window_funnel
+        ("sequence_match", 62),        // 2..=32 conditions x 2 types
+        ("sequence_count", 62),
+        ("sequence_match_events", 62),
+        ("sequence_next_node", 64), // 1..=32 event conditions x 2 types
+        ("behavioral_version", 1),
+    ];
+    let mut total = 0;
+    for (func, overloads) in expected {
         let count: i64 = db
             .query_one(&format!(
                 "SELECT count(*) FROM duckdb_functions() WHERE function_name = '{func}'"
             ))
             .unwrap_or_else(|e| panic!("catalog query for {func} failed: {e}"));
-        assert!(count >= 1, "function `{func}` is not registered");
+        assert_eq!(count, overloads, "overloads registered for `{func}`");
+        total += count;
     }
+    assert_eq!(
+        total, 540,
+        "total overloads (CLAUDE.md, scripts/compat-check.sh)"
+    );
 }
 
 #[test]
@@ -971,6 +988,40 @@ fn sessionize_varying_gap_matches_reference() {
 /// `forward` + `tail` and `backward` + `head` start the chain at an end of
 /// the sequence, so no adjacent event exists. `ClickHouse` rejects both; the
 /// extension used to return NULL silently.
+/// A pattern made only of `.*` matches the empty sequence, so it matches a
+/// group whose rows all have every condition false (`ClickHouse`'s
+/// `sequenceMatch('.*')` returns 1 there). Nothing is counted, and a group
+/// with no rows at all is still NULL (a documented difference).
+#[test]
+fn star_only_pattern_matches_a_group_without_usable_events() {
+    let db = load_extension();
+    let rows = "(VALUES (TIMESTAMP '2024-01-01', false, false)) t(ts, c1, c2)";
+    let matched: bool = db
+        .query_one(&format!(
+            "SELECT sequence_match('.*', ts, c1, c2) FROM {rows}"
+        ))
+        .unwrap();
+    assert!(matched);
+    let count: i64 = db
+        .query_one(&format!(
+            "SELECT sequence_count('.*', ts, c1, c2) FROM {rows}"
+        ))
+        .unwrap();
+    assert_eq!(count, 0);
+    let stepped: bool = db
+        .query_one(&format!(
+            "SELECT sequence_match('(?1)', ts, c1, c2) FROM {rows}"
+        ))
+        .unwrap();
+    assert!(!stepped, "a pattern with a (?N) step still needs an event");
+    let no_rows: Option<bool> = db
+        .query_one(&format!(
+            "SELECT sequence_match('.*', ts, c1, c2) FROM {rows} WHERE false"
+        ))
+        .unwrap();
+    assert_eq!(no_rows, None);
+}
+
 #[test]
 fn sequence_next_node_rejects_end_anchored_chains() {
     let db = load_extension();

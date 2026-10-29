@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+
+name: Set up Rust
+description: >-
+  Installs the Rust toolchain pinned in rust-toolchain.toml (or the one asked
+  for), restores the cargo cache, and re-fetches the prebuilt libduckdb that
+  the cache drops.
+
+inputs:
+  toolchain:
+    description: >-
+      Toolchain to install instead of rust-toolchain.toml's channel, for
+      example "1.88" (MSRV), "stable", "beta" or "nightly".
+    default: ""
+  components:
+    description: Space-separated rustup components, for example "clippy".
+    default: ""
+  targets:
+    description: Space-separated extra compilation targets.
+    default: ""
+  cache:
+    description: Restore and save the cargo cache ("false" for release builds).
+    default: "true"
+  cache-key:
+    description: Extra cache key, for jobs that otherwise share a cache name.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install toolchain
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
+      # The value written to $GITHUB_ENV is checked against a toolchain-name
+      # pattern first, so it cannot carry a newline or a second variable.
+      run: | # zizmor: ignore[github-env]
+        set -euo pipefail
+        if [ -z "$TOOLCHAIN" ]; then
+          TOOLCHAIN="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+        fi
+        # The value reaches $GITHUB_ENV below: allow only toolchain names.
+        if ! [[ "$TOOLCHAIN" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::invalid toolchain name: $TOOLCHAIN"
+          exit 1
+        fi
+        args=(--profile minimal --no-self-update)
+        for c in $COMPONENTS; do args+=(--component "$c"); done
+        for t in $TARGETS; do args+=(--target "$t"); done
+        rustup toolchain install "$TOOLCHAIN" "${args[@]}"
+        # RUSTUP_TOOLCHAIN outranks rust-toolchain.toml. Without it the file
+        # silently replaces whatever a job installed, so the MSRV job would
+        # test the pinned toolchain instead of 1.88 (LESSONS.md, lesson 19).
+        echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+
+    - name: Restore cargo cache
+      if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        # Only main saves; pull requests restore. A PR cannot poison the cache
+        # that main and later PRs read, and the 10 GB quota is not spent on
+        # branch-only entries.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+        key: ${{ inputs.cache-key }}
+
+    # rust-cache prunes target/ before saving: it treats target/duckdb-download
+    # as a build profile and keeps only build/, .fingerprint/ and deps/. A warm
+    # cache then restores libduckdb-sys's build-script output without the
+    # library it links (`-lduckdb` not found). When the library is missing,
+    # drop that output so the build script runs again and downloads it.
+    - name: Re-fetch prebuilt libduckdb if the cache dropped it
+      if: inputs.cache == 'true' && env.DUCKDB_DOWNLOAD_LIB == '1'
+      shell: bash
+      run: |
+        if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
+          rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
+        fi

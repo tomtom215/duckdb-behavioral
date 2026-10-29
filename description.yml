@@ -32,7 +32,7 @@ docs:
     FROM events GROUP BY user_id;
   extended_description: |
     Behavioral analytics functions for DuckDB, following ClickHouse's parametric
-    behavioral functions (differentially tested against ClickHouse 26.9):
+    behavioral functions (differentially tested against ClickHouse 26.10):
 
     - **sessionize**: Session IDs over an ordered window, based on timestamp gaps
     - **retention**: Cohort retention analysis returning boolean arrays
@@ -50,6 +50,8 @@ docs:
     FFI layer.
 
     Known DuckDB limitation (duckdb/duckdb#26109, affects every C API
-    aggregate): do not call these functions with ORDER BY inside the call,
-    with OVER (), or over a window frame covering the whole partition; DuckDB
-    can crash. They sort by timestamp themselves, so none of these is needed.
+    aggregate, not reproduced on DuckDB 2.0.0): on earlier releases do not call these
+    functions with ORDER BY inside the call, with OVER (), or over a frame
+    written UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING; DuckDB can crash.
+    On 1.3.2 and 1.4.4, OVER (PARTITION BY x) without ORDER BY crashes too.
+    The functions sort by timestamp themselves, so none of these is needed.

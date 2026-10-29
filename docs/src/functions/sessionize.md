@@ -23,10 +23,13 @@ sessionize(timestamp TIMESTAMP, gap INTERVAL) -> BIGINT
 `sessionize` is an aggregate designed to be used as a window function with
 `OVER (PARTITION BY ... ORDER BY timestamp)`. Order the window by the
 timestamp, ascending, and keep the default frame (or any frame ending at
-`CURRENT ROW`). Do not use `OVER ()` or a `BETWEEN UNBOUNDED PRECEDING AND
-UNBOUNDED FOLLOWING` frame: DuckDB crashes on those for every C API aggregate
-([FAQ](../faq.md#which-query-shapes-crash-duckdb)). Without `OVER`, it returns
-the number of sessions in the group.
+`CURRENT ROW`). Descending order is not supported: every gap reads as enormous
+and every row opens a session. On DuckDB before 2.0.0 do not use `OVER ()`, a
+`BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` frame, or a window with
+only a `PARTITION BY`: DuckDB crashes on those for every C API aggregate
+([FAQ](../faq.md#which-query-shapes-crash-duckdb)). Without `OVER` it is an
+ordinary aggregate whose rows DuckDB does not order, so its result depends on
+scan order and thread count; use the window form.
 
 ```sql
 SELECT user_id, event_time,

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 82e9787f61e17e523a49654843f2f58bf1166e00193a6e35e67fc65bf053cd4d # shrinks to pattern = CompiledPattern { steps: [AnyEvents] }, events = []

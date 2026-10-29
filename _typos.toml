@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
+# Spell-check configuration for `typos` (https://github.com/crate-ci/typos).
+
+[files]
+extend-exclude = [
+    # Third-party submodule and generated or recorded data.
+    "extension-ci-tools/",
+    "Cargo.lock",
+    "proptest-regressions/",
+]
+
+[default.extend-identifiers]
+# Mermaid node names in docs/src/*.md.
+SME = "SME"
+FWE = "FWE"
+
+[default.extend-words]
+# `let ba = b.combine(&a)` in src/retention.rs tests.
+ba = "ba"
+# "mis-classified" is hyphenated in CHANGELOG.md.
+mis = "mis"

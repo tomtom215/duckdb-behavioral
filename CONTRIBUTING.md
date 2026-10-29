@@ -15,7 +15,7 @@ cargo build
 DUCKDB_DOWNLOAD_LIB=1 ./scripts/check.sh
 
 # Or run checks individually
-DUCKDB_DOWNLOAD_LIB=1 cargo test   # 547 unit + 28 integration + 1 doc-test
+DUCKDB_DOWNLOAD_LIB=1 cargo test   # 540 unit + 29 integration + 1 doc-test
 cargo clippy --all-targets         # Zero warnings required
 cargo fmt -- --check               # Format check
 ```
@@ -52,6 +52,7 @@ src/
 ├── lib.rs                  # Entry point (quack_rs::entry_point_v2! macro)
 ├── common/
 │   ├── mod.rs
+│   ├── config.rs           # Error messages for per-group constant arguments and out-of-memory
 │   ├── event.rs            # Shared Event type (16-byte bitmask, Copy)
 │   └── timestamp.rs        # Interval-to-microseconds conversion
 ├── pattern/
@@ -64,8 +65,10 @@ src/
 ├── window_funnel.rs        # Port of ClickHouse windowFunnel, mode flags
 ├── sequence.rs             # Pattern matching state management
 ├── sequence_next_node.rs   # Next event value after pattern match
+├── oracle_tests.rs         # Test-only: reference and invariance checks for every state
 └── ffi/
     ├── mod.rs              # register_all() dispatcher via Registrar trait
+    ├── view.rs             # Safe views over DuckDB's raw handles (the only unsafe constructors)
     ├── version.rs          # behavioral_version() scalar
     └── *.rs                # Per-aggregate FFI callbacks (sessionize, retention,
                             # window_funnel, window_funnel_events, sequence,
@@ -93,7 +96,7 @@ All checks must pass before submitting a PR:
 
 | Check | Command | What it validates |
 |---|---|---|
-| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test` | 547 unit tests + 28 in-process integration tests + 1 doc-test |
+| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test` | 540 unit tests + 29 in-process integration tests + 1 doc-test |
 | Lints | `cargo clippy --all-targets` | Zero warnings (pedantic + nursery + cargo) |
 | Format | `cargo fmt -- --check` | Code formatting |
 | Docs | `cargo doc --no-deps` | Documentation builds without warnings |

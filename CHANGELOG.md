@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No change to the SQL surface. Two results change: `sequence_match('.*')` over a
+group whose rows carry no true condition is now true, and a `sequence_next_node`
+allocation failure is now a SQL error.
+
+### Fixed
+
+- `sequence_next_node` aborted the process (SIGABRT, "memory allocation of 24
+  bytes failed") when it ran out of memory collecting events; every other
+  event-collecting function raised a SQL error. All growth is now fallible and
+  reports `sequence_next_node: out of memory while collecting N events for one
+  group`. Checked under `ulimit -v` with 150M events, 1 and 4 threads.
+- `sequence_match` with a pattern of only `.*` returned false for a group where
+  no row has a true condition; ClickHouse returns true. `sequence_count` stays
+  0, `sequence_match_events` stays empty, and a group with no rows is still NULL.
+- The error for an out-of-range INTERVAL (`INTERVAL 2147483647 DAY`) blamed
+  months; it now says the value does not fit in 64-bit microseconds.
+
+### Changed
+
+- `sequence_next_node` keeps a state's values in one byte buffer, and each event
+  is a 24-byte record with a range into it (a value equal to the previous
+  event's is stored once). Before: an `Arc<str>` per event. DuckDB 2.0.0, 10M
+  rows in 100k groups, 4 threads, 9 interleaved runs per build: CPU time median
+  5.08 s to 2.66 s. The memory DuckDB leaves behind after `GROUP BY .. LIMIT 10`
+  over 300k groups fell from 246 MB to 136 MB (the leak itself is DuckDB's).
+- The FFI layer is safe Rust over `src/ffi/view.rs`. `unsafe_code = "deny"`
+  everywhere except `mod ffi`, and inside it `clippy::undocumented_unsafe_blocks`
+  and `multiple_unsafe_ops_per_block` are denied. `States::pair` now panics
+  rather than hand out aliasing references. No measurable change in CPU time
+  (8 SQL aggregates, 10M rows, 11 interleaved runs, ratios 0.94 to 1.03 with
+  overlapping ranges).
+- Edition 2024 (MSRV stays 1.88). `rust-toolchain.toml` pins 1.97.0 instead of
+  `stable`. `libduckdb-sys` / `duckdb` 1.20000.0 to 1.20000.1 (identical
+  bindings). `publish = false`.
+- CI rebuilt: a shared `setup-rust` action, `--locked` everywhere, nextest, a
+  hygiene job (cargo-machete, typos, actionlint, zizmor, shellcheck, SPDX
+  headers), coverage, a gate that fails on any non-success without listing job
+  names, a reusable `e2e.yml` that asserts results, per-job permissions, and
+  `release.yml` builds without a cache and takes release notes from this file.
+  zizmor findings 264 (39 high) to 25 (none medium or high).
+
+### Added
+
+- `src/oracle_tests.rs`: `window_funnel` against an exhaustive reference, and
+  order, split, combine-tree, fresh-target and double-finalize invariance for
+  every state.
+- `scripts/compat-check.sh` (21 asserted queries, run on every platform and
+  DuckDB release in the matrix), `scripts/crash-shapes.sh` (which query shapes
+  crash which DuckDB release), `scripts/install-duckdb-cli.sh`,
+  `scripts/release-notes.sh`, `RELEASING.md`, and `scheduled.yml` (weekly
+  advisories, next stable and beta toolchains, `cargo update`, DuckDB nightly).
+- `scripts/check-stable-api.py`, run in CI: fails if the unstripped library
+  calls a C API function outside the stable prefix (76 of 548 slots used,
+  highest 306, limit 357), the mistake that once pinned the binary to one
+  DuckDB release. `scripts/bench-sql.sh`: end-to-end SQL timings.
+- Exact overload counts (540 in all) asserted in `tests/extension_load.rs`.
+- Parser tests that arbitrary input never panics.
+
+### Removed
+
+- `community-submission.yml`, `scripts/setup.sh`, `scripts/run_all_benchmarks.sh`,
+  the `semver` CI job (the crate is unpublished; the SQL surface is the API),
+  the test-only `SessionizeState`, and duplicate or length-only tests the
+  invariance checks supersede.
+
+### Documentation
+
+- Which query shapes crash which DuckDB release is now a measured matrix
+  (`OVER (PARTITION BY g)` without `ORDER BY` also crashes 1.3.2 and 1.4.4;
+  nothing crashes 2.0.0), and the `GROUP BY .. LIMIT` memory leak is documented.
+- ClickHouse parity was re-run against 26.10.2.103 (and `window_funnel` against
+  26.9.8.3); counts and the one partly verified explanation are in
+  `docs/src/internals/clickhouse-compatibility.md`. ClickHouse's setting is
+  `enable_funnel_functions`.
+- README rewritten; test, overload and CI descriptions corrected throughout.
+
 ## [0.10.1] - 2026-10-23
 
 DuckDB 2.0.0 support. No change to the SQL surface or to results.
@@ -799,7 +875,8 @@ all bumping deps to versions at or below those landed here: #58, #61,
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.8.0...v0.9.0

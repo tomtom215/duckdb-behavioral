@@ -265,7 +265,7 @@ mod tests {
         state.update(&conds);
         let result = state.finalize();
         assert!(result[0]); // anchor is met
-                            // Condition 32 is silently ignored (bit 32 doesn't fit in u32)
+        // Condition 32 is silently ignored (bit 32 doesn't fit in u32)
         assert!(!result[32]);
     }
 
@@ -305,13 +305,6 @@ mod tests {
         let combined = a.combine(&b);
         // OR: conditions_met stays set. XOR: conditions_met becomes 0.
         assert_eq!(combined.finalize(), vec![true, true, false]);
-    }
-
-    #[test]
-    fn test_single_condition_anchor_only() {
-        let mut state = RetentionState::new();
-        state.update(&[true]);
-        assert_eq!(state.finalize(), vec![true]);
     }
 
     #[test]

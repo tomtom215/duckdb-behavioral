@@ -37,9 +37,9 @@ GROUP BY user_id, cohort_month;
 
 ## Behavior
 
-- `result[0]` is `true` if the anchor condition (`cond1`) was satisfied by any
-  row in the group.
-- `result[i]` (for `i > 0`) is `true` if **both** the anchor condition and
+- `result[1]` is `true` if the anchor condition (`cond1`) was satisfied by any
+  row in the group (SQL lists are 1-based).
+- `result[i]` (for `i > 1`) is `true` if **both** the anchor condition and
   condition `i` were satisfied by some row(s) in the group. The conditions do
   not need to be satisfied by the same row.
 - If the anchor condition was never satisfied, **all** results are `false`.

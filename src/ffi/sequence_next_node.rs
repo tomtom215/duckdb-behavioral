@@ -9,13 +9,11 @@
 //! `read_str()` which replaces the hand-rolled `read_varchar()` helper that
 //! handled the undocumented `duckdb_string_t` 16-byte inline/pointer format).
 
+use super::view::{Combine, Finalize, States, Update, VarcharKind, Varchars};
 use crate::common::config::{conflict_message, out_of_memory_message};
-use crate::sequence_next_node::{Base, Direction, NextNodeEvent, SequenceNextNodeState};
-use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionInfo, AggregateFunctionSetBuilder, FfiState};
+use crate::sequence_next_node::{Base, Direction, SequenceNextNodeState, StoreError};
+use quack_rs::aggregate::AggregateFunctionSetBuilder;
 use quack_rs::types::TypeId;
-use quack_rs::vector::{VectorReader, VectorWriter};
-use std::sync::Arc;
 
 /// Minimum number of event condition boolean parameters.
 const MIN_EVENT_CONDITIONS: usize = 1;
@@ -42,14 +40,10 @@ impl quack_rs::aggregate::AggregateState for SequenceNextNodeState {}
 /// - `base_condition`: Boolean condition for the base/anchor event
 /// - `event1, event2, ...`: Sequential event conditions to match
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_sequence_next_node(
+pub fn register_sequence_next_node(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     let mut builder =
@@ -83,203 +77,222 @@ pub unsafe fn register_sequence_next_node(
     unsafe { con.register_aggregate_set(builder) }
 }
 
-// SAFETY: `input` is a valid DuckDB data chunk with columns
-// (VARCHAR, VARCHAR, TIMESTAMP, VARCHAR, BOOLEAN, BOOLEAN...) as registered.
-// `states` points to `row_count` aggregate state pointers.
+// SAFETY (the callbacks below): DuckDB calls them with the handles
+// `Update::from_raw`, `Combine::from_raw` and `Finalize::from_raw` require, for
+// the aggregate registered in `register_sequence_next_node`:
+// `FfiState<SequenceNextNodeState>` states, arguments (VARCHAR direction,
+// VARCHAR base, TIMESTAMP | TIMESTAMPTZ, VARCHAR value, BOOLEAN base condition,
+// BOOLEAN event conditions...), and a VARCHAR result.
 quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let row_count = duckdb_data_chunk_get_size(input) as usize;
-        let col_count = duckdb_data_chunk_get_column_count(input) as usize;
-        let num_event_conditions = col_count.saturating_sub(FIXED_PARAMS);
-
-        // Column 0: VARCHAR (direction)
-        let direction_reader = VectorReader::new(input, 0);
-        // Column 1: VARCHAR (base)
-        let base_reader = VectorReader::new(input, 1);
-        // Column 2: TIMESTAMP
-        let ts_reader = VectorReader::new(input, 2);
-        // Column 3: VARCHAR (event_column / value)
-        let value_reader = VectorReader::new(input, 3);
-        // Column 4: BOOLEAN (base_condition)
-        let base_cond_reader = VectorReader::new(input, 4);
-
-        // Columns 5..N: BOOLEAN event conditions
-        let event_cond_readers: Vec<VectorReader> = (FIXED_PARAMS..col_count)
-            .map(|c| VectorReader::new(input, c))
-            .collect();
-
-        // Last direction and base strings parsed in this chunk, with parses.
-        let mut last_direction: Option<(&[u8], Direction)> = None;
-        let mut last_base: Option<(&[u8], Base)> = None;
-        for i in 0..row_count {
-            let Some(state) = FfiState::<SequenceNextNodeState>::with_state_mut(*states.add(i))
-            else {
-                continue;
-            };
-
-            // Every non-NULL direction and base is parsed: an unknown value
-            // or one that differs from the group's earlier rows is an error,
-            // whatever the row order.
-            if direction_reader.is_valid(i) {
-                // Normally the same string on every row: compare raw bytes
-                // and only validate and parse a new one.
-                let raw = direction_reader.read_blob(i);
-                let dir = match last_direction {
-                    Some((bytes, dir)) if bytes == raw => dir,
-                    _ => {
-                        let dir_str = direction_reader.read_str(i);
-                        let Some(dir) = SequenceNextNodeState::parse_direction(dir_str) else {
-                            info.set_error(&format!(
-                                "sequence_next_node: unknown direction '{dir_str}'; \
-                                 expected 'forward' or 'backward'"
-                            ));
-                            return;
-                        };
-                        last_direction = Some((raw, dir));
-                        dir
-                    }
-                };
-                match state.direction {
-                    Some(existing) if existing != dir => {
-                        info.set_error(&conflict_message(
-                            "sequence_next_node",
-                            "direction",
-                            &format!("'{}'", direction_name(existing)),
-                            &format!("'{}'", direction_name(dir)),
-                        ));
-                        return;
-                    }
-                    Some(_) => {}
-                    None => state.set_direction(dir),
-                }
-            }
-            if base_reader.is_valid(i) {
-                let raw = base_reader.read_blob(i);
-                let base = match last_base {
-                    Some((bytes, base)) if bytes == raw => base,
-                    _ => {
-                        let base_str = base_reader.read_str(i);
-                        let Some(base) = SequenceNextNodeState::parse_base(base_str) else {
-                            info.set_error(&format!(
-                                "sequence_next_node: unknown base '{base_str}'; expected \
-                                 'head', 'tail', 'first_match', or 'last_match'"
-                            ));
-                            return;
-                        };
-                        last_base = Some((raw, base));
-                        base
-                    }
-                };
-                match state.base {
-                    Some(existing) if existing != base => {
-                        info.set_error(&conflict_message(
-                            "sequence_next_node",
-                            "base",
-                            &format!("'{}'", base_name(existing)),
-                            &format!("'{}'", base_name(base)),
-                        ));
-                        return;
-                    }
-                    Some(_) => {}
-                    None => state.set_base(base),
-                }
-            }
-
-            // Set num_steps (once per state)
-            if state.num_steps == 0 {
-                state.num_steps = num_event_conditions;
-            }
-
-            // Skip NULL timestamps
-            if !ts_reader.is_valid(i) {
-                continue;
-            }
-
-            let timestamp = ts_reader.read_i64(i);
-
-            // Read event_column value (nullable), convert to Arc<str> for O(1) clone
-            let value: Option<Arc<str>> = if value_reader.is_valid(i) {
-                Some(Arc::from(value_reader.read_str(i)))
-            } else {
-                None
-            };
-
-            // Read base_condition
-            let base_condition = base_cond_reader.is_valid(i) && base_cond_reader.read_bool(i);
-
-            // Pack event conditions into u32 bitmask
-            let mut bitmask: u32 = 0;
-            for (c, reader) in event_cond_readers.iter().enumerate() {
-                if reader.is_valid(i) && reader.read_bool(i) {
-                    bitmask |= 1 << c;
-                }
-            }
-
-            // Grow fallibly: an allocation failure becomes a SQL error
-            // instead of aborting the host process.
-            if state.events.len() == state.events.capacity() && state.events.try_reserve(1).is_err()
-            {
-                info.set_error(&out_of_memory_message(
-                    "sequence_next_node",
-                    state.events.len() + 1,
-                ));
-                return;
-            }
-            state.update(NextNodeEvent {
-                timestamp_us: timestamp,
-                value,
-                base_condition,
-                conditions: bitmask,
-            });
-        }
-    }
+    // SAFETY: see above.
+    let call = unsafe { Update::<SequenceNextNodeState>::from_raw(info, input, states) };
+    update(call);
 });
 
-// SAFETY: `source` and `target` point to `count` aggregate state pointers, and
-// `source[i]` and `target[i]` are distinct states (DuckDB never combines a
-// state into itself), so the shared and mutable borrows do not alias.
+/// `update`: parses and checks the group's direction and base, and collects
+/// each row as an event of the state.
+fn update(call: Update<SequenceNextNodeState>) {
+    let Update {
+        info,
+        chunk,
+        mut states,
+    } = call;
+    let num_event_conditions = chunk.cols().saturating_sub(FIXED_PARAMS);
+
+    // SAFETY: column 0 is registered as VARCHAR (direction).
+    let directions = unsafe { chunk.varchars(0) };
+    // SAFETY: column 1 is registered as VARCHAR (base).
+    let bases = unsafe { chunk.varchars(1) };
+    // SAFETY: column 2 is registered as TIMESTAMP or TIMESTAMPTZ.
+    let timestamps = unsafe { chunk.timestamps(2) };
+    // SAFETY: column 3 is registered as VARCHAR (the event value).
+    let values = unsafe { chunk.varchars(3) };
+    // SAFETY: column 4 is registered as BOOLEAN (the base condition).
+    let base_conditions = unsafe { chunk.bools(4) };
+    // SAFETY: columns 5.. are registered as BOOLEAN (the event conditions).
+    let event_conditions = unsafe { chunk.bool_range(FIXED_PARAMS..chunk.cols()) };
+
+    // Last direction and base strings parsed in this chunk, with parses.
+    let mut last_direction: Option<(&[u8], Direction)> = None;
+    let mut last_base: Option<(&[u8], Base)> = None;
+    for i in 0..chunk.rows() {
+        let Some(state) = states.get_mut(i) else {
+            continue;
+        };
+
+        // Every non-NULL direction and base is parsed: an unknown value or
+        // one that differs from the group's earlier rows is an error,
+        // whatever the row order.
+        let configured = record_direction(&directions, i, &mut last_direction, state)
+            .and_then(|()| record_base(&bases, i, &mut last_base, state));
+        if let Err(message) = configured {
+            info.set_error(&message);
+            return;
+        }
+
+        // Set num_steps (once per state)
+        if state.num_steps == 0 {
+            state.num_steps = num_event_conditions;
+        }
+
+        // Skip NULL timestamps
+        let Some(timestamp_us) = timestamps.get(i) else {
+            continue;
+        };
+
+        // Pack event conditions into u32 bitmask
+        let mut bitmask: u32 = 0;
+        for (c, condition) in event_conditions.iter().enumerate() {
+            if condition.is_true(i) {
+                bitmask |= 1 << c;
+            }
+        }
+
+        // The state copies the value into its own buffer and grows fallibly:
+        // an allocation failure becomes a SQL error instead of aborting the
+        // host process.
+        if let Err(error) = state.try_push(
+            timestamp_us,
+            values.get(i),
+            base_conditions.is_true(i),
+            bitmask,
+        ) {
+            info.set_error(&store_error_message(error, state.event_count() + 1));
+            return;
+        }
+    }
+}
+
+/// The SQL error for a state that could not store another event.
+fn store_error_message(error: StoreError, events: usize) -> String {
+    match error {
+        StoreError::OutOfMemory => out_of_memory_message("sequence_next_node", events),
+        StoreError::TooLarge => {
+            format!("sequence_next_node: the values of one group exceed 4 GiB ({events} events)")
+        }
+    }
+}
+
+/// Records row `i`'s direction in the state, or returns the error message for
+/// an unknown direction or one that differs from the group's earlier rows.
+/// A `NULL` direction is ignored.
+///
+/// Normally the same string is on every row: its raw bytes are compared with
+/// the last row's, and only a new string is validated and parsed.
+fn record_direction<'a>(
+    directions: &'a Varchars,
+    i: usize,
+    last: &mut Option<(&'a [u8], Direction)>,
+    state: &mut SequenceNextNodeState,
+) -> Result<(), String> {
+    let Some(raw) = directions.bytes(i) else {
+        return Ok(());
+    };
+    let dir = match *last {
+        Some((bytes, dir)) if bytes == raw => dir,
+        _ => {
+            let text = directions.get(i).unwrap_or_default();
+            let dir = SequenceNextNodeState::parse_direction(text).ok_or_else(|| {
+                format!(
+                    "sequence_next_node: unknown direction '{text}'; \
+                     expected 'forward' or 'backward'"
+                )
+            })?;
+            *last = Some((raw, dir));
+            dir
+        }
+    };
+    match state.direction {
+        Some(existing) if existing != dir => Err(conflict_message(
+            "sequence_next_node",
+            "direction",
+            &format!("'{}'", direction_name(existing)),
+            &format!("'{}'", direction_name(dir)),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            state.set_direction(dir);
+            Ok(())
+        }
+    }
+}
+
+/// Records row `i`'s base in the state; see [`record_direction`].
+fn record_base<'a>(
+    bases: &'a Varchars,
+    i: usize,
+    last: &mut Option<(&'a [u8], Base)>,
+    state: &mut SequenceNextNodeState,
+) -> Result<(), String> {
+    let Some(raw) = bases.bytes(i) else {
+        return Ok(());
+    };
+    let base = match *last {
+        Some((bytes, base)) if bytes == raw => base,
+        _ => {
+            let text = bases.get(i).unwrap_or_default();
+            let base = SequenceNextNodeState::parse_base(text).ok_or_else(|| {
+                format!(
+                    "sequence_next_node: unknown base '{text}'; expected \
+                     'head', 'tail', 'first_match', or 'last_match'"
+                )
+            })?;
+            *last = Some((raw, base));
+            base
+        }
+    };
+    match state.base {
+        Some(existing) if existing != base => Err(conflict_message(
+            "sequence_next_node",
+            "base",
+            &format!("'{}'", base_name(existing)),
+            &format!("'{}'", base_name(base)),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            state.set_base(base);
+            Ok(())
+        }
+    }
+}
+
 quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        for i in 0..count as usize {
-            let Some(src) = FfiState::<SequenceNextNodeState>::with_state(*source.add(i)) else {
-                continue;
-            };
-            let Some(tgt) = FfiState::<SequenceNextNodeState>::with_state_mut(*target.add(i))
-            else {
-                continue;
-            };
-            if let (Some(a), Some(b)) = (tgt.direction, src.direction) {
-                if a != b {
-                    info.set_error(&conflict_message(
-                        "sequence_next_node",
-                        "direction",
-                        &format!("'{}'", direction_name(a)),
-                        &format!("'{}'", direction_name(b)),
-                    ));
-                    return;
-                }
-            }
-            if let (Some(a), Some(b)) = (tgt.base, src.base) {
-                if a != b {
-                    info.set_error(&conflict_message(
-                        "sequence_next_node",
-                        "base",
-                        &format!("'{}'", base_name(a)),
-                        &format!("'{}'", base_name(b)),
-                    ));
-                    return;
-                }
-            }
-            if tgt.events.try_reserve(src.events.len()).is_err() {
-                info.set_error(&out_of_memory_message(
-                    "sequence_next_node",
-                    tgt.events.len() + src.events.len(),
-                ));
-                return;
-            }
-            tgt.combine_in_place(src);
+    // SAFETY: see above.
+    let Combine {
+        info,
+        source,
+        mut target,
+    } = unsafe { Combine::<SequenceNextNodeState>::from_raw(info, source, target, count) };
+    for i in 0..source.count() {
+        let Some((src, tgt)) = States::pair(&source, &mut target, i) else {
+            continue;
+        };
+        if let (Some(a), Some(b)) = (tgt.direction, src.direction)
+            && a != b
+        {
+            info.set_error(&conflict_message(
+                "sequence_next_node",
+                "direction",
+                &format!("'{}'", direction_name(a)),
+                &format!("'{}'", direction_name(b)),
+            ));
+            return;
+        }
+        if let (Some(a), Some(b)) = (tgt.base, src.base)
+            && a != b
+        {
+            info.set_error(&conflict_message(
+                "sequence_next_node",
+                "base",
+                &format!("'{}'", base_name(a)),
+                &format!("'{}'", base_name(b)),
+            ));
+            return;
+        }
+        let events_after = tgt.event_count() + src.event_count();
+        if let Err(error) = tgt.try_combine_in_place(src) {
+            info.set_error(&store_error_message(error, events_after));
+            return;
         }
     }
 });
@@ -302,60 +315,54 @@ const fn base_name(base: Base) -> &'static str {
     }
 }
 
-// SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB VARCHAR vector. NULL is set via validity bitmap when no match found.
+// NULL is written when no match is found.
 quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
-    unsafe {
-        let info = AggregateFunctionInfo::new(info);
-        let mut writer = VectorWriter::new(result);
+    // SAFETY: see above.
+    let Finalize {
+        info,
+        mut states,
+        mut out,
+    } = unsafe {
+        Finalize::<SequenceNextNodeState, VarcharKind>::from_raw(
+            info, source, result, count, offset,
+        )
+    };
+    for i in 0..out.count() {
+        let Some(state) = states.get_mut(i) else {
+            out.set_null(i);
+            continue;
+        };
 
-        for i in 0..count as usize {
-            let idx = offset as usize + i;
-
-            let Some(state) = FfiState::<SequenceNextNodeState>::with_state_mut(*source.add(i))
-            else {
-                writer.set_null(idx);
-                continue;
-            };
-
-            // As in ClickHouse: a forward chain from the last event (or a
-            // backward chain from the first) has no adjacent event to return.
-            // Checked here, on the effective values (a NULL direction means
-            // 'forward', a NULL base 'first_match'), so the outcome does not
-            // depend on which row supplied which argument.
-            match (
-                state.direction.unwrap_or(Direction::Forward),
-                state.base.unwrap_or(Base::FirstMatch),
-            ) {
-                (Direction::Forward, Base::Tail) => {
-                    info.set_error(
-                        "sequence_next_node: base 'tail' cannot be combined with direction \
-                         'forward' (the chain would start at the last event)",
-                    );
-                    return;
-                }
-                (Direction::Backward, Base::Head) => {
-                    info.set_error(
-                        "sequence_next_node: base 'head' cannot be combined with direction \
-                         'backward' (the chain would start at the first event)",
-                    );
-                    return;
-                }
-                _ => {}
+        // As in ClickHouse: a forward chain from the last event (or a
+        // backward chain from the first) has no adjacent event to return.
+        // Checked here, on the effective values (a NULL direction means
+        // 'forward', a NULL base 'first_match'), so the outcome does not
+        // depend on which row supplied which argument.
+        match (
+            state.direction.unwrap_or(Direction::Forward),
+            state.base.unwrap_or(Base::FirstMatch),
+        ) {
+            (Direction::Forward, Base::Tail) => {
+                info.set_error(
+                    "sequence_next_node: base 'tail' cannot be combined with direction \
+                     'forward' (the chain would start at the last event)",
+                );
+                return;
             }
-
-            match state.finalize() {
-                Some(value) => {
-                    // write_varchar handles both inline (≤12 bytes) and pointer
-                    // storage formats via duckdb_vector_assign_string_element_len,
-                    // which accepts a length parameter — no null terminator or
-                    // CString conversion needed.
-                    writer.write_varchar(idx, &value);
-                }
-                None => {
-                    writer.set_null(idx);
-                }
+            (Direction::Backward, Base::Head) => {
+                info.set_error(
+                    "sequence_next_node: base 'head' cannot be combined with direction \
+                     'backward' (the chain would start at the first event)",
+                );
+                return;
             }
+            _ => {}
+        }
+
+        match state.finalize() {
+            // DuckDB copies the string, whatever its length.
+            Some(value) => out.write(i, &value),
+            None => out.set_null(i),
         }
     }
 });
@@ -363,8 +370,9 @@ quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, co
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sequence_next_node::{Base, Direction};
+    use crate::sequence_next_node::{Base, Direction, NextNodeEvent};
     use quack_rs::testing::AggregateTestHarness;
+    use std::sync::Arc;
 
     #[test]
     fn test_next_node_combine_config_propagation() {

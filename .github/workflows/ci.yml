@@ -19,724 +19,234 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 5
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
   # Dev/test builds link a prebuilt libduckdb downloaded by libduckdb-sys
   # instead of compiling DuckDB's C++ tree from source (quack-rs
-  # `bundled-test-prebuilt`). Overridden to "0" in extension-build, which
-  # exercises the pristine release path.
+  # `bundled-test-prebuilt`). The release path (`make release` in e2e.yml)
+  # does not set it.
   DUCKDB_DOWNLOAD_LIB: "1"
 
+# Every `cargo` call uses --locked: a stale Cargo.lock fails the job instead
+# of being silently rewritten.
 jobs:
-  # ── Fast lint checks (run first, fail fast) ───────────────────────────
   fmt:
     name: Format
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt
-      - name: Check formatting
-        id: fmt-check
-        run: cargo fmt --all -- --check
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.fmt-check.outcome }}" = "success" ]; then
-            echo "### ✅ Format Check Passed" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### ❌ Format Check Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "Run \`cargo fmt --all\` to fix formatting issues." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          cache: "false"
+      - run: cargo fmt --all -- --check
 
+  # `cargo clippy --all-targets` also type-checks every target, so there is no
+  # separate `cargo check` job.
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-      - name: Run clippy
-        # bash -eo pipefail: without it the step's status is tee's (always 0).
-        shell: bash
-        run: cargo clippy --all-targets --message-format=json -- -D warnings 2>&1 | tee clippy-output.json
-      - name: Summary
-        if: always()
-        run: |
-          WARNINGS=$(grep -c '"level":"warning"' clippy-output.json 2>/dev/null || echo "0")
-          ERRORS=$(grep -c '"level":"error"' clippy-output.json 2>/dev/null || echo "0")
-          {
-            echo "### Clippy Results"
-            echo ""
-            echo "| Metric | Count |"
-            echo "|--------|-------|"
-            echo "| Errors | ${ERRORS} |"
-            echo "| Warnings | ${WARNINGS} |"
-            echo ""
-            if [ "$ERRORS" = "0" ] && [ "$WARNINGS" = "0" ]; then
-              echo "✅ Zero warnings, zero errors."
-            else
-              echo "❌ Issues detected. Review the log output above."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+      - run: cargo clippy --all-targets --locked -- -D warnings
 
-  # ── Compilation checks ────────────────────────────────────────────────
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-      - name: Compile check (all targets)
-        id: cargo-check
-        run: cargo check --all-targets
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.cargo-check.outcome }}" = "success" ]; then
-            echo "### ✅ Compilation check passed" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### ❌ Compilation check failed" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  wasm-check:
-    name: WASM check (wasm32-unknown-emscripten)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      # No prebuilt libduckdb exists for wasm; the loadable-extension build
-      # uses pregenerated bindings and needs no library at all.
-      DUCKDB_DOWNLOAD_LIB: "0"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-emscripten
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: wasm-check
-      - name: Compile check for DuckDB-WASM target
-        id: wasm-check
-        run: cargo check --target wasm32-unknown-emscripten --lib
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.wasm-check.outcome }}" = "success" ]; then
-            echo "### ✅ wasm32-unknown-emscripten compile check passed" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### ❌ wasm32-unknown-emscripten compile check failed" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  doc:
-    name: Documentation
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      RUSTDOCFLAGS: -Dwarnings
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-      - name: Build documentation
-        id: cargo-doc
-        run: cargo doc --no-deps --document-private-items
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.cargo-doc.outcome }}" = "success" ]; then
-            echo "### ✅ Documentation builds without warnings" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### ❌ Documentation build failed" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  # ── Test suite (structured output via cargo-nextest) ──────────────────
   test:
-    name: Test
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
-        with:
-          tool: cargo-nextest
-
-      - name: Run unit tests
-        # bash -eo pipefail: without it the step's status is tee's (always 0).
-        shell: bash
-        run: cargo nextest run --all-targets --profile ci 2>&1 | tee test-output.txt
-
-      - name: Run doc tests
-        # bash -eo pipefail: without it the step's status is tee's (always 0).
-        shell: bash
-        run: cargo test --doc 2>&1 | tee -a test-output.txt
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-results-linux
-          path: target/nextest/ci/junit.xml
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### Test Results"
-            echo ""
-            if [ -f target/nextest/ci/junit.xml ]; then
-              TOTAL=$(grep -oP 'tests="\K[0-9]+' target/nextest/ci/junit.xml | head -1)
-              FAILURES=$(grep -oP 'failures="\K[0-9]+' target/nextest/ci/junit.xml | head -1)
-              ERRORS=$(grep -oP 'errors="\K[0-9]+' target/nextest/ci/junit.xml | head -1)
-              TIME=$(grep -oP 'time="\K[0-9.]+' target/nextest/ci/junit.xml | head -1)
-              PASSED=$((TOTAL - FAILURES - ERRORS))
-              echo "| Metric | Value |"
-              echo "|--------|-------|"
-              echo "| Total tests | ${TOTAL} |"
-              echo "| Passed | ${PASSED} |"
-              echo "| Failed | ${FAILURES} |"
-              echo "| Errors | ${ERRORS} |"
-              echo "| Duration | ${TIME}s |"
-              echo ""
-              if [ "${FAILURES}" = "0" ] && [ "${ERRORS}" = "0" ]; then
-                echo "✅ All ${TOTAL} tests passed in ${TIME}s."
-              else
-                echo "❌ ${FAILURES} failures, ${ERRORS} errors out of ${TOTAL} tests."
-              fi
-            else
-              echo "⚠️ JUnit XML not found. Check raw output above."
-            fi
-            echo ""
-            echo "<details><summary>Doc-test output</summary>"
-            echo ""
-            echo '```'
-            grep -E "^test |^running |^test result:" test-output.txt || echo "No doc-test output captured"
-            echo '```'
-            echo "</details>"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ── Cross-platform verification ──────────────────────────────────────
-  cross-platform:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-nextest
-
-      - name: Run tests
-        run: cargo nextest run --all-targets --profile ci
-
-      - name: Upload test results
+      # Unit tests, proptests, and tests/extension_load.rs (which builds the
+      # release cdylib and LOADs it into an in-memory DuckDB).
+      - run: cargo nextest run --all-targets --locked --profile ci
+      # nextest does not run doc-tests.
+      - run: cargo test --doc --locked
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-results-${{ matrix.os }}
+          name: junit-${{ matrix.os }}
           path: target/nextest/ci/junit.xml
-          retention-days: 30
+          retention-days: 14
           if-no-files-found: warn
 
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### Test Results (${{ matrix.os }})"
-            echo ""
-            if [ -f target/nextest/ci/junit.xml ]; then
-              # Extract test count portably (works on both Linux and macOS)
-              TOTAL=$(grep -o 'tests="[0-9]*"' target/nextest/ci/junit.xml | head -1 | tr -dc '0-9')
-              FAILURES=$(grep -o 'failures="[0-9]*"' target/nextest/ci/junit.xml | head -1 | tr -dc '0-9')
-              if [ -z "$TOTAL" ]; then
-                echo "JUnit XML found but could not parse test counts."
-              elif [ "${FAILURES:-0}" = "0" ]; then
-                echo "✅ ${TOTAL} tests passed on ${{ matrix.os }}."
-              else
-                echo "❌ ${FAILURES} failures out of ${TOTAL} tests on ${{ matrix.os }}."
-              fi
-            else
-              echo "JUnit XML not found at target/nextest/ci/junit.xml."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - run: cargo doc --no-deps --document-private-items --locked
 
-  # ── MSRV verification ────────────────────────────────────────────────
+  # The MSRV is the highest `rust-version` among the dependencies that link
+  # into the build (libduckdb-sys / duckdb declare 1.88); Cargo.toml and the
+  # docs say the same number.
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@1.88
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-          key: msrv-1.88
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-      - name: Check MSRV compilation
-        id: msrv-check
-        # `+1.88` is required: rust-toolchain.toml pins `channel = "stable"`,
-        # and a toolchain file overrides the toolchain installed above, so a
-        # bare `cargo check` would silently run stable instead of the MSRV.
-        run: cargo +1.88 check --all-targets
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.msrv-check.outcome }}" = "success" ]; then
-            echo "### ✅ MSRV 1.88 compilation verified" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### ❌ MSRV 1.88 compilation failed" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: "1.88"
+          cache-key: msrv
+      - run: cargo check --all-targets --locked
 
-  # ── Benchmark compilation ────────────────────────────────────────────
+  wasm-check:
+    name: WASM check (wasm32-unknown-emscripten)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # No prebuilt libduckdb exists for wasm; the loadable-extension build
+      # uses pregenerated bindings and needs no library at all.
+      DUCKDB_DOWNLOAD_LIB: "0"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-emscripten
+      - run: cargo check --target wasm32-unknown-emscripten --lib --locked
+
   bench-compile:
     name: Benchmarks compile
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-      - name: Compile benchmarks (no run)
-        id: bench-check
-        run: cargo bench --no-run
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.bench-check.outcome }}" = "success" ]; then
-            echo "### ✅ All 7 benchmark suites compile" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### ❌ Benchmark compilation failed" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - run: cargo bench --no-run --locked
 
-  # ── Supply chain audit ───────────────────────────────────────────────
+  # ── Supply chain and hygiene ─────────────────────────────────────────
   deny:
     name: Cargo deny
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - name: Run cargo deny
-        id: deny-check
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check advisories bans licenses sources
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.deny-check.outcome }}" = "success" ]; then
-            {
-              echo "### Supply Chain Audit"
-              echo ""
-              echo "| Check | Status |"
-              echo "|-------|--------|"
-              echo "| Advisories | ✅ |"
-              echo "| Bans | ✅ |"
-              echo "| Licenses | ✅ |"
-              echo "| Sources | ✅ |"
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### ❌ Supply Chain Audit Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "Review cargo-deny output above for details." >> "$GITHUB_STEP_SUMMARY"
-          fi
 
-  # ── SemVer compatibility ─────────────────────────────────────────────
-  semver:
-    name: Semver check
+  hygiene:
+    name: Hygiene (unused deps, typos, workflows)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+          persist-credentials: false
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
+          tool: cargo-machete,typos,zizmor,shellcheck
+      - name: Unused dependencies
+        run: cargo machete
+      - name: Spelling
+        run: typos
+      # install-action has no actionlint manifest: fetch the release and
+      # verify its published checksum.
+      - name: Workflow lint
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
         run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-      - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --locked
-      - name: Check semver compatibility
-        # bash -eo pipefail: without it the step's status is tee's (always 0).
-        shell: bash
-        run: cargo semver-checks check-release --baseline-rev origin/main 2>&1 | tee semver-output.txt
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### SemVer Compatibility"
-            echo ""
-            if grep -q "no semver update required\|all checks passed\|pass" semver-output.txt 2>/dev/null; then
-              PASS=$(grep -oP '\d+ pass' semver-output.txt | head -1 || echo "unknown")
-              echo "✅ ${PASS}ed — no breaking changes detected."
-            else
-              echo '```'
-              tail -20 semver-output.txt
-              echo '```'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -sSfL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"
+      - name: Workflow security audit
+        run: zizmor --offline --no-progress --min-severity medium .github
+      - name: Shell scripts
+        run: shellcheck scripts/*.sh
+      - name: License headers
+        run: scripts/add-spdx-headers.sh --check
 
-  # ── Code coverage ───────────────────────────────────────────────────
+  # ── Coverage (informational) ─────────────────────────────────────────
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     continue-on-error: true
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # Prefix bumped to v1 to evict caches that restored the libduckdb-sys
-          # build fingerprint without the downloaded lib under
-          # target/duckdb-download, stranding the linker with a dangling
-          # `-lduckdb`. A cold key forces a fresh download that repopulates it.
-          prefix-key: v1-rust
-      # rust-cache prunes target/ before saving (cleanTargetDir treats
-      # target/duckdb-download as a profile dir and keeps only build/,
-      # .fingerprint/ and deps/), so a warm cache restores libduckdb-sys's
-      # build-script output without the libduckdb it links: `-lduckdb` not
-      # found. When the library is missing, drop that output so the build
-      # script runs again and downloads it.
-      - name: Re-fetch prebuilt libduckdb if the cache dropped it
-        shell: bash
-        run: |
-          if ! compgen -G "target/duckdb-download/*/*/libduckdb.*" > /dev/null; then
-            rm -rf target/*/build/libduckdb-sys-* target/*/.fingerprint/libduckdb-sys-*
-          fi
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin --locked
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
       - name: Generate coverage report
-        # bash -eo pipefail: without it the step's status is tee's (always 0).
-        # --timeout: the extension_load integration tests build the release
-        # cdylib on first use, which under tarpaulin runs past its default
-        # 60 s no-output limit ("Timed out waiting for test response").
-        shell: bash
-        run: cargo tarpaulin --timeout 600 --out xml --out html --skip-clean 2>&1 | tee coverage-output.txt
-      - name: Upload to Codecov
+        run: cargo llvm-cov nextest --locked --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         if: always()
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
-          files: cobertura.xml
+          files: lcov.info
           fail_ci_if_error: false
-      - name: Upload coverage artifacts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-report
-          path: |
-            cobertura.xml
-            tarpaulin-report.html
-          retention-days: 30
-          if-no-files-found: warn
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### Code Coverage"
-            echo ""
-            if [ -f coverage-output.txt ]; then
-              # Try Perl regex first (Linux), fall back to extended regex
-              COVERAGE=$(grep -oP '\d+\.\d+% coverage' coverage-output.txt 2>/dev/null | tail -1 || \
-                         grep -oE '[0-9]+\.[0-9]+% coverage' coverage-output.txt 2>/dev/null | tail -1 || \
-                         echo "")
-              if [ -n "$COVERAGE" ]; then
-                echo "Line coverage: **${COVERAGE}**"
-              else
-                echo "Coverage report generated but percentage not parsed."
-                echo ""
-                echo "<details><summary>Raw output (last 10 lines)</summary>"
-                echo ""
-                echo '```'
-                tail -10 coverage-output.txt
-                echo '```'
-                echo "</details>"
-              fi
-            else
-              echo "Coverage output not captured. Check job logs for details."
-            fi
-            echo ""
-            if [ -f cobertura.xml ]; then
-              echo "Artifacts: cobertura.xml, tarpaulin-report.html"
-            else
-              echo "No coverage artifacts produced."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Extension build ─────────────────────────────────────────────────
-  extension-build:
-    name: Extension build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      # Exercise the pristine release path: no prebuilt-libduckdb download.
-      DUCKDB_DOWNLOAD_LIB: "0"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: extension-build
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.12"
-      - name: Build extension
-        run: |
-          make configure
-          make release
-      - name: Verify extension artifact
-        run: |
-          test -f build/release/behavioral.duckdb_extension
-          ls -lh build/release/behavioral.duckdb_extension
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### Extension Build"
-            echo ""
-            if [ -f build/release/behavioral.duckdb_extension ]; then
-              SIZE=$(wc -c < build/release/behavioral.duckdb_extension | xargs)
-              SIZE="${SIZE} bytes"
-              echo "✅ Extension built successfully."
-              echo ""
-              echo "| Artifact | Size |"
-              echo "|----------|------|"
-              echo "| \`behavioral.duckdb_extension\` | ${SIZE} |"
-            else
-              echo "❌ Extension artifact not found."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+  # ── Build, SQL logic tests, DuckDB-version matrix ────────────────────
+  e2e:
+    name: E2E
+    uses: ./.github/workflows/e2e.yml
 
-  # ── CI Gate (single required status check for branch protection) ────
+  # ── Single required status check for branch protection ───────────────
   ci-gate:
     name: CI Gate
     if: always()
     needs:
       - fmt
       - clippy
-      - check
-      - wasm-check
-      - doc
       - test
-      - cross-platform
+      - doc
       - msrv
+      - wasm-check
       - bench-compile
       - deny
-      - semver
+      - hygiene
+      - e2e
       - coverage
-      - extension-build
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Evaluate job results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          # These jobs must succeed (hard requirements)
-          REQUIRED_RESULTS=(
-            "fmt=${{ needs.fmt.result }}"
-            "clippy=${{ needs.clippy.result }}"
-            "check=${{ needs.check.result }}"
-            "wasm-check=${{ needs.wasm-check.result }}"
-            "doc=${{ needs.doc.result }}"
-            "test=${{ needs.test.result }}"
-            "cross-platform=${{ needs.cross-platform.result }}"
-            "msrv=${{ needs.msrv.result }}"
-            "bench-compile=${{ needs.bench-compile.result }}"
-            "deny=${{ needs.deny.result }}"
-            "semver=${{ needs.semver.result }}"
-            "extension-build=${{ needs.extension-build.result }}"
-          )
-
-          FAILED=0
-          {
-            echo "### CI Gate Summary"
-            echo ""
-            echo "| Job | Result |"
-            echo "|-----|--------|"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          for entry in "${REQUIRED_RESULTS[@]}"; do
-            JOB="${entry%%=*}"
-            RESULT="${entry#*=}"
-            case "$RESULT" in
-              success)  ICON="✅" ;;
-              skipped)  ICON="⏭️" ;;
-              *)        ICON="❌"; FAILED=$((FAILED + 1)) ;;
-            esac
-            echo "| ${JOB} | ${ICON} ${RESULT} |" >> "$GITHUB_STEP_SUMMARY"
-          done
-
-          # Coverage is informational (continue-on-error)
-          echo "| coverage | ℹ️ ${{ needs.coverage.result || 'skipped' }} (informational) |" >> "$GITHUB_STEP_SUMMARY"
-
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$FAILED" -gt 0 ]; then
-            echo "❌ **${FAILED} required job(s) failed.** See individual job logs above." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          else
-            echo "✅ **All required CI checks passed.**" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  # Coverage is not in the gate — it's informational only
-  # It runs independently and reports to Codecov
+          echo "$NEEDS" | jq -r '"| Job | Result |", "|---|---|", (to_entries[] | "| \(.key) | \(.value.result) |")' >> "$GITHUB_STEP_SUMMARY"
+          # Coverage is informational. Every other job must succeed.
+          echo "$NEEDS" | jq -e 'del(.coverage) | all(.[]; .result == "success")' > /dev/null

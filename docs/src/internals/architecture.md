@@ -11,6 +11,7 @@ src/
   lib.rs                       Entry point via quack_rs::entry_point_v2! macro
   common/
     mod.rs
+    config.rs                  Error messages for per-group constant arguments and out-of-memory
     event.rs                   Event type (u32 bitmask, Copy, 16 bytes)
     timestamp.rs               Interval-to-microseconds conversion
   pattern/
@@ -22,16 +23,18 @@ src/
   retention.rs                 Bitmask-based cohort retention (O(1) combine)
   window_funnel.rs             Port of ClickHouse windowFunnel, combinable mode bitflags
   sequence.rs                  Sequence match/count/events state management
-  sequence_next_node.rs        Next event value after pattern match (Arc<str>)
+  sequence_next_node.rs        Next event value after pattern match (one byte buffer per state)
+  oracle_tests.rs              Test-only: window_funnel vs an exhaustive reference; order/combine invariance
   ffi/
     mod.rs                     register_all() dispatcher
+    view.rs                    Safe views over DuckDB's raw handles: the only unsafe constructors
     sessionize.rs              FFI via quack-rs AggregateFunctionBuilder (fixed signature)
     retention.rs               FFI via quack-rs builder + returns_logical(LIST(BOOLEAN)) + ListVector
     window_funnel.rs           FFI via quack-rs builder + FfiState + VectorReader/VectorWriter
     window_funnel_events.rs    FFI sharing window_funnel update/combine + LIST(TIMESTAMP) finalize
     sequence.rs                FFI via quack-rs builder for sequence_match/count
     sequence_match_events.rs   FFI via quack-rs builder + returns_logical(LIST(TIMESTAMP)) + ListVector
-    sequence_next_node.rs      FFI via quack-rs builder + VectorWriter::write_varchar
+    sequence_next_node.rs      FFI via quack-rs builder + Output<VarcharKind>
     version.rs                 behavioral_version() scalar via quack-rs ScalarFunctionBuilder
 ```
 
@@ -78,16 +81,20 @@ management. `FfiState<T>` handles heap allocation, null-checked access via
 
 DuckDB does not provide a `duckdb_aggregate_function_set_varargs` API. To support
 variable numbers of boolean condition parameters, each variadic function is
-registered as a **function set** with one overload per arity:
+registered as a **function set** with one overload per arity, and for each
+function with a timestamp argument one per timestamp type (`TIMESTAMP`,
+`TIMESTAMPTZ`; same int64 microseconds):
 
 | Function | Conditions | Overloads |
 |---|---|---|
-| `retention`, `sequence_match`, `sequence_count`, `sequence_match_events` | 2 to 32 | 31 each |
-| `window_funnel`, `window_funnel_events` | 1 to 32, with and without a mode `VARCHAR` | 64 each |
-| `sequence_next_node` | base condition + 1 to 32 event conditions | 32 |
+| `retention` (no timestamp) | 2 to 32 | 31 |
+| `sequence_match`, `sequence_count`, `sequence_match_events` | 2 to 32 | 62 each |
+| `window_funnel`, `window_funnel_events` | 1 to 32, with and without a mode `VARCHAR` | 128 each |
+| `sequence_next_node` | base condition + 1 to 32 event conditions | 64 |
 
-The `sessionize` function has a fixed two-parameter signature and does not
-require a function set; neither does the `behavioral_version()` scalar.
+The `sessionize` function has a fixed two-parameter signature (two overloads,
+one per timestamp type) and does not require a variadic function set; neither
+does the `behavioral_version()` scalar. In all, 540 overloads.
 
 ### Entry Point via quack-rs
 

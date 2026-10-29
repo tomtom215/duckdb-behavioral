@@ -6,16 +6,30 @@ the extension loaded.
 
 ## Running
 
-```sql
-INSTALL behavioral FROM community;
-LOAD behavioral;
-```
-
-Then run any script:
+Each script is a complete DuckDB session body, so run it from inside a session
+that has the extension loaded:
 
 ```bash
-duckdb < examples/01_sessions.sql
+duckdb -c ".read examples/01_sessions.sql"          # after INSTALL/LOAD below
 ```
+
+or load the extension in the same invocation:
+
+```bash
+(echo "INSTALL behavioral FROM community; LOAD behavioral;"; cat examples/01_sessions.sql) | duckdb
+```
+
+```sql
+-- In an interactive session
+INSTALL behavioral FROM community;
+LOAD behavioral;
+.read examples/01_sessions.sql
+```
+
+Piping a script to a fresh `duckdb` process without the `LOAD` fails with
+`Catalog Error: ... window_funnel does not exist`: extensions are loaded per process.
+(A locally built extension loads with `duckdb -unsigned` and
+`LOAD 'build/release/behavioral.duckdb_extension'`.)
 
 ## Scripts
 

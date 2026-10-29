@@ -11,12 +11,10 @@
 //! [`quack_rs::vector::complex::ListVector`] + [`quack_rs::vector::VectorWriter`]
 //! for LIST output.
 
+use super::view::{BoolListKind, Combine, Finalize, States, Update};
 use crate::retention::RetentionState;
-use libduckdb_sys::*;
-use quack_rs::aggregate::{AggregateFunctionSetBuilder, FfiState};
+use quack_rs::aggregate::AggregateFunctionSetBuilder;
 use quack_rs::types::{LogicalType, TypeId};
-use quack_rs::vector::complex::ListVector;
-use quack_rs::vector::{VectorReader, VectorWriter};
 
 /// Minimum number of boolean condition parameters for retention.
 const MIN_CONDITIONS: usize = 2;
@@ -30,14 +28,10 @@ impl quack_rs::aggregate::AggregateState for RetentionState {}
 ///
 /// Signature: `retention(BOOLEAN, BOOLEAN [, BOOLEAN ...]) -> BOOLEAN[]`
 ///
-/// # Safety
-///
-/// Requires a valid connection implementing the [`Registrar`](quack_rs::connection::Registrar) trait.
-///
 /// # Errors
 ///
 /// Returns an error if function registration fails.
-pub unsafe fn register_retention(
+pub fn register_retention(
     con: &impl quack_rs::connection::Registrar,
 ) -> Result<(), quack_rs::error::ExtensionError> {
     let builder = AggregateFunctionSetBuilder::new("retention")
@@ -59,82 +53,53 @@ pub unsafe fn register_retention(
     unsafe { con.register_aggregate_set(builder) }
 }
 
-// SAFETY: `input` is a valid DuckDB data chunk with N BOOLEAN columns (as registered).
-// `states` points to `row_count` aggregate state pointers initialized by `FfiState::init_callback`.
-quack_rs::aggregate_update_callback!(state_update, |_info, input, states| {
-    unsafe {
-        let row_count = duckdb_data_chunk_get_size(input) as usize;
-        let col_count = duckdb_data_chunk_get_column_count(input) as usize;
+// SAFETY (the callbacks below): DuckDB calls them with the handles
+// `Update::from_raw`, `Combine::from_raw` and `Finalize::from_raw` require, for
+// the aggregate registered in `register_retention`: `FfiState<RetentionState>`
+// states, N BOOLEAN arguments, and a `LIST(BOOLEAN)` result.
+quack_rs::aggregate_update_callback!(state_update, |info, input, states| {
+    // SAFETY: see above.
+    let Update {
+        chunk, mut states, ..
+    } = unsafe { Update::<RetentionState>::from_raw(info, input, states) };
+    // SAFETY: every argument column is registered as BOOLEAN.
+    let columns = unsafe { chunk.bool_range(0..chunk.cols()) };
 
-        // Read all boolean condition vectors using VectorReader
-        let readers: Vec<VectorReader> = (0..col_count)
-            .map(|c| VectorReader::new(input, c))
-            .collect();
+    let mut conditions = Vec::with_capacity(columns.len());
+    for i in 0..chunk.rows() {
+        let Some(state) = states.get_mut(i) else {
+            continue;
+        };
+        // A NULL condition counts as false.
+        conditions.clear();
+        conditions.extend(columns.iter().map(|column| column.is_true(i)));
+        state.update(&conditions);
+    }
+});
 
-        let mut conditions = Vec::with_capacity(col_count);
-        for i in 0..row_count {
-            let Some(state) = FfiState::<RetentionState>::with_state_mut(*states.add(i)) else {
-                continue;
-            };
-
-            conditions.clear();
-            for reader in &readers {
-                let valid = reader.is_valid(i);
-                let value = if valid { reader.read_bool(i) } else { false };
-                conditions.push(value);
-            }
-
-            state.update(&conditions);
+quack_rs::aggregate_combine_callback!(state_combine, |info, source, target, count| {
+    // SAFETY: see above.
+    let Combine {
+        source, mut target, ..
+    } = unsafe { Combine::<RetentionState>::from_raw(info, source, target, count) };
+    for i in 0..source.count() {
+        if let Some((src, tgt)) = States::pair(&source, &mut target, i) {
+            *tgt = tgt.combine(src);
         }
     }
 });
 
-// SAFETY: `source` and `target` point to `count` aggregate state pointers.
-quack_rs::aggregate_combine_callback!(state_combine, |_info, source, target, count| {
-    unsafe {
-        for i in 0..count as usize {
-            let Some(src) = FfiState::<RetentionState>::with_state(*source.add(i)) else {
-                continue;
-            };
-            let Some(tgt) = FfiState::<RetentionState>::with_state_mut(*target.add(i)) else {
-                continue;
-            };
-
-            let combined = tgt.combine(src);
-            *tgt = combined;
-        }
-    }
-});
-
-// SAFETY: `source` points to `count` aggregate state pointers. `result` is a
-// valid DuckDB LIST(BOOLEAN) vector. We use ListVector + VectorWriter to write
-// entries: reserve space, set size, write list_entry offsets, then write child data.
-quack_rs::aggregate_finalize_callback!(state_finalize, |_info, source, result, count, offset| {
-    unsafe {
-        let mut parent_writer = VectorWriter::new(result);
-
-        for i in 0..count as usize {
-            let idx = offset as usize + i;
-
-            let Some(state) = FfiState::<RetentionState>::with_state(*source.add(i)) else {
-                parent_writer.set_null(idx);
-                continue;
-            };
-
-            let retention_result = state.finalize();
-
-            let current_size = ListVector::get_size(result) as u64;
-            let new_size = current_size + retention_result.len() as u64;
-            ListVector::reserve(result, new_size as usize);
-
-            // Write boolean values to child vector
-            let mut child_writer = ListVector::child_writer(result);
-            for (j, &val) in retention_result.iter().enumerate() {
-                child_writer.write_bool(current_size as usize + j, val);
-            }
-
-            ListVector::set_size(result, new_size as usize);
-            ListVector::set_entry(result, idx, current_size, retention_result.len() as u64);
+quack_rs::aggregate_finalize_callback!(state_finalize, |info, source, result, count, offset| {
+    // SAFETY: see above.
+    let Finalize {
+        states, mut out, ..
+    } = unsafe {
+        Finalize::<RetentionState, BoolListKind>::from_raw(info, source, result, count, offset)
+    };
+    for i in 0..out.count() {
+        match states.get(i) {
+            Some(state) => out.push(i, &state.finalize()),
+            None => out.set_null(i),
         }
     }
 });

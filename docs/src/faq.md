@@ -168,13 +168,12 @@ adding an independent constraint:
 
 | Mode | Effect |
 |---|---|
-| `strict` | Previously-matched condition must not refire before next step matches |
-| `strict_deduplication` | Alias for `strict` (matches ClickHouse semantics) |
-| `strict_order` | No earlier conditions may fire between matched steps |
-| `strict_increase` | Require strictly increasing timestamps between steps |
-| `strict_once` | Each event can advance the funnel by at most one step |
-| `allow_reentry` | Reset the funnel when condition 1 fires again |
-| `timestamp_dedup` | _Extension._ Skip events with the same timestamp as the previous step |
+| `strict_deduplication` | A condition firing again for a step already reached stops the scan (`'strict'` is an alias that ClickHouse 26.9 rejects) |
+| `strict_order` | Once a chain has been entered, an event matching no condition, or a step arriving before its predecessor has been reached, stops the scan |
+| `strict_increase` | Each step must be strictly later than the step before it, so one event cannot fill two steps |
+| `strict_once` | An event fills at most one step of a chain |
+| `allow_reentry` | Requires `strict_order`: a step arriving before its predecessor is skipped instead of stopping the scan |
+| `timestamp_dedup` | _Extension._ Same as `strict_increase` |
 
 Modes are independently combinable via a comma-separated string:
 
@@ -309,8 +308,8 @@ clause for these aggregate functions.
 
 Do **not** put an `ORDER BY` inside the function call
 (`window_funnel(... ORDER BY ts)`): DuckDB runs such ordered aggregates
-through a code path that crashes every C API aggregate, this extension's
-included (see [Which query shapes crash DuckDB?](#which-query-shapes-crash-duckdb)).
+through a code path that crashes every C API aggregate on DuckDB before
+2.0.0, this extension's included (see [Which query shapes crash DuckDB?](#which-query-shapes-crash-duckdb)).
 It is never needed, because every function sorts by timestamp itself.
 
 When events already arrive in timestamp order, a presorted check skips the
@@ -388,13 +387,14 @@ Memory usage depends on the function category:
 - `window_funnel`, `sequence_match`, `sequence_count`, `sequence_match_events`:
   Store every event as a 16-byte `Event` struct. For a group with 10,000 events,
   this requires approximately 160 KB.
-- `sequence_next_node`: Stores every event as a 32-byte `NextNodeEvent` struct
-  (includes an `Arc<str>` reference to the value column). For a group with 10,000
-  events, this requires approximately 320 KB plus string storage.
+- `sequence_next_node`: Stores every event as a 24-byte record plus the bytes
+  of its value (a value equal to the previous event's is stored once). For a
+  group with 10,000 events, this requires approximately 240 KB plus the value
+  bytes.
 
 **Rule of thumb**: For event-collecting functions, estimate memory as
 `16 bytes * (events in largest group)` for most functions, or
-`32 bytes * (events in largest group)` for `sequence_next_node`. The group is
+`24 bytes * (events in largest group)` plus the value bytes for `sequence_next_node`. The group is
 defined by `GROUP BY` for aggregate functions or `PARTITION BY` for `sessionize`.
 
 ### What happens if a single user has millions of events?
@@ -528,31 +528,40 @@ A defect in DuckDB's C API for aggregate functions
 ([duckdb/duckdb#26109](https://github.com/duckdb/duckdb/issues/26109)) makes
 DuckDB read out of bounds, and usually crash with a segmentation fault, when
 **any** aggregate registered through the C API, including every function in
-this extension, is called in these shapes:
+this extension, is called in certain shapes. Which DuckDB release crashes on
+which shape (`window_funnel`, run by `scripts/crash-shapes.sh`):
 
-- **`ORDER BY` inside the call**, such as `retention(c1, c2 ORDER BY ts)`.
-  Drop it: every function sorts by timestamp itself.
-- **An empty window**, `OVER ()`. Use `OVER (PARTITION BY 1)` instead.
-- **A frame written `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`**,
-  with `ROWS` or `RANGE`. Use `OVER (PARTITION BY u)` with no `ORDER BY`,
-  which covers the whole partition without crashing.
+| Query shape | 1.3.2 | 1.4.4 | 1.5.0 | 1.5.6 | 2.0.0 |
+|---|---|---|---|---|---|
+| `ORDER BY` inside the call, such as `retention(c1, c2 ORDER BY ts)` | crash | crash | crash | crash | ok |
+| `OVER ()` | crash | crash | crash | crash | ok |
+| A frame written `BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` | crash | crash | crash | crash | ok |
+| `OVER (PARTITION BY g)` or `OVER (PARTITION BY 1)`, no `ORDER BY` | crash | crash | ok | ok | ok |
+| `OVER (PARTITION BY g ORDER BY ts)`, running or bounded frame | ok | ok | ok | ok | ok |
 
-Verified on DuckDB 1.5.6, where all three exit with a segmentation fault
-(and on 1.3.2 and 1.4.4). On DuckDB 2.0.0 none of them crashed for any of the eight functions (100,000
-rows in one partition), and the seven event functions returned the same
-values as the plain aggregate, so the workarounds matter only for older
-releases. The safe alternatives return the same values as
-the equivalent `GROUP BY` (0 mismatches over 50 partitions of 400 rows).
-Other frames that cover the whole partition do not crash: `OVER (PARTITION
-BY u)`, `ROWS BETWEEN 100000 PRECEDING AND 100000 FOLLOWING`, and `ROWS
-BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING` all ran cleanly.
+On DuckDB 2.0.0 none of the shapes crashed for any of the eight functions
+(100,000 rows in one partition), and the seven event functions returned the
+same values as the plain aggregate. On 1.3.2 all eight functions crashed in the
+whole-partition shapes. The extension cannot work around this: it never sees
+the problem state array (see below). So on a release older than 2.0.0:
+
+- Drop `ORDER BY` from inside the call: every function sorts by timestamp itself.
+- Do not use `OVER ()`, `UNBOUNDED..UNBOUNDED` frames, or a window with only a
+  `PARTITION BY`. **`OVER (PARTITION BY u)` is safe only from DuckDB 1.5.0**;
+  earlier versions of this page recommended it as the replacement, which
+  crashes on 1.3.2 and 1.4.4.
+- For one value per partition use `GROUP BY` and join back (below), or a
+  bounded frame such as `ROWS BETWEEN 100000 PRECEDING AND 100000 FOLLOWING`
+  with an `ORDER BY`, which ran cleanly.
+
+The safe alternatives return the same values as the equivalent `GROUP BY` (0
+mismatches over 50 partitions of 400 rows).
 
 The extension cannot detect or refuse the crashing shapes: DuckDB passes a
 one-element state array while reporting several rows, and the C API has no
 bind hook through which an aggregate could reject the query. Valgrind showed
 no invalid reads for `GROUP BY`, `FILTER`, `DISTINCT`, running frames
-(`OVER (... ORDER BY ts)`), sliding frames, `EXCLUDE`, or `OVER (PARTITION
-BY u)`.
+(`OVER (... ORDER BY ts)`), sliding frames, or `EXCLUDE`.
 
 A whole-partition value can also be computed with `GROUP BY` and joined back:
 
@@ -588,6 +597,43 @@ PRECEDING AND CURRENT ROW`; the cost is then proportional to rows times frame
 width), or use
 `GROUP BY` when one value per user is enough. `sessionize` is not affected:
 its state is a few integers.
+
+### Why does memory grow after `GROUP BY ... LIMIT`?
+
+When DuckDB stops a grouped scan early, for example `SELECT g, window_funnel_events(...)
+FROM t GROUP BY g LIMIT 10`, or when a query is interrupted or fails above the
+aggregate, it never destroys the aggregate states of the groups it did not
+reach. The events those states collected stay allocated until the process
+exits. This is DuckDB's behaviour for every aggregate that owns heap memory
+(the extension has no arena to put its states in), and valgrind attributes the
+loss to the unreached groups only: a full scan leaks nothing.
+
+Measured on 300,000 groups of 10 events (DuckDB 2.0.0, one thread), ten
+`LIMIT 10` queries in one session lose about 77 MB each for
+`window_funnel_events` and `sequence_count` and about 136 MB each for
+`sequence_next_node`. If you need the first few groups, put an `ORDER BY` before
+the `LIMIT` (the scan then reaches every group), filter first
+(`WHERE user_id IN (...)`), or materialise the aggregate into a table and
+`LIMIT` that. A process that runs many such queries and lives long, such as a
+notebook, will grow.
+
+### Why does `sessionize` give odd results with `GROUP BY` or a descending order?
+
+`sessionize` compares each row with the previous one in window order, so it
+needs `OVER (... ORDER BY ts)` with an ascending order. A plain `GROUP BY`
+aggregate sees rows in whatever order and thread split DuckDB chooses (the
+result changes with `threads` and with `preserve_insertion_order`), and a
+descending order reads every gap as enormous and opens a new session on every
+row. Within an ascending window the result is exact, including across
+`±infinity` timestamps.
+
+### How many conditions can I pass?
+
+At most 32 (`retention`, `sequence_match`, `sequence_count` and
+`sequence_match_events` need at least 2; `window_funnel` and
+`window_funnel_events` at least 1; `sequence_next_node` takes a base condition
+plus 1 to 32 event conditions). With a 33rd, DuckDB reports a binder error that
+lists every overload (tens of kilobytes); the limit is not mentioned in it.
 
 ### Can I nest these functions or use them in subqueries?
 
@@ -787,7 +833,7 @@ previous runs.
    function sorts by timestamp itself, and when rows already arrive in
    timestamp order (for example, from a file written in that order) a
    presorted check skips the O(n log n) sort. Never put `ORDER BY` inside the
-   call (`window_funnel(... ORDER BY ts)`): it crashes DuckDB (see
+   call (`window_funnel(... ORDER BY ts)`): it crashes DuckDB before 2.0.0 (see
    [Which query shapes crash DuckDB?](#which-query-shapes-crash-duckdb)).
 
 4. **Use Parquet format.** Parquet's columnar storage and predicate pushdown

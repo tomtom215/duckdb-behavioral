@@ -23,6 +23,26 @@ pub fn conflict_message(function: &str, argument: &str, a: &str, b: &str) -> Str
     )
 }
 
+/// The error for an `INTERVAL` argument that is not a fixed span of time.
+///
+/// An interval is rejected when it has months (28-31 days) or its total does
+/// not fit in 64-bit microseconds. `months` is the interval's month component,
+/// which picks the explanation.
+#[must_use]
+pub fn invalid_interval_message(function: &str, argument: &str, months: i32) -> String {
+    if months == 0 {
+        format!(
+            "{function}: invalid INTERVAL {argument}: the total must fit in signed 64-bit \
+             microseconds"
+        )
+    } else {
+        format!(
+            "{function}: invalid INTERVAL {argument}: month-based intervals are ambiguous \
+             (28-31 days); use day/hour/minute/second units instead"
+        )
+    }
+}
+
 /// The error for an event buffer that could not grow.
 #[must_use]
 pub fn out_of_memory_message(function: &str, events: usize) -> String {
@@ -32,6 +52,16 @@ pub fn out_of_memory_message(function: &str, events: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_interval_message_names_the_actual_problem() {
+        let months = invalid_interval_message("f", "window", 1);
+        assert!(months.contains("month-based"), "{months}");
+        assert!(!months.contains("64-bit"), "{months}");
+        let overflow = invalid_interval_message("f", "gap", 0);
+        assert!(overflow.contains("64-bit"), "{overflow}");
+        assert!(!overflow.contains("month"), "{overflow}");
+    }
 
     #[test]
     fn conflict_message_does_not_depend_on_argument_order() {

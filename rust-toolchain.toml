@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Tom F. (https://github.com/tomtom215/duckdb-behavioral)
 
+# CI, releases and contributors build with this exact compiler, so a new Rust
+# release cannot turn a green tree red (it has: a new clippy lint broke CI in
+# the 0.10.0 cycle). .github/workflows/scheduled.yml builds with the next
+# stable and beta weekly; bump this line when those pass. The MSRV
+# (Cargo.toml `rust-version`) is checked separately by the `msrv` CI job.
 [toolchain]
-channel = "stable"
+channel = "1.97.0"
 components = ["rustfmt", "clippy"]

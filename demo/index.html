@@ -118,9 +118,9 @@
 </div>
 
 <div class="note">
-  This extension provides 7 aggregate functions for user behavior analysis:
+  This extension provides 8 aggregate functions for user behavior analysis:
   sessionization, retention cohorts, conversion funnels, sequence pattern matching, and more.
-  All functions match ClickHouse semantics for easy migration.
+  Six follow ClickHouse's semantics for easy migration; the differences are listed in the docs.
 </div>
 
 <div class="tabs" id="tabs">
@@ -377,12 +377,13 @@
 
 <div class="install" style="margin-top:16px">
   <h3>Build from Source</h3>
-<pre class="sql"><span class="cm">-- Build from source</span>
-cargo build --release
+<pre class="sql"><span class="cm">-- Build from source (adds the metadata footer DuckDB requires)</span>
+git submodule update --init --recursive
+make configure release
 
-<span class="cm">-- Load locally-built extension (requires -unsigned)</span>
+<span class="cm">-- Load the locally-built extension (requires -unsigned)</span>
 duckdb -unsigned
-<span class="kw">LOAD</span> <span class="str">'target/release/libbehavioral.so'</span>;</pre>
+<span class="kw">LOAD</span> <span class="str">'build/release/behavioral.duckdb_extension'</span>;</pre>
 </div>
 
 <div class="install" style="margin-top:16px">
@@ -392,6 +393,7 @@ duckdb -unsigned
     <tr><td><code>sessionize(ts, interval)</code></td><td>BIGINT</td><td>Window function: session IDs</td></tr>
     <tr><td><code>retention(bool, ...)</code></td><td>BOOLEAN[]</td><td>Cohort retention analysis</td></tr>
     <tr><td><code>window_funnel(interval, ts, bool, ...)</code></td><td>INTEGER</td><td>Conversion funnel tracking</td></tr>
+    <tr><td><code>window_funnel_events(interval, ts, bool, ...)</code></td><td>TIMESTAMP[]</td><td>Timestamps of the best funnel chain</td></tr>
     <tr><td><code>sequence_match(pattern, ts, bool, ...)</code></td><td>BOOLEAN</td><td>Pattern matching over events</td></tr>
     <tr><td><code>sequence_count(pattern, ts, bool, ...)</code></td><td>BIGINT</td><td>Count pattern matches</td></tr>
     <tr><td><code>sequence_match_events(pattern, ts, bool, ...)</code></td><td>TIMESTAMP[]</td><td>Matched step timestamps</td></tr>
