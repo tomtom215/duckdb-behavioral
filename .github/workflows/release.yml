@@ -53,6 +53,9 @@ jobs:
     name: Validate version
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read # the CI Gate check run of the tagged commit
     outputs:
       version: ${{ steps.version.outputs.version }}
       semver: ${{ steps.version.outputs.semver }}
@@ -60,6 +63,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0 # the main-ancestry check below needs history
           persist-credentials: false
 
       - name: Determine version
@@ -80,6 +84,35 @@ jobs:
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
           echo "semver=${TAG#v}" >> "$GITHUB_OUTPUT"
           echo "Tag: $TAG"
+
+      # Any tag would otherwise publish a release, push its commit into
+      # description.yml on main and be offered to the community channel. A
+      # stable release must be a commit of main on which CI Gate passed.
+      # Pre-release tags (v1.2.3-rc.1) are exempt: they publish a pre-release
+      # and never touch description.yml.
+      - name: Tagged commit is on main and passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEMVER: ${{ steps.version.outputs.semver }}
+        run: |
+          set -euo pipefail
+          if grep -q -- '-' <<<"$SEMVER"; then
+            echo "Pre-release $SEMVER: main and CI checks skipped"
+            exit 0
+          fi
+          sha="$(git rev-parse HEAD)"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$sha" FETCH_HEAD; then
+            echo "::error::$sha is not a commit of main; merge the release first"
+            exit 1
+          fi
+          passed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs?check_name=CI%20Gate" \
+            --jq '[.check_runs[] | select(.conclusion == "success")] | length')"
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::no successful 'CI Gate' check run on $sha"
+            exit 1
+          fi
+          echo "$sha is on main and CI Gate passed"
 
       - name: Verify Cargo.toml, description.yml and CHANGELOG.md match the tag
         env:
@@ -172,6 +205,12 @@ jobs:
           make configure
           make release
 
+      # `make release` calls `cargo build --release` without --locked, so a
+      # stale Cargo.lock would be re-resolved and the attested binary would
+      # differ from the one CI tested.
+      - name: Cargo.lock unchanged by the build
+        run: git diff --exit-code -- Cargo.lock
+
       - name: Verify binary architecture
         env:
           LIB_EXT: ${{ matrix.lib_ext }}
@@ -189,10 +228,12 @@ jobs:
             fi
           done
 
+      # No DUCKDB_PLATFORM here: extension-ci-tools turns the test targets into
+      # no-ops when it is `linux_amd64` (it skips them outside its Docker
+      # image), so setting it would skip the tests on the main platform. The
+      # platform is detected on the runner, which is the platform built for.
       - name: SQL logic tests
         if: matrix.native
-        env:
-          DUCKDB_PLATFORM: ${{ matrix.platform }}
         run: make test_release
 
       - name: Check the binary in a real DuckDB CLI
@@ -295,11 +336,13 @@ jobs:
             echo '### Verify'
             echo
             echo '```bash'
-            echo 'sha256sum -c SHA256SUMS.txt'
+            echo 'sha256sum -c --ignore-missing SHA256SUMS.txt'
             echo "gh attestation verify ${EXTENSION_NAME}-${VERSION}-linux_amd64.tar.gz --repo ${GITHUB_REPOSITORY}"
             echo '```'
           } > release-notes.md
-          if grep -qE '-(alpha|beta|rc)' <<<"$SEMVER"; then
+          # Any suffix is a pre-release, as in `validate` and in
+          # `update-description-ref`, which skip every tag containing "-".
+          if grep -q -- '-' <<<"$SEMVER"; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"

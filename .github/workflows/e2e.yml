@@ -54,6 +54,11 @@ jobs:
         run: |
           make configure
           make release
+      # The community Makefile calls `cargo build --release` without --locked
+      # (it is not ours to change), so a stale Cargo.lock would be re-resolved
+      # silently and the binary would differ from the one CI tested.
+      - name: Cargo.lock unchanged by the build
+        run: git diff --exit-code -- Cargo.lock
       - name: SQL logic tests (test/sql)
         run: make test_release
       # The stamp promises every DuckDB with C API v1.2.0; a call to a slot

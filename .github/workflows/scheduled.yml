@@ -53,8 +53,8 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
           cache-key: canary-${{ matrix.toolchain }}
-      - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --all-features --locked
 
   # Cargo.lock pins what CI tests. This job tests what a fresh `cargo update`
   # would pick, which is what a user building from source without --locked
@@ -71,7 +71,7 @@ jobs:
         with:
           cache-key: latest-deps
       - run: cargo update
-      - run: cargo test
+      - run: cargo test --all-features
 
   # The binary is stamped for the stable C API, so it must keep loading into
   # DuckDB releases that do not exist yet. Today's nightly stands in for the
@@ -99,3 +99,39 @@ jobs:
         run: |
           python -m pip install --pre duckdb
           python scripts/nightly-smoke.py build/release/behavioral.duckdb_extension
+
+  # Coverage-guided fuzzing of the pure-Rust core, two minutes per target. It
+  # reaches panics and hangs that the property tests' generators do not (a hang
+  # matters most: DuckDB gives an aggregate no way to be interrupted). The
+  # targets are in fuzz/; run one locally with
+  # `cargo +nightly fuzz run parse -- -max_total_time=60 -timeout=5`.
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, sequence, funnel]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: nightly
+          cache-key: fuzz
+      - name: Install cargo-fuzz
+        run: cargo install --locked --version 0.13.2 cargo-fuzz
+      - name: Fuzz ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz run "$TARGET" -- -max_total_time=120 -timeout=5 -dict=fuzz/dict.txt
+      - name: Keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts
+          retention-days: 30
+          if-no-files-found: ignore

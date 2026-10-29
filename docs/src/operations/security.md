@@ -155,5 +155,8 @@ signing and verification system, which the build system handles automatically.
 
 ## Reporting Vulnerabilities
 
-Report security issues via GitHub Issues at
-[github.com/tomtom215/duckdb-behavioral/issues](https://github.com/tomtom215/duckdb-behavioral/issues).
+Report a suspected vulnerability privately, through a
+[GitHub Security Advisory](https://github.com/tomtom215/duckdb-behavioral/security/advisories/new).
+Do not open a public issue for it. A defect that is not a vulnerability (a
+wrong result, a crash on valid input) belongs in a normal
+[issue](https://github.com/tomtom215/duckdb-behavioral/issues).
