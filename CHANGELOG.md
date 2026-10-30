@@ -142,9 +142,13 @@ names `strict_deduplication` instead of its alias `strict`.
   baselines for `sessionize` and `retention`, fails unless results are identical
   across repetitions, thread counts and baselines, and records every individual
   time, the exact SQL, the machine and the extension's SHA-256 as JSON. Method
-  and results: `docs/src/internals/hits-benchmark.md`. Its first cross-check
-  found a NULL bug in its own `sessionize` baseline (fixed before any result
-  was recorded); the extension was right.
+  and results: `docs/src/internals/hits-benchmark.md`; `scripts/bench-hits-charts.py`
+  draws its three figures from the result JSON. On a shared 4-vCPU virtual machine
+  a three-step funnel over all 99,997,497 events took 7.0 s and `sessionize` 9.4 s,
+  against 2.4 s for a plain scan of the same columns (3 runs each); `retention`
+  was level with its pure-SQL equivalent and `sequence_next_node` was the slowest
+  query. Its first cross-check found a NULL bug in its own `sessionize` baseline
+  (fixed before any result was recorded); the extension was right.
 - `docs/function_descriptions.csv`: the description, comment and a runnable
   example for each of the nine functions, which duckdb.org shows on the
   extension's page when the file is copied into the community-extensions pull

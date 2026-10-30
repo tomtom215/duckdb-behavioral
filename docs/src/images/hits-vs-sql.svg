@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 500" width="920" height="500" role="img" aria-labelledby="t d">
+<title id="t">The same question, written as SQL</title>
+<desc id="d">Columns of how many times longer the same question takes as hand-written SQL than as the extension function: sessionize 1.13x at 1M rows; sessionize 1.16x at 10M rows; sessionize 1.35x at 100M rows; retention 0.98x at 1M rows; retention 1.00x at 10M rows; retention 0.93x at 100M rows.</desc>
+<rect width="920" height="500" rx="16" fill="#1a1a19"/>
+<text x="36" y="48" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="22" font-weight="650" fill="#f0efec">The same question, written as SQL</text>
+<text x="36" y="74" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13.5" fill="#c3c2b7">Time of the equivalent SQL divided by the extension's, on the same engine and data. The answers are identical.</text>
+<text x="36" y="106" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#f0efec">sessionize</text>
+<text x="128" y="106" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12" fill="#8c8b84">sessions per user, 30-minute gap</text>
+<line x1="80" y1="390.0" x2="374" y2="390.0" stroke="#2f2f2d" stroke-width="1"/>
+<text x="72" y="394.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">0×</text>
+<line x1="80" y1="327.5" x2="374" y2="327.5" stroke="#2f2f2d" stroke-width="1"/>
+<text x="72" y="331.5" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">0.5×</text>
+<line x1="80" y1="265.0" x2="374" y2="265.0" stroke="#2f2f2d" stroke-width="1"/>
+<text x="72" y="269.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">1×</text>
+<line x1="80" y1="202.5" x2="374" y2="202.5" stroke="#2f2f2d" stroke-width="1"/>
+<text x="72" y="206.5" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">1.5×</text>
+<line x1="80" y1="140.0" x2="374" y2="140.0" stroke="#2f2f2d" stroke-width="1"/>
+<text x="72" y="144.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">2×</text>
+<line x1="80" y1="265.0" x2="374" y2="265.0" stroke="#8c8b84" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="382" y="269.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">same speed</text>
+<path d="M120.5,390 v-137.0 a4,4 0 0 1 4,-4 h36 a4,4 0 0 1 4,4 v137.0 z" fill="#3987e5"><title>sessionize at 1M rows: extension 0.189 s, pure SQL 0.214 s, ratio 1.13</title></path>
+<text x="142.5" y="240.0" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13" font-weight="650" fill="#f0efec">1.13×</text>
+<text x="142.5" y="410" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11.5" fill="#c3c2b7">1M</text>
+<text x="142.5" y="427" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">ext 0.19 s</text>
+<text x="142.5" y="441" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">SQL 0.21 s</text>
+<path d="M205.0,390 v-140.4 a4,4 0 0 1 4,-4 h36 a4,4 0 0 1 4,4 v140.4 z" fill="#3987e5"><title>sessionize at 10M rows: extension 1.165 s, pure SQL 1.346 s, ratio 1.16</title></path>
+<text x="227.0" y="236.6" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13" font-weight="650" fill="#f0efec">1.16×</text>
+<text x="227.0" y="410" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11.5" fill="#c3c2b7">10M</text>
+<text x="227.0" y="427" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">ext 1.17 s</text>
+<text x="227.0" y="441" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">SQL 1.35 s</text>
+<path d="M289.5,390 v-164.5 a4,4 0 0 1 4,-4 h36 a4,4 0 0 1 4,4 v164.5 z" fill="#3987e5"><title>sessionize at 100M rows: extension 9.409 s, pure SQL 12.680 s, ratio 1.35</title></path>
+<text x="311.5" y="212.5" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13" font-weight="650" fill="#f0efec">1.35×</text>
+<text x="311.5" y="410" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11.5" fill="#c3c2b7">100M</text>
+<text x="311.5" y="427" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">ext 9.41 s</text>
+<text x="311.5" y="441" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">SQL 12.68 s</text>
+<text x="466" y="106" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="13.5" fill="#f0efec">retention</text>
+<text x="550" y="106" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12" fill="#8c8b84">seven-day retention</text>
+<line x1="510" y1="390.0" x2="804" y2="390.0" stroke="#2f2f2d" stroke-width="1"/>
+<text x="502" y="394.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">0×</text>
+<line x1="510" y1="327.5" x2="804" y2="327.5" stroke="#2f2f2d" stroke-width="1"/>
+<text x="502" y="331.5" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">0.5×</text>
+<line x1="510" y1="265.0" x2="804" y2="265.0" stroke="#2f2f2d" stroke-width="1"/>
+<text x="502" y="269.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">1×</text>
+<line x1="510" y1="202.5" x2="804" y2="202.5" stroke="#2f2f2d" stroke-width="1"/>
+<text x="502" y="206.5" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">1.5×</text>
+<line x1="510" y1="140.0" x2="804" y2="140.0" stroke="#2f2f2d" stroke-width="1"/>
+<text x="502" y="144.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">2×</text>
+<line x1="510" y1="265.0" x2="804" y2="265.0" stroke="#8c8b84" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="812" y="269.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">same speed</text>
+<path d="M550.5,390 v-118.7 a4,4 0 0 1 4,-4 h36 a4,4 0 0 1 4,4 v118.7 z" fill="#3987e5"><title>retention at 1M rows: extension 0.120 s, pure SQL 0.118 s, ratio 0.98</title></path>
+<text x="572.5" y="258.3" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13" font-weight="650" fill="#f0efec">0.98×</text>
+<text x="572.5" y="410" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11.5" fill="#c3c2b7">1M</text>
+<text x="572.5" y="427" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">ext 0.12 s</text>
+<text x="572.5" y="441" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">SQL 0.12 s</text>
+<path d="M635.0,390 v-121.6 a4,4 0 0 1 4,-4 h36 a4,4 0 0 1 4,4 v121.6 z" fill="#3987e5"><title>retention at 10M rows: extension 0.317 s, pure SQL 0.318 s, ratio 1.00</title></path>
+<text x="657.0" y="255.4" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13" font-weight="650" fill="#f0efec">1.00×</text>
+<text x="657.0" y="410" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11.5" fill="#c3c2b7">10M</text>
+<text x="657.0" y="427" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">ext 0.32 s</text>
+<text x="657.0" y="441" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">SQL 0.32 s</text>
+<path d="M719.5,390 v-112.0 a4,4 0 0 1 4,-4 h36 a4,4 0 0 1 4,4 v112.0 z" fill="#3987e5"><title>retention at 100M rows: extension 2.449 s, pure SQL 2.272 s, ratio 0.93</title></path>
+<text x="741.5" y="265.0" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13" font-weight="650" fill="#f0efec">0.93×</text>
+<text x="741.5" y="410" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11.5" fill="#c3c2b7">100M</text>
+<text x="741.5" y="427" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">ext 2.45 s</text>
+<text x="741.5" y="441" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">SQL 2.27 s</text>
+<text x="36" y="478" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">ClickBench hits, 99,997,497 rows · Xeon @ 2.10GHz, 4 vCPU · v2.0.0 · extension 0.11.0 · extension vs pure-SQL equivalent, medians</text>
+</svg>

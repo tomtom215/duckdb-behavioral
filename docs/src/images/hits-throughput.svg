@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 604" width="920" height="604" role="img" aria-labelledby="t d">
+<title id="t">Throughput at 100M rows</title>
+<desc id="d">Horizontal bars of throughput in million rows per second for 11 queries over 99,997,497 rows; scan control 42.4, sessionize 10.6.</desc>
+<rect width="920" height="604" rx="16" fill="#1a1a19"/>
+<text x="36" y="48" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="22" font-weight="650" fill="#f0efec">Throughput at 100M rows</text>
+<text x="36" y="74" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="13.5" fill="#c3c2b7">Each behavioral query beside a plain scan of the same columns: the gap is what the function adds.</text>
+<line x1="300.0" y1="98" x2="300.0" y2="502" stroke="#2f2f2d" stroke-width="1"/>
+<text x="300.0" y="522" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">0</text>
+<line x1="404.0" y1="98" x2="404.0" y2="502" stroke="#2f2f2d" stroke-width="1"/>
+<text x="404.0" y="522" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">10</text>
+<line x1="508.0" y1="98" x2="508.0" y2="502" stroke="#2f2f2d" stroke-width="1"/>
+<text x="508.0" y="522" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">20</text>
+<line x1="612.0" y1="98" x2="612.0" y2="502" stroke="#2f2f2d" stroke-width="1"/>
+<text x="612.0" y="522" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">30</text>
+<line x1="716.0" y1="98" x2="716.0" y2="502" stroke="#2f2f2d" stroke-width="1"/>
+<text x="716.0" y="522" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">40</text>
+<line x1="820.0" y1="98" x2="820.0" y2="502" stroke="#2f2f2d" stroke-width="1"/>
+<text x="820.0" y="522" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">50</text>
+<text x="560.0" y="542" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11.5" fill="#c3c2b7">million rows per second (median of 3 runs; whisker = fastest to slowest run)</text>
+<text x="284" y="123.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">scan (control)</text>
+<text x="284" y="137.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">plain per-user aggregate</text>
+<path d="M300,120.0 h437.0 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-437.0 z" fill="#6b6a64"><title>scan: 42.4 M rows/s, median 2.358 s (runs 2.348 to 2.688 s)</title></path>
+<path d="M686.9,119.0 v10 M686.9,124.0 H743.0 M743.0,119.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="753.0" y="128.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">42.4<tspan font-weight="400" fill="#c3c2b7"> · 2.36 s</tspan></text>
+<text x="284" y="159.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">sequence_count_one_group</text>
+<text x="284" y="173.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">all rows, one group</text>
+<path d="M300,156.0 h446.2 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-446.2 z" fill="#3987e5"><title>sequence_count_one_group: 43.3 M rows/s, median 2.310 s (runs 2.244 to 2.327 s)</title></path>
+<path d="M746.9,155.0 v10 M746.9,160.0 H763.5 M763.5,155.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="773.5" y="164.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">43.3<tspan font-weight="400" fill="#c3c2b7"> · 2.31 s</tspan></text>
+<text x="284" y="195.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">window_funnel_one_group</text>
+<text x="284" y="209.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">all rows, one group</text>
+<path d="M300,192.0 h426.7 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-426.7 z" fill="#3987e5"><title>window_funnel_one_group: 41.4 M rows/s, median 2.414 s (runs 2.401 to 2.449 s)</title></path>
+<path d="M724.7,191.0 v10 M724.7,196.0 H733.1 M733.1,191.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="743.1" y="200.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">41.4<tspan font-weight="400" fill="#c3c2b7"> · 2.41 s</tspan></text>
+<text x="284" y="231.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">retention</text>
+<text x="284" y="245.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,228.0 h420.7 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-420.7 z" fill="#3987e5"><title>retention: 40.8 M rows/s, median 2.449 s (runs 2.418 to 2.458 s)</title></path>
+<path d="M723.0,227.0 v10 M723.0,232.0 H730.0 M730.0,227.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="740.0" y="236.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">40.8<tspan font-weight="400" fill="#c3c2b7"> · 2.45 s</tspan></text>
+<text x="284" y="267.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">window_funnel_events</text>
+<text x="284" y="281.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,264.0 h145.1 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-145.1 z" fill="#3987e5"><title>window_funnel_events: 14.3 M rows/s, median 6.973 s (runs 6.969 to 7.033 s)</title></path>
+<path d="M447.9,263.0 v10 M447.9,268.0 H449.2 M449.2,263.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="459.2" y="272.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">14.3<tspan font-weight="400" fill="#c3c2b7"> · 6.97 s</tspan></text>
+<text x="284" y="303.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">window_funnel</text>
+<text x="284" y="317.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,300.0 h144.8 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-144.8 z" fill="#3987e5"><title>window_funnel: 14.3 M rows/s, median 6.990 s (runs 6.917 to 7.344 s)</title></path>
+<path d="M441.6,299.0 v10 M441.6,304.0 H450.4 M450.4,299.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="460.4" y="308.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">14.3<tspan font-weight="400" fill="#c3c2b7"> · 6.99 s</tspan></text>
+<text x="284" y="339.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">sequence_count</text>
+<text x="284" y="353.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,336.0 h143.8 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-143.8 z" fill="#3987e5"><title>sequence_count: 14.2 M rows/s, median 7.037 s (runs 7.006 to 7.124 s)</title></path>
+<path d="M446.0,335.0 v10 M446.0,340.0 H448.4 M448.4,335.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="458.4" y="344.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">14.2<tspan font-weight="400" fill="#c3c2b7"> · 7.04 s</tspan></text>
+<text x="284" y="375.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">sequence_match_events</text>
+<text x="284" y="389.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,372.0 h137.7 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-137.7 z" fill="#3987e5"><title>sequence_match_events: 13.6 M rows/s, median 7.340 s (runs 7.288 to 7.506 s)</title></path>
+<path d="M438.6,371.0 v10 M438.6,376.0 H442.7 M442.7,371.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="452.7" y="380.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">13.6<tspan font-weight="400" fill="#c3c2b7"> · 7.34 s</tspan></text>
+<text x="284" y="411.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">sequence_match</text>
+<text x="284" y="425.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,408.0 h119.1 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-119.1 z" fill="#3987e5"><title>sequence_match: 11.8 M rows/s, median 8.449 s (runs 8.408 to 8.758 s)</title></path>
+<path d="M418.7,407.0 v10 M418.7,412.0 H423.7 M423.7,407.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="433.7" y="416.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">11.8<tspan font-weight="400" fill="#c3c2b7"> · 8.45 s</tspan></text>
+<text x="284" y="447.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">sessionize</text>
+<text x="284" y="461.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,444.0 h106.5 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-106.5 z" fill="#3987e5"><title>sessionize: 10.6 M rows/s, median 9.409 s (runs 9.101 to 9.443 s)</title></path>
+<path d="M410.1,443.0 v10 M410.1,448.0 H414.3 M414.3,443.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="424.3" y="452.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">10.6<tspan font-weight="400" fill="#c3c2b7"> · 9.41 s</tspan></text>
+<text x="284" y="483.0" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#f0efec">sequence_next_node</text>
+<text x="284" y="497.0" text-anchor="end" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="10.5" fill="#8c8b84">one group per user</text>
+<path d="M300,480.0 h35.7 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-35.7 z" fill="#3987e5"><title>sequence_next_node: 3.8 M rows/s, median 26.188 s (runs 25.601 to 27.605 s)</title></path>
+<path d="M337.7,479.0 v10 M337.7,484.0 H340.6 M340.6,479.0 v10" stroke="#f0efec" stroke-width="1.4" fill="none" opacity="0.85"/>
+<text x="350.6" y="488.5" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12.5" font-weight="600" fill="#f0efec">3.8<tspan font-weight="400" fill="#c3c2b7"> · 26.19 s</tspan></text>
+<text x="36" y="582" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="11" fill="#8c8b84">ClickBench hits, 99,997,497 rows · Xeon @ 2.10GHz, 4 vCPU · v2.0.0 · extension 0.11.0 · commit 63f6feb</text>
+</svg>

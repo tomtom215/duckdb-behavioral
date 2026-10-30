@@ -437,6 +437,14 @@ branch (ratios 0.93 to 1.07, alternating runs); it also found and fixed the
 same machine in the same session, never against the table above from a
 different machine.
 
+**Real data, end to end:** `scripts/bench-hits.py` runs the eight functions as SQL over the
+public ClickBench `hits` table (1M, 10M or 99,997,497 rows) with pinned file checksums, a scan
+control, pure-SQL baselines for `sessionize` and `retention`, and result-identity checks across
+runs, threads and baselines. Results are in `benches/hits/results/`, the method in
+`docs/src/internals/hits-benchmark.md`, the figures from `scripts/bench-hits-charts.py`. It is
+not comparable with ClickBench or ClickHouse numbers (that page says why). Run nothing else on
+the machine while it runs.
+
 Key optimizations: u32 bitmask conditions (eliminates per-event heap alloc),
 in-place O(N) combine (replaces O(N^2) merge-allocate), a
 feasibility-then-greedy sequence matcher (replaced a backtracking search that

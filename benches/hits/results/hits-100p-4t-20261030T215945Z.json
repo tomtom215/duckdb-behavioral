@@ -1,0 +1,274 @@
+{
+ "environment": {
+  "utc": "2026-10-30T21:59:45Z",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "logical_cpus": 4,
+  "memory_gib": 15.71,
+  "cgroup_cpu_max": null,
+  "kernel": "6.18.44-fc-v185",
+  "os": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+  "duckdb": "v2.0.0 (Cyanoptera) d54cbbe3df",
+  "extension_sha256": "9130fdbaeb829121dee556658f6e82ba53da5b83e774a9f9da1231a9ca084310",
+  "extension_bytes": 628230,
+  "extension_version": "0.11.0",
+  "git_commit": "63f6feb3a0400d3fcd4253d4bf66272c7c655e7e",
+  "git_tree_dirty": false
+ },
+ "settings": {
+  "partitions": 100,
+  "threads": 4,
+  "reps": 3,
+  "memory_limit": "10GB",
+  "verify_threads": false,
+  "query_set_version": 1,
+  "dataset_source": "https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_{i}.parquet",
+  "dataset_bytes": 14737666736,
+  "dataset_sha256_checked": true
+ },
+ "rows": 99997497,
+ "verified": true,
+ "checks": {
+  "identical_across_runs": true,
+  "pure_sql_baselines_compared": 2,
+  "single_thread_compared": 0,
+  "queries_run": 11
+ },
+ "problems": [],
+ "queries": [
+  {
+   "id": "scan",
+   "function": null,
+   "shape": "per user",
+   "title": "Scan control: the same columns, a plain aggregate per user",
+   "sql": "SELECT count(*) AS users, sum(n) AS events, sum(s) AS searches, sum(c) AS clicks, sum(dl) AS downloads\nFROM (SELECT UserID, count(*) AS n, count_if(searched) AS s, count_if(clicked) AS c, count_if(downloaded) AS dl,\n             min(ts) AS first_seen, max(d) AS last_day, max(CounterID) AS site\n      FROM hits GROUP BY UserID);",
+   "load_average_before": "1.88 0.93 0.58 1/106 23465",
+   "result": "17630976,99997497,13172392,2058511,896038",
+   "time": {
+    "runs": [
+     2.6879,
+     2.3476,
+     2.358
+    ],
+    "median_s": 2.358,
+    "min_s": 2.3476,
+    "max_s": 2.6879
+   }
+  },
+  {
+   "id": "sessionize",
+   "function": "sessionize",
+   "shape": "per user",
+   "title": "Sessions per user, 30-minute gap (window function)",
+   "sql": "SELECT count(*) AS users, sum(sessions) AS sessions FROM (\n  SELECT UserID, max(sid) AS sessions FROM (\n    SELECT UserID, sessionize(ts, INTERVAL '30 minutes') OVER (PARTITION BY UserID ORDER BY ts) AS sid FROM hits)\n  GROUP BY UserID);",
+   "load_average_before": "2.05 0.98 0.60 1/108 23541",
+   "result": "17630976,26181387",
+   "time": {
+    "runs": [
+     9.4432,
+     9.101,
+     9.4092
+    ],
+    "median_s": 9.4092,
+    "min_s": 9.101,
+    "max_s": 9.4432
+   },
+   "baseline_sql": "SELECT count(*) AS users, sum(sessions) AS sessions FROM (\n  SELECT UserID, max(sid) AS sessions FROM (\n    SELECT UserID,\n           1 + sum(CASE WHEN gap > INTERVAL '30 minutes' THEN 1 ELSE 0 END)\n                 OVER (PARTITION BY UserID ORDER BY ts ROWS UNBOUNDED PRECEDING) AS sid\n    FROM (SELECT UserID, ts, ts - lag(ts) OVER (PARTITION BY UserID ORDER BY ts) AS gap FROM hits))\n  GROUP BY UserID);",
+   "baseline_time": {
+    "runs": [
+     12.2116,
+     12.6801,
+     12.8437
+    ],
+    "median_s": 12.6801,
+    "min_s": 12.2116,
+    "max_s": 12.8437
+   },
+   "baseline_result": "17630976,26181387",
+   "matches_baseline": true
+  },
+  {
+   "id": "retention",
+   "function": "retention",
+   "shape": "per user",
+   "title": "Seven-day retention from 2013-07-02",
+   "sql": "SELECT count(*) AS users, sum(r[1]::INT) AS d0, sum(r[2]::INT) AS d1, sum(r[3]::INT) AS d2, sum(r[4]::INT) AS d3, sum(r[5]::INT) AS d4, sum(r[6]::INT) AS d5, sum(r[7]::INT) AS d6\nFROM (SELECT retention(d = DATE '2013-07-02', d = DATE '2013-07-03', d = DATE '2013-07-04', d = DATE '2013-07-05', d = DATE '2013-07-06', d = DATE '2013-07-07', d = DATE '2013-07-08') AS r FROM hits GROUP BY UserID);",
+   "load_average_before": "3.92 1.75 0.89 1/108 23707",
+   "result": "17630976,841790,52625,0,11724,14142,1605,3108",
+   "time": {
+    "runs": [
+     2.4488,
+     2.4584,
+     2.4185
+    ],
+    "median_s": 2.4488,
+    "min_s": 2.4185,
+    "max_s": 2.4584
+   },
+   "baseline_sql": "SELECT count(*) AS users, sum(c1::INT) AS d0, sum((c1 AND c2)::INT) AS d1, sum((c1 AND c3)::INT) AS d2, sum((c1 AND c4)::INT) AS d3, sum((c1 AND c5)::INT) AS d4, sum((c1 AND c6)::INT) AS d5, sum((c1 AND c7)::INT) AS d6\nFROM (SELECT bool_or(d = DATE '2013-07-02') AS c1, bool_or(d = DATE '2013-07-03') AS c2, bool_or(d = DATE '2013-07-04') AS c3, bool_or(d = DATE '2013-07-05') AS c4, bool_or(d = DATE '2013-07-06') AS c5, bool_or(d = DATE '2013-07-07') AS c6, bool_or(d = DATE '2013-07-08') AS c7 FROM hits GROUP BY UserID);",
+   "baseline_time": {
+    "runs": [
+     2.2394,
+     2.387,
+     2.2717
+    ],
+    "median_s": 2.2717,
+    "min_s": 2.2394,
+    "max_s": 2.387
+   },
+   "baseline_result": "17630976,841790,52625,0,11724,14142,1605,3108",
+   "matches_baseline": true
+  },
+  {
+   "id": "window_funnel",
+   "function": "window_funnel",
+   "shape": "per user",
+   "title": "Funnel search, link click, download within 1 hour",
+   "sql": "SELECT level, count(*) AS users FROM (\n  SELECT window_funnel(INTERVAL '1 hour', ts, searched, clicked, downloaded) AS level FROM hits GROUP BY UserID)\nGROUP BY level ORDER BY level;",
+   "load_average_before": "3.94 1.86 0.95 1/112 23837",
+   "result": "0,9606355\n1,7825449\n2,152903\n3,46269",
+   "time": {
+    "runs": [
+     7.3437,
+     6.9898,
+     6.9165
+    ],
+    "median_s": 6.9898,
+    "min_s": 6.9165,
+    "max_s": 7.3437
+   }
+  },
+  {
+   "id": "window_funnel_events",
+   "function": "window_funnel_events",
+   "shape": "per user",
+   "title": "The same funnel, returning each step's timestamp",
+   "sql": "SELECT count(*) AS users, sum(len(e)) AS steps FROM (\n  SELECT window_funnel_events(INTERVAL '1 hour', ts, searched, clicked, downloaded) AS e FROM hits GROUP BY UserID);",
+   "load_average_before": "3.83 2.02 1.02 1/110 23907",
+   "result": "17630976,8270062",
+   "time": {
+    "runs": [
+     6.9729,
+     6.9692,
+     7.0332
+    ],
+    "median_s": 6.9729,
+    "min_s": 6.9692,
+    "max_s": 7.0332
+   }
+  },
+  {
+   "id": "sequence_match",
+   "function": "sequence_match",
+   "shape": "per user",
+   "title": "Search then link click within 5 minutes",
+   "sql": "SELECT m, count(*) AS users FROM (\n  SELECT sequence_match('(?1)(?t<=300)(?2)', ts, searched, clicked) AS m FROM hits GROUP BY UserID)\nGROUP BY m ORDER BY m;",
+   "load_average_before": "4.02 2.18 1.10 1/109 23978",
+   "result": "false,17459410\ntrue,171566",
+   "time": {
+    "runs": [
+     8.4489,
+     8.4077,
+     8.7577
+    ],
+    "median_s": 8.4489,
+    "min_s": 8.4077,
+    "max_s": 8.7577
+   }
+  },
+  {
+   "id": "sequence_count",
+   "function": "sequence_count",
+   "shape": "per user",
+   "title": "Count of search ... link click pairs",
+   "sql": "SELECT count(*) AS users, sum(c) AS matches FROM (\n  SELECT sequence_count('(?1).*(?2)', ts, searched, clicked) AS c FROM hits GROUP BY UserID);",
+   "load_average_before": "3.93 2.31 1.17 1/112 24053",
+   "result": "17630976,264588",
+   "time": {
+    "runs": [
+     7.0065,
+     7.1242,
+     7.0369
+    ],
+    "median_s": 7.0369,
+    "min_s": 7.0065,
+    "max_s": 7.1242
+   }
+  },
+  {
+   "id": "sequence_match_events",
+   "function": "sequence_match_events",
+   "shape": "per user",
+   "title": "Timestamps of the search ... link click pair",
+   "sql": "SELECT count(*) AS users, sum(len(e)) AS steps FROM (\n  SELECT sequence_match_events('(?1).*(?2)', ts, searched, clicked) AS e FROM hits GROUP BY UserID);",
+   "load_average_before": "3.74 2.37 1.21 1/109 24121",
+   "result": "17630976,8248753",
+   "time": {
+    "runs": [
+     7.2878,
+     7.506,
+     7.3403
+    ],
+    "median_s": 7.3403,
+    "min_s": 7.2878,
+    "max_s": 7.506
+   }
+  },
+  {
+   "id": "sequence_next_node",
+   "function": "sequence_next_node",
+   "shape": "per user",
+   "title": "Site visited right after the first search",
+   "sql": "SELECT count(nxt) AS with_next, count(*) AS users FROM (\n  SELECT sequence_next_node('forward', 'first_match', ts, CAST(CounterID AS VARCHAR), searched, searched) AS nxt\n  FROM hits GROUP BY UserID);",
+   "load_average_before": "3.66 2.47 1.28 1/108 24193",
+   "result": "4526213,17630976",
+   "time": {
+    "runs": [
+     27.6053,
+     26.1877,
+     25.6009
+    ],
+    "median_s": 26.1877,
+    "min_s": 25.6009,
+    "max_s": 27.6053
+   }
+  },
+  {
+   "id": "window_funnel_one_group",
+   "function": "window_funnel",
+   "shape": "one group",
+   "title": "The funnel over every row as a single group",
+   "sql": "SELECT window_funnel(INTERVAL '1 hour', ts, searched, clicked, downloaded) AS level FROM hits;",
+   "load_average_before": "3.04 2.56 1.41 1/110 24295",
+   "result": "3",
+   "time": {
+    "runs": [
+     2.4145,
+     2.4014,
+     2.4485
+    ],
+    "median_s": 2.4145,
+    "min_s": 2.4014,
+    "max_s": 2.4485
+   }
+  },
+  {
+   "id": "sequence_count_one_group",
+   "function": "sequence_count",
+   "shape": "one group",
+   "title": "search ... link click pairs over every row as a single group",
+   "sql": "SELECT sequence_count('(?1).*(?2)', ts, searched, clicked) AS matches FROM hits;",
+   "load_average_before": "3.41 2.66 1.45 1/107 24359",
+   "result": "824715",
+   "time": {
+    "runs": [
+     2.3269,
+     2.3098,
+     2.2437
+    ],
+    "median_s": 2.3098,
+    "min_s": 2.2437,
+    "max_s": 2.3269
+   }
+  }
+ ]
+}
