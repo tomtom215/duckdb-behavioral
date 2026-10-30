@@ -62,7 +62,7 @@ cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 # Append extension metadata
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.10.1 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.11.0 \
   -o /tmp/behavioral.duckdb_extension
 ```
 
@@ -449,7 +449,7 @@ tests (feature `e2e`) load the build into a real DuckDB, so a bare
 
 ## Running Tests
 
-The extension includes 541 unit tests, 34 in-process integration tests
+The extension includes 544 unit tests, 35 in-process integration tests
 (`tests/extension_load.rs`), and 1 doc-test:
 
 ```bash

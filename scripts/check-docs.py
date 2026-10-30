@@ -16,6 +16,9 @@ disagreement:
     directive counts in test/sql;
   * the DuckDB releases in .github/workflows/e2e.yml against every doc line
     that lists the releases CI checks;
+  * the `quack-rs` and `libduckdb-sys` versions pinned in Cargo.toml against
+    every place the documentation names them as the current dependency;
+  * that fuzz/Cargo.lock records the same crate version and pins;
   * relative links and #anchors in the Markdown files, and that every mdBook
     page is in SUMMARY.md;
   * demo/index.html's result tables against test/sql/git_mining.test.
@@ -106,7 +109,7 @@ for doc in CURRENT_DOCS:
                     f"{where}: says {m.group(1)} integration tests, "
                     f"the source has {integration}"
                 )
-        # Table rows: "| Unit tests | 541, ..." and "| Integration tests | 33, ...".
+        # Table rows: "| Unit tests | 544, ..." and "| Integration tests | 33, ...".
         for label, expected, kind in (("Unit tests", unit, "unit"), ("Integration tests", integration, "integration")):
             m = re.search(rf"\|\s*{label}\s*\|\s*(\d+)", line)
             if m and int(m.group(1)) != expected:
@@ -153,6 +156,45 @@ for doc in CURRENT_DOCS:
             shown = next(group for group in m.groups() if group)
             if shown != cargo_version:
                 problem(f"{rel(doc)}:{number}: example uses version {shown}, Cargo.toml has {cargo_version}")
+
+# The two exact pins are repeated in prose and tables (SECURITY.md, the
+# engineering and architecture pages, CLAUDE.md). A mention of an older release
+# as history ("since quack-rs 0.14.0") is allowed; every other mention must be
+# the pin.
+cargo_toml = read(ROOT / "Cargo.toml")
+PINS = {
+    "quack-rs": re.search(r'^quack-rs\s*=\s*"=?(\d+\.\d+\.\d+)"', cargo_toml, re.M).group(1),
+    "libduckdb-sys": re.search(r'^libduckdb-sys\s*=.*?version\s*=\s*"=?(\d+\.\d+\.\d+)"', cargo_toml, re.M).group(1),
+}
+PIN_MENTION = {
+    name: re.compile(
+        rf"(?<!since )(?:\[{re.escape(name)}\]\([^)]*\)|{re.escape(name)})"
+        r"`?\s*(?:\|\s*)?(?:=\s*)?`?\"?=?v?(\d+\.\d+\.\d+)"
+    )
+    for name in PINS
+}
+for doc in CURRENT_DOCS + [ROOT / "src/ffi/mod.rs"]:
+    for number, line in numbered_lines(doc):
+        for name, pattern in PIN_MENTION.items():
+            for m in pattern.finditer(line):
+                if m.group(1) != PINS[name]:
+                    problem(f"{rel(doc)}:{number}: says {name} {m.group(1)}, Cargo.toml pins {PINS[name]}")
+
+# The fuzz crate depends on the root crate by path, so its detached lockfile
+# records this crate's version and the pinned quack-rs and libduckdb-sys. CI runs
+# `cargo fuzz` without --locked, which re-resolves silently and hides the drift.
+fuzz_lock = read(ROOT / "fuzz/Cargo.lock")
+for name, wanted in (
+    ("duckdb-behavioral", cargo_version),
+    ("quack-rs", PINS["quack-rs"]),
+    ("libduckdb-sys", PINS["libduckdb-sys"]),
+):
+    entry = re.search(rf'^name = "{re.escape(name)}"\nversion = "([^"]+)"', fuzz_lock, re.M)
+    if entry is None or entry.group(1) != wanted:
+        problem(
+            f"fuzz/Cargo.lock: records {name} {entry.group(1) if entry else 'nothing'}, "
+            f"Cargo.toml says {wanted} (run `cargo update -p {name}` in fuzz/)"
+        )
 
 # ── DuckDB releases CI loads the build into ──────────────────────────────
 

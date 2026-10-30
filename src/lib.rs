@@ -75,3 +75,63 @@ mod build_metadata_tests {
         assert_eq!(stamped.trim(), quack_rs::DUCKDB_API_VERSION);
     }
 }
+
+/// `description.yml` is what the `DuckDB` community build reads to compile and
+/// list the extension. `quack_rs` parses it the way that build does (`PyYAML`'s
+/// `safe_load`, exact platform names, a commit hash for `ref`), so a file the
+/// community pipeline would reject or warn about fails here, in CI, instead of
+/// in their pull-request check.
+#[cfg(test)]
+mod release_metadata_tests {
+    use quack_rs::validate::description_yml::{
+        DescriptionYml, parse_description_yml, validate_rust_extension,
+    };
+
+    const DESCRIPTION: &str = include_str!("../description.yml");
+
+    fn parsed() -> DescriptionYml {
+        parse_description_yml(DESCRIPTION)
+            .expect("description.yml parses the way the community build reads it")
+    }
+
+    #[test]
+    fn description_yml_is_accepted_without_warnings() {
+        let description = parsed();
+        assert!(
+            description.warnings.is_empty(),
+            "description.yml warnings: {:#?}",
+            description.warnings
+        );
+        validate_rust_extension(&description)
+            .expect("description.yml describes a cargo-built Rust extension");
+    }
+
+    /// RELEASING.md step 1: the version is set in `Cargo.toml` and
+    /// `description.yml` together; the release workflow checks the same thing
+    /// at tag time, which is too late to fix a pull request.
+    #[test]
+    fn description_yml_names_this_crate_and_version() {
+        let description = parsed();
+        assert_eq!(
+            description.name, "behavioral",
+            "the extension name must equal [lib] name in Cargo.toml"
+        );
+        assert_eq!(
+            description.version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+            "description.yml `extension: version` must equal Cargo.toml `version`"
+        );
+        assert_eq!(description.github, "tomtom215/duckdb-behavioral");
+    }
+
+    /// A branch or tag can move under a published listing; only a full commit
+    /// hash pins what the community build compiles.
+    #[test]
+    fn description_yml_ref_is_a_full_commit_hash() {
+        let git_ref = parsed().git_ref;
+        assert!(
+            git_ref.len() == 40 && git_ref.bytes().all(|b| b.is_ascii_hexdigit()),
+            "repo.ref must be a 40-digit commit hash, got {git_ref:?}"
+        );
+    }
+}

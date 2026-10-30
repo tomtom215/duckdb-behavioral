@@ -13,8 +13,11 @@ DuckDB Community Extensions repository then needs one pull request.
    section.
 2. Set the same version in `Cargo.toml` and `description.yml` (`extension:
    version`). Run `cargo check` once so `Cargo.lock` records the new version,
-   and commit it: CI builds with `--locked` and fails on a stale lockfile.
-   Command-line examples in the docs name the release (`-ev v0.10.1`, the
+   and commit it: CI builds with `--locked` and fails on a stale lockfile. Do the
+   same for the fuzz crate (`cd fuzz && cargo update -p duckdb-behavioral`): its
+   lockfile records this crate's version through a path dependency, and
+   `scripts/check-docs.py` fails when it differs.
+   Command-line examples in the docs name the release (`-ev v0.11.0`, the
    attestation archive name); `scripts/check-docs.py`, which `check.sh` runs,
    fails until they match `Cargo.toml`.
 3. Run the checks a contributor runs, plus the ones only a release needs:
@@ -54,6 +57,15 @@ Open a pull request against
 that sets `repo.ref` and `extension.version` in
 `extensions/behavioral/description.yml` to the values now on `main`. Their CI
 builds the extension for every non-excluded platform and runs `test/sql/`.
+
+In the same pull request, copy `docs/function_descriptions.csv` to
+`extensions/behavioral/docs/function_descriptions.csv`. The duckdb.org page for
+the extension takes each function's description, comment and example from that
+file in the community repository (`scripts/generate_md.sh` there joins it to
+`duckdb_functions()` by name), because the stable C API has no way to attach
+descriptions or parameter names to a function. `tests/extension_load.rs` checks
+that the file lists exactly the registered functions and that every example
+runs, so a function added without a row fails the tests.
 
 ## If the workflow fails
 

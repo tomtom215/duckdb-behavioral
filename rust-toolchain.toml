@@ -7,5 +7,5 @@
 # stable and beta weekly; bump this line when those pass. The MSRV
 # (Cargo.toml `rust-version`) is checked separately by the `msrv` CI job.
 [toolchain]
-channel = "1.97.0"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]

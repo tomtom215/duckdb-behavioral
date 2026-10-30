@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "duckdb-behavioral"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "criterion",
  "libduckdb-sys",
@@ -1102,9 +1102,9 @@ dependencies = [
 
 [[package]]
 name = "quack-rs"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d806ed0366bf334f5dfd067e634372d1101465a10c5b6f2a50049573f1c2c2d"
+checksum = "a8c0d2469a088589adbc755f61a2e8074d862930f4135a9ebec2b75eab07e802"
 dependencies = [
  "cc",
  "duckdb",

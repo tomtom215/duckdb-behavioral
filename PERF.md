@@ -1146,6 +1146,52 @@ key and 2 on the new one. Other modes took 0.2 to 0.4 s on the same input. The
 Criterion benchmarks never exercised `strict_once` with simultaneous events, which is
 why no earlier session saw it.
 
+## Session 23: Same-Machine Check of quack-rs 0.20.0 and the 1.99.1 Toolchain
+
+**Question.** quack-rs 0.20.0 changed code that runs per row and per chunk:
+`VectorReader::is_valid` and `VectorWriter::set_null` test and clear the
+validity bit themselves instead of calling DuckDB once per row, and
+`DuckStringView::as_str` takes an ASCII fast path. The pinned toolchain also
+moved from rustc 1.97.0 to 1.99.1. Did any SQL query get slower?
+
+**Method.** Base is the extension built from commit b789875, the tip of `main`
+when this session began (quack-rs 0.19.0, rustc 1.97.0), in a separate `git
+worktree` with its own target directory. New is this branch built twice: with
+rustc 1.97.0 (the compiler change isolated from the dependency change) and with
+rustc 1.99.1, the pin now. All three embed their compiler's version string, which
+was read back from the binaries. One shared 4-vCPU "Intel(R) Xeon(R) Processor @
+2.10GHz" virtual machine, Linux, release profile, DuckDB 2.0.0 CLI, the
+`scripts/bench-sql.sh` workload (10M rows in 100,000 groups, 4 threads, 7 runs per
+query, each in a fresh `duckdb` process). Two rounds; the order of the arms was
+base, 1.97.0, 1.99.1 in round 1 and the reverse in round 2, so drift in the shared
+machine hits every arm. Each cell is the mean of the two rounds' medians with the
+smallest and largest run of the 14 in brackets. Absolute times here are lower than
+Session 22's on a nominally identical machine, so nothing below compares with
+earlier tables. An earlier two-arm run of the base and the 1.97.0 build (two rounds
+of 7 runs) gave new/base ratios from 0.92 to 1.06, ranges overlapping in all eight
+queries.
+
+**SQL, seconds, mean of two medians [min, max]:**
+
+| Query | 0.19.0, rustc 1.97.0 | 0.20.0, rustc 1.97.0 | 0.20.0, rustc 1.99.1 | New / base (1.97.0 / 1.99.1) |
+|---|---|---|---|---|
+| `window_funnel`, 100k groups | 0.779 [0.704, 0.899] | 0.708 [0.662, 0.774] | 0.730 [0.695, 0.826] | 0.91 / 0.94 |
+| `window_funnel_events`, 100k groups | 0.799 [0.701, 0.904] | 0.733 [0.680, 0.772] | 0.736 [0.673, 0.792] | 0.92 / 0.92 |
+| `sequence_count`, 100k groups | 0.794 [0.749, 0.879] | 0.784 [0.720, 0.870] | 0.783 [0.715, 0.834] | 0.99 / 0.99 |
+| `sequence_match_events`, 100k groups | 0.780 [0.699, 0.875] | 0.736 [0.692, 0.808] | 0.763 [0.695, 0.841] | 0.94 / 0.98 |
+| `sequence_next_node`, 100k groups | 1.674 [1.486, 2.187] | 1.679 [1.538, 1.855] | 1.677 [1.572, 1.889] | 1.00 / 1.00 |
+| `retention`, 100k groups | 0.227 [0.213, 0.260] | 0.224 [0.207, 0.242] | 0.227 [0.217, 0.242] | 0.98 / 1.00 |
+| sessionize, `PARTITION BY u ORDER BY ts` | 1.309 [1.201, 1.387] | 1.273 [1.212, 1.409] | 1.281 [1.183, 1.378] | 0.97 / 0.98 |
+| `window_funnel`, one 10M-row group | 0.352 [0.328, 0.389] | 0.369 [0.355, 0.405] | 0.365 [0.351, 0.399] | 1.05 / 1.04 |
+
+**Result.** No query changed beyond the spread of repeated runs: for every query
+the ranges of both new builds overlap the base's, and the new/base ratios of the
+medians run from 0.91 to 1.05 in both directions. The two
+ratios furthest from 1 are `window_funnel` on 100,000 groups (new faster) and the
+single 10M-row group (new slower), each inside the ranges, so no speed-up or
+slow-down is claimed. This is a check that the upgrade and the compiler move did not
+regress, not an improvement.
+
 ## Current Baseline
 
 The headline tables at the end of this section (Per-Element Cost at Scale and

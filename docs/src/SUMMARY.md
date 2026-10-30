@@ -28,6 +28,7 @@
 - [Engineering Overview](./engineering.md)
 - [Architecture](./internals/architecture.md)
 - [Performance](./internals/performance.md)
+- [Benchmark on the ClickBench hits data](./internals/hits-benchmark.md)
 - [ClickHouse Compatibility](./internals/clickhouse-compatibility.md)
 
 # Operations & Contributing

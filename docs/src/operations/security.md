@@ -34,7 +34,7 @@ The extension has exactly **three** runtime dependencies:
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| `quack-rs` | `=0.19.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
+| `quack-rs` | `=0.20.0` | Rust SDK for DuckDB loadable extensions — entry point macro, aggregate builders, safe state management, vector I/O |
 | `libduckdb-sys` | `=1.20000.1` | DuckDB C API bindings (re-exported by quack-rs; pinned explicitly because the FFI callbacks use its raw types) |
 | `smallvec` | `1` | Inline storage for the first two events of a group, so the many tiny groups of a typical query make no heap allocation (locked by `Cargo.lock`) |
 
@@ -106,7 +106,7 @@ Release artifacts include:
 sha256sum -c SHA256SUMS.txt
 
 # Verify GitHub attestation (requires gh CLI)
-gh attestation verify behavioral-v0.10.1-linux_amd64.tar.gz \
+gh attestation verify behavioral-v0.11.0-linux_amd64.tar.gz \
   --repo tomtom215/duckdb-behavioral
 ```
 

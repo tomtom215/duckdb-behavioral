@@ -1568,3 +1568,94 @@ fn timestamptz_is_accepted_everywhere() {
     assert!(!local, "the local-time cast reorders the events");
     assert!(instant);
 }
+
+/// Splits RFC 4180 CSV text (quoted fields, doubled quotes, newlines inside
+/// quotes) into rows. Enough for `docs/function_descriptions.csv`.
+fn parse_csv(text: &str) -> Vec<Vec<String>> {
+    let (mut rows, mut row, mut field) = (Vec::new(), Vec::new(), String::new());
+    let (mut quoted, mut chars) = (false, text.chars().peekable());
+    while let Some(c) = chars.next() {
+        match (quoted, c) {
+            (true, '"') if chars.peek() == Some(&'"') => {
+                field.push('"');
+                chars.next();
+            }
+            (true, '"') => quoted = false,
+            (false, '"') => quoted = true,
+            (false, ',') => row.push(std::mem::take(&mut field)),
+            (false, '\n') => {
+                row.push(std::mem::take(&mut field));
+                rows.push(std::mem::take(&mut row));
+            }
+            (_, c) => field.push(c),
+        }
+    }
+    assert!(!quoted, "unterminated quote in the CSV");
+    if !field.is_empty() || !row.is_empty() {
+        row.push(field);
+        rows.push(row);
+    }
+    rows
+}
+
+/// `docs/function_descriptions.csv` is what duckdb.org shows for each function
+/// of the extension: RELEASING.md has it copied to `extensions/behavioral/docs/`
+/// in the community-extensions pull request. It must describe exactly the
+/// functions the extension registers, with their catalog `function_type`, and
+/// every example must run against the loaded extension, so the file cannot
+/// drift from the code.
+#[test]
+fn function_descriptions_cover_every_function_and_their_examples_run() {
+    let mut expected = [
+        "sessionize",
+        "retention",
+        "window_funnel",
+        "window_funnel_events",
+        "sequence_match",
+        "sequence_count",
+        "sequence_match_events",
+        "sequence_next_node",
+        "behavioral_version",
+    ];
+    expected.sort_unstable();
+
+    let rows = parse_csv(include_str!("../docs/function_descriptions.csv"));
+    assert_eq!(
+        rows[0],
+        [
+            "function",
+            "function_type",
+            "description",
+            "comment",
+            "example"
+        ],
+    );
+    let db = load_extension();
+    let mut described = Vec::new();
+    for row in &rows[1..] {
+        let [function, kind, description, comment, example] = row.as_slice() else {
+            panic!("a row has five fields: {row:?}");
+        };
+        let in_catalog: i64 = db
+            .query_one(&format!(
+                "SELECT count(*) FROM duckdb_functions() \
+                 WHERE function_name = '{function}' AND function_type = '{kind}'"
+            ))
+            .unwrap();
+        assert!(in_catalog > 0, "{function} is not a registered {kind}");
+        assert!(
+            !description.trim().is_empty() && !description.contains('\n'),
+            "{function}: description is one non-empty line"
+        );
+        assert!(!comment.trim().is_empty(), "{function}: comment is empty");
+        assert!(
+            example.contains(&format!("{function}(")),
+            "{function}: the example does not call it"
+        );
+        db.execute_batch(example)
+            .unwrap_or_else(|e| panic!("{function}: example failed: {e}\n{example}"));
+        described.push(function.as_str());
+    }
+    described.sort_unstable();
+    assert_eq!(described, expected, "one row per registered function");
+}
