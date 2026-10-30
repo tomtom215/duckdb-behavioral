@@ -51,12 +51,41 @@ updates:
       day: "monday"
     cooldown:
       default-days: 7
+    # quack-rs accepts libduckdb-sys `>=1.4.4, <1.20100` (its manifest): the
+    # 1.20100 bindings are DuckDB 2.1's, and a bump to them cannot resolve until
+    # a quack-rs release widens that range. Patch releases still flow.
+    ignore:
+      - dependency-name: "libduckdb-sys"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
     groups:
       dev-and-test:
         # arrow, proptest, criterion, ...: build and test dependencies that
         # never link into the extension.
         dependency-type: "development"
         update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # The fuzz crate is detached from the workspace and has its own lockfile
+  # (libfuzzer-sys, arbitrary); without this entry it is never proposed an
+  # update. Its path dependency on the root crate is refreshed with
+  # `cargo update --manifest-path fuzz/Cargo.toml` whenever the root pins move.
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    groups:
+      fuzz:
+        patterns: ["*"]
     labels:
       - "dependencies"
       - "rust"
