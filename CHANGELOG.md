@@ -76,7 +76,7 @@ names `strict_deduplication` instead of its alias `strict`.
   refuses this build on a DuckDB release it does not list, because a build
   without a `duckdb-1-5*` feature is `StableOnly`.
 - Rust 1.99.1 is the pinned toolchain. Clippy (pedantic, nursery, `-D warnings`),
-  rustdoc and the 544 unit, 34 integration and 1 doc-test pass on it, and the
+  rustdoc and the 544 unit, 35 integration and 1 doc-test pass on it, and the
   MSRV (1.88) was re-checked with quack-rs 0.20.0.
 - CI actions: `actions/checkout` v6.1.0 to v7.0.1 and `actions/setup-python`
   v6.3.0 to v7.1.0 (Dependabot #101; both only moved their internals to ESM,
