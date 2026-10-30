@@ -136,6 +136,22 @@ names `strict_deduplication` instead of its alias `strict`.
 - `scripts/check-docs.py` also fails when a document names a `quack-rs` or
   `libduckdb-sys` version other than the `Cargo.toml` pin (it found
   `libduckdb-sys 1.20000.0` in the engineering page, pinned `1.20000.1`).
+- `scripts/bench-hits.py`: a repeatable benchmark of the eight functions as SQL on
+  the public ClickBench `hits` data (1M, 10M or 100M rows). It pins every Parquet
+  file's size and SHA-256, runs a same-columns scan as a control and pure-SQL
+  baselines for `sessionize` and `retention`, fails unless results are identical
+  across repetitions, thread counts and baselines, and records every individual
+  time, the exact SQL, the machine and the extension's SHA-256 as JSON. Method
+  and results: `docs/src/internals/hits-benchmark.md`. Its first cross-check
+  found a NULL bug in its own `sessionize` baseline (fixed before any result
+  was recorded); the extension was right.
+- `docs/function_descriptions.csv`: the description, comment and a runnable
+  example for each of the nine functions, which duckdb.org shows on the
+  extension's page when the file is copied into the community-extensions pull
+  request (the stable C API cannot attach descriptions to a function:
+  duckdb-behavioral#94). `tests/extension_load.rs` checks that it lists exactly
+  the registered functions and that every example runs; RELEASING.md step 3
+  has the copy.
 - `scripts/check-docs.py` (CI, `check.sh`): fails on a stale unit, integration,
   property-test, directive or compat-query count, a CI release list that omits
   a release in `e2e.yml`, a broken link or anchor, a page missing from

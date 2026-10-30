@@ -55,3 +55,7 @@ docs/book/
 # Leftovers of patch(1)
 *.orig
 *.rej
+
+# Python bytecode
+__pycache__/
+*.pyc

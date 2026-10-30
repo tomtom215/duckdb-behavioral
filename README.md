@@ -429,7 +429,7 @@ microseconds with `(?t)` thresholds in seconds, windows are `INTERVAL`s, and
 | | |
 |---|---|
 | Unit tests | 544, plus 1 doc-test, including 39 property tests (proptest). The `window_funnel` engine is compared with an exhaustive reference and every state with order- and combine-tree-invariance checks (`src/oracle_tests.rs`) |
-| Integration tests | 34, in process: the release library is loaded into a real DuckDB and every function runs through SQL, including error paths, `±infinity` timestamps, and parallel determinism |
+| Integration tests | 35, in process: the release library is loaded into a real DuckDB and every function runs through SQL, including error paths, `±infinity` timestamps, and parallel determinism |
 | End-to-end | `make test_release` (8 SQL logic files in `test/sql/`) and 21 asserted queries (`scripts/compat-check.sh`; 25 on DuckDB 2.x, where the crash shapes above also run) on Linux and macOS, then the same build in DuckDB 1.3.2, 1.4.4, 1.4.5, 1.5.0 and 1.5.6 |
 | Differential | Against ClickHouse, see above |
 | Mutation testing | cargo-mutants: 93.9% of viable mutants detected across the 9 non-FFI modules (0.10.0 audit, before the test changes in this release) |

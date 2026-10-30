@@ -187,7 +187,7 @@ cargo build --release
 # Unit tests (544): nothing to install, no libduckdb.
 cargo test --lib
 
-# All tests (544 unit + 34 integration + 1 doc-test). The integration tests
+# All tests (544 unit + 35 integration + 1 doc-test). The integration tests
 # (`tests/extension_load.rs`, feature `e2e`) LOAD the release library into a
 # real DuckDB, which needs a libduckdb to link. DUCKDB_DOWNLOAD_LIB=1 makes
 # libduckdb-sys download a prebuilt one (cached in target/duckdb-download/)
@@ -359,7 +359,7 @@ Every change MUST meet these requirements:
   checks `window_funnel` against an exhaustive reference and every state for
   order/split/combine-tree invariance (below).
 - **1 doc-test** for the pattern parser
-- **34 in-process integration tests** (`tests/extension_load.rs`): build the real
+- **35 in-process integration tests** (`tests/extension_load.rs`): build the real
   release `cdylib`, append the DuckDB metadata footer, `LOAD` it into an
   in-memory DuckDB via `quack_rs::testing::InMemoryDb::open_unsigned()`, and
   exercise all 8 aggregate functions plus the `behavioral_version()` scalar
@@ -592,7 +592,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
 
 Run with `cargo test --lib` (unit tests) or `DUCKDB_DOWNLOAD_LIB=1 cargo test
 --all-features` (everything). The 544 unit tests take a few
-seconds (the doc-test about 1 s). The 34 in-process integration tests add
+seconds (the doc-test about 1 s). The 35 in-process integration tests add
 20–35 s when the release `cdylib` must be rebuilt (they build and `LOAD` it)
 and about 5 s once it is cached. CI runs the same tests with
 `cargo nextest run --lib --tests --all-features` plus `cargo test --doc`
@@ -848,6 +848,11 @@ Hard-won knowledge from developing this extension. Consult before making changes
   descriptions, examples, categories or parameter names, so
   `duckdb_functions()` shows `col0, col1, ...` and blank descriptions
   (duckdb-behavioral#94); `COMMENT ON FUNCTION` fails for native functions.
+  What can be done from here is the duckdb.org page: `docs/function_descriptions.csv`
+  is copied into the community-extensions pull request (RELEASING.md step 3) and
+  `tests/extension_load.rs` keeps it equal to the registered functions. Parameter
+  names and `duckdb_functions()` descriptions stay open until a stable C API
+  setter exists.
 
 - **Window usage needs no special registration**: `sessionize` is registered as
   a plain aggregate (`AggregateFunctionSetBuilder`, 2 overloads); DuckDB drives any aggregate

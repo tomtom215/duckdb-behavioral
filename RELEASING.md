@@ -58,6 +58,15 @@ that sets `repo.ref` and `extension.version` in
 `extensions/behavioral/description.yml` to the values now on `main`. Their CI
 builds the extension for every non-excluded platform and runs `test/sql/`.
 
+In the same pull request, copy `docs/function_descriptions.csv` to
+`extensions/behavioral/docs/function_descriptions.csv`. The duckdb.org page for
+the extension takes each function's description, comment and example from that
+file in the community repository (`scripts/generate_md.sh` there joins it to
+`duckdb_functions()` by name), because the stable C API has no way to attach
+descriptions or parameter names to a function. `tests/extension_load.rs` checks
+that the file lists exactly the registered functions and that every example
+runs, so a function added without a row fails the tests.
+
 ## If the workflow fails
 
 Fix the cause on `main`, delete the remote tag (`git push origin :refs/tags/vX.Y.Z`),

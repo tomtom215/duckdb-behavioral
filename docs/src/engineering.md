@@ -25,7 +25,7 @@ The project spans several distinct engineering disciplines:
 | **Database internals** | DuckDB's segment tree windowing, aggregate function lifecycle (init, update, combine, finalize, destroy), data chunk format |
 | **Algorithm design** | Feasibility-then-greedy pattern matching, recursive descent parsing, greedy funnel search, bitmask-based retention analysis |
 | **Performance engineering** | Cache-aware data structures, algorithmic complexity analysis, Criterion.rs benchmarking with confidence intervals, negative result documentation |
-| **Software quality** | 544 unit tests, 34 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
+| **Software quality** | 544 unit tests, 35 in-process integration tests (real extension load), 8 sqllogictest files (44 `query` + 34 `statement` directives) run against the DuckDB CLI, property-based testing (proptest), mutation testing (cargo-mutants, 93.9% of viable mutants detected in the 0.10.0 audit), zero clippy warnings under pedantic lints |
 | **CI/CD and release engineering** | Multi-platform builds (Linux x86/ARM, macOS x86/ARM), SemVer validation, artifact attestation, reproducible builds |
 | **Technical writing** | mdBook documentation site, function reference pages, optimization history with measured data, ClickHouse compatibility matrix |
 
