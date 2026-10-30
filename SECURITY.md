@@ -43,7 +43,7 @@ into a SQL error instead of crashing DuckDB (the release profile keeps
 
 ### Dependency Audit
 
-The extension has exactly **three** runtime dependencies: `quack-rs = "=0.19.0"`
+The extension has exactly **three** runtime dependencies: `quack-rs = "=0.20.0"`
 and `libduckdb-sys = "=1.20000.1"` (both pinned exactly) and `smallvec = "1"`
 (a caret requirement, locked by `Cargo.lock`). All dependencies are audited via
 `cargo-deny` in CI, and weekly by `scheduled.yml`, for known advisories and
@@ -63,5 +63,5 @@ documentation.
 
 | Version | Supported |
 |---------|-----------|
-| 0.10.x  | Yes       |
-| < 0.10  | No        |
+| 0.11.x  | Yes       |
+| < 0.11  | No        |

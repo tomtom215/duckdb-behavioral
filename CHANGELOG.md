@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-30
+
 No change to the SQL surface (540 overloads). Four results change:
 `sequence_match('.*')` over a group whose rows carry no true condition is now
 true; a `sequence_next_node` allocation failure is now a SQL error;
@@ -56,8 +58,37 @@ names `strict_deduplication` instead of its alias `strict`.
 
 ### Changed
 
+- quack-rs 0.19.0 to 0.20.0 (`libduckdb-sys` stays `=1.20000.1`; quack-rs now
+  accepts `>=1.4.4, <1.20100`). The SQL surface is unchanged: 540 overloads on
+  DuckDB 1.3.2, 1.4.4, 1.4.5, 1.5.0, 1.5.6 and 2.0.0 (`scripts/compat-check.sh`
+  asserts the count on each). Underneath: `LOAD` registers inside one
+  transaction, so a `LOAD` that fails part-way leaves no function behind and can
+  be retried (the commit path is what `compat-check.sh` and the integration
+  tests exercise; the rollback path is quack-rs's, which it validated on 1.4.4,
+  1.5.6 and 2.0.0); a build with `panic = "abort"` no longer compiles, where
+  before it loaded and killed the process on the first panic; null tests on
+  input vectors no longer make one C call per row. End-to-end SQL timings of
+  the 0.19.0 build and this build (rustc 1.99.1) on DuckDB 2.0.0 (10M rows,
+  100,000 groups, 4 threads, shared 4-vCPU Xeon @ 2.10 GHz, two rounds of 7
+  runs with the arm order reversed in round 2): new/old ratios of the medians
+  0.92 to 1.04, run ranges overlapping for all eight queries, so no speed
+  change is claimed (`PERF.md`, Session 23). quack-rs's ABI check never
+  refuses this build on a DuckDB release it does not list, because a build
+  without a `duckdb-1-5*` feature is `StableOnly`.
+- Rust 1.99.1 is the pinned toolchain. Clippy (pedantic, nursery, `-D warnings`),
+  rustdoc and the 544 unit, 34 integration and 1 doc-test pass on it, and the
+  MSRV (1.88) was re-checked with quack-rs 0.20.0.
+- CI actions: `actions/checkout` v6.1.0 to v7.0.1 and `actions/setup-python`
+  v6.3.0 to v7.1.0 (Dependabot #101; both only moved their internals to ESM,
+  their inputs and outputs are unchanged). Dependabot #88, #89 and #90 are not
+  applied: the tree already pins `codeql-action` v4.39.1 and
+  `action-gh-release` v3.0.3, newer than the versions they propose, and #93
+  (quack-rs 0.16.0) is superseded. Each pin was checked against its tag with
+  `git ls-remote`.
+- Dependabot ignores minor and major `libduckdb-sys` bumps: quack-rs 0.20.x
+  requires `<1.20100`, so such a bump cannot resolve.
 - The in-process extension-load tests are behind a new `e2e` feature, so a fresh
-  clone runs `cargo test --lib` (541 tests) with no libduckdb and no arrow build;
+  clone runs `cargo test --lib` (544 tests) with no libduckdb and no arrow build;
   everything is `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`. The explicit
   `duckdb` dev-dependency (named in no source file) is gone; `Cargo.lock`
   changes by one line and the release dependency graph is unchanged.
@@ -87,8 +118,8 @@ names `strict_deduplication` instead of its alias `strict`.
   rather than hand out aliasing references. No measurable change in CPU time
   (8 SQL aggregates, 10M rows, 11 interleaved runs, ratios 0.94 to 1.03 with
   overlapping ranges).
-- Edition 2024 (MSRV stays 1.88). `rust-toolchain.toml` pins 1.97.0 instead of
-  `stable`. `libduckdb-sys` / `duckdb` 1.20000.0 to 1.20000.1 (identical
+- Edition 2024 (MSRV stays 1.88). `rust-toolchain.toml` pins an exact release
+  (1.99.1 now) instead of `stable`. `libduckdb-sys` / `duckdb` 1.20000.0 to 1.20000.1 (identical
   bindings). `publish = false`.
 - CI rebuilt: a shared `setup-rust` action, `--locked` everywhere, nextest, a
   hygiene job (cargo-machete, typos, actionlint, zizmor, shellcheck, SPDX
@@ -99,6 +130,12 @@ names `strict_deduplication` instead of its alias `strict`.
 
 ### Added
 
+- Tests: `description.yml` is parsed with quack-rs's community-build validator
+  (PyYAML `safe_load` rules, exact platform names, a 40-digit `ref`), and its
+  name and version must equal the crate's.
+- `scripts/check-docs.py` also fails when a document names a `quack-rs` or
+  `libduckdb-sys` version other than the `Cargo.toml` pin (it found
+  `libduckdb-sys 1.20000.0` in the engineering page, pinned `1.20000.1`).
 - `scripts/check-docs.py` (CI, `check.sh`): fails on a stale unit, integration,
   property-test, directive or compat-query count, a CI release list that omits
   a release in `e2e.yml`, a broken link or anchor, a page missing from
@@ -129,7 +166,7 @@ names `strict_deduplication` instead of its alias `strict`.
   pins the case where ClickHouse reports a failed attempt that shares its first
   step with the match.
 - `scripts/check-stable-api.py`, run in CI: fails if the unstripped library
-  calls a C API function outside the stable prefix (76 of 548 slots used,
+  calls a C API function outside the stable prefix (77 of 548 slots used,
   highest 306, limit 357), the mistake that once pinned the binary to one
   DuckDB release. `scripts/bench-sql.sh`: end-to-end SQL timings.
 - Exact overload counts (540 in all) asserted in `tests/extension_load.rs`.
@@ -144,6 +181,13 @@ names `strict_deduplication` instead of its alias `strict`.
 
 ### Documentation
 
+- `TIMESTAMPTZ_NS`, the type DuckDB 2.0.0 added, has no implicit cast to
+  `TIMESTAMP` or `TIMESTAMPTZ`, so passing it to any function here is a binder
+  error; `ts::TIMESTAMPTZ` works and rounds to the nearest microsecond (checked
+  on 2.0.0). Stated on every function page, in the quick reference and in the
+  README. `TIMESTAMP_NS`, `_MS`, `_S` and `DATE` convert implicitly.
+- The CI job that checks the WebAssembly target is `cross-check`, not
+  `wasm-check`.
 - Which query shapes crash which DuckDB release is now a measured matrix
   (`OVER (PARTITION BY g)` without `ORDER BY` also crashes 1.3.2 and 1.4.4;
   nothing crashes 2.0.0), and the `GROUP BY .. LIMIT` memory leak is documented.
@@ -954,7 +998,8 @@ all bumping deps to versions at or below those landed here: #58, #61,
 - 88.4% mutation testing kill rate (cargo-mutants)
 - MIT license
 
-[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tomtom215/duckdb-behavioral/compare/v0.9.0...v0.9.1

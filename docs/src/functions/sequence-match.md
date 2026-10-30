@@ -149,6 +149,9 @@ local time, which can reorder events around a daylight-saving change.
 `TIMESTAMP_NS` is too, converted to microseconds by DuckDB's cast (truncated
 up to 1.5.6, rounded to the nearest microsecond in 2.0.0): events less than a
 microsecond apart can become ties.
+`TIMESTAMPTZ_NS`, the type DuckDB 2.0.0 added, has no implicit cast to either
+and is a binder error as it stands: write `ts::TIMESTAMPTZ`, which 2.0.0 rounds
+to the nearest microsecond.
 
 ## Implementation
 

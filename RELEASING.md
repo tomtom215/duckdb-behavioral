@@ -13,8 +13,11 @@ DuckDB Community Extensions repository then needs one pull request.
    section.
 2. Set the same version in `Cargo.toml` and `description.yml` (`extension:
    version`). Run `cargo check` once so `Cargo.lock` records the new version,
-   and commit it: CI builds with `--locked` and fails on a stale lockfile.
-   Command-line examples in the docs name the release (`-ev v0.10.1`, the
+   and commit it: CI builds with `--locked` and fails on a stale lockfile. Do the
+   same for the fuzz crate (`cd fuzz && cargo update -p duckdb-behavioral`): its
+   lockfile records this crate's version through a path dependency, and
+   `scripts/check-docs.py` fails when it differs.
+   Command-line examples in the docs name the release (`-ev v0.11.0`, the
    attestation archive name); `scripts/check-docs.py`, which `check.sh` runs,
    fails until they match `Cargo.toml`.
 3. Run the checks a contributor runs, plus the ones only a release needs:

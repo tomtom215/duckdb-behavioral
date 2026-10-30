@@ -74,7 +74,7 @@ src/
    `view.rs` with its constructor's contract, not an `unsafe` block in a callback.
 
 2. **Aggregate functions via quack-rs SDK**: DuckDB's Rust crate does not yet
-   provide high-level aggregate function registration. We use `quack-rs` v0.19.0
+   provide high-level aggregate function registration. We use `quack-rs` v0.20.0
    ([crates.io](https://crates.io/crates/quack-rs)) which wraps the raw C API with safe builders
    (`AggregateFunctionSetBuilder`), state management (`FfiState<T>`, installed
    with `ffi_state::<T>()`), panic-guarded callbacks
@@ -132,6 +132,18 @@ src/
    functions use `con.register_aggregate_set(builder)` and `sessionize` uses
    `con.register_aggregate(builder)` — nothing touches the raw connection handle.
 
+   Since quack-rs 0.20.0 the closure runs inside one transaction on the
+   registration connection (`Registration::Transactional`, the default):
+   `COMMIT` when it returns `Ok`, `ROLLBACK` on an error or a panic, so a `LOAD`
+   that fails part-way leaves no function behind and can be retried. Casts,
+   replacement scans and configuration options are not rolled back; this crate
+   registers none, so keep it that way or register them last. The macro also
+   refuses to compile under `panic = "abort"`. `quack_rs::abi::check()` returns
+   `StableOnly` for any build without a `duckdb-1-5*` feature (it is
+   `cfg!(feature = "duckdb-1-5")`), so a DuckDB release missing from quack-rs's
+   layout table (a future 2.0.1) cannot make this extension refuse to load; do
+   not enable those features without reading the "Stable C API" note below.
+
 7. **Strict configuration validation**: Invalid configuration aborts the query
    with a descriptive SQL error (via `AggregateFunctionInfo::set_error` →
    `duckdb_aggregate_function_set_error`) instead of silently producing wrong
@@ -172,10 +184,10 @@ cargo build --release
 # installed are skipped): ./scripts/check.sh   (--quick skips docs and the
 # stable-API check)
 
-# Unit tests (541): nothing to install, no libduckdb.
+# Unit tests (544): nothing to install, no libduckdb.
 cargo test --lib
 
-# All tests (541 unit + 34 integration + 1 doc-test). The integration tests
+# All tests (544 unit + 34 integration + 1 doc-test). The integration tests
 # (`tests/extension_load.rs`, feature `e2e`) LOAD the release library into a
 # real DuckDB, which needs a libduckdb to link. DUCKDB_DOWNLOAD_LIB=1 makes
 # libduckdb-sys download a prebuilt one (cached in target/duckdb-download/)
@@ -211,7 +223,7 @@ cargo build --release
 cp target/release/libbehavioral.so /tmp/behavioral.duckdb_extension
 python3 extension-ci-tools/scripts/append_extension_metadata.py \
   -l /tmp/behavioral.duckdb_extension -n behavioral \
-  -p linux_amd64 -dv v1.2.0 -ev v0.10.1 \
+  -p linux_amd64 -dv v1.2.0 -ev v0.11.0 \
   -o /tmp/behavioral.duckdb_extension
 # 3. Load and test
 duckdb -unsigned -c "LOAD '/tmp/behavioral.duckdb_extension'; SELECT ..."
@@ -234,12 +246,19 @@ make configure release test_release
 | `behavioral_version` | `()` | `VARCHAR` | Loaded extension version (diagnostic scalar) |
 
 Every `TIMESTAMP` argument also accepts `TIMESTAMPTZ` (the `*_events`
-functions then return `TIMESTAMPTZ[]`).
+functions then return `TIMESTAMPTZ[]`). `TIMESTAMP_NS`, `_MS`, `_S` and `DATE`
+convert implicitly; `TIMESTAMPTZ_NS` (new in DuckDB 2.0.0) has no implicit cast
+and is a binder error without `::TIMESTAMPTZ` (checked on 2.0.0). Accepting it
+would be a third timestamp type: 794 overloads on 2.x instead of 540 (arithmetic
+from the per-function counts above), registered only when
+`LogicalType::try_new(TypeId::TimestampTzNs)` succeeds, since the type id does
+not exist before 2.0.0, plus an ns-to-microsecond conversion in
+`ffi/view.rs`. Not done; decide it as its own change.
 
 ## Dependencies
 
 **Runtime** (linked into the `.so`/`.dylib`):
-- `quack-rs` v0.19.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
+- `quack-rs` v0.20.0 ([crates.io](https://crates.io/crates/quack-rs)) — Rust SDK
   for DuckDB loadable extensions. Provides `entry_point_v2!` macro,
   `Connection`/`Registrar` trait for version-agnostic registration,
   `AggregateFunctionSetBuilder` (with `returns_logical(LogicalType)` for `LIST(T)` returns),
@@ -300,7 +319,7 @@ functions then return `TIMESTAMPTZ[]`).
   `libduckdb-linux-amd64.zip` with curl into
   `target/duckdb-download/<target-triple>/<duckdb-version>/`; the build script
   skips the download when the archive exists.
-- `quack-rs` v0.19.0 with `bundled-test-prebuilt` feature (via `e2e`) —
+- `quack-rs` v0.20.0 with `bundled-test-prebuilt` feature (via `e2e`) —
   Provides `testing::InMemoryDb` (incl. `open_unsigned()`) for the in-process
   extension-load integration test (`tests/extension_load.rs`). Links the
   prebuilt libduckdb (no DuckDB C++ build); never in the release `.so`.
@@ -322,15 +341,16 @@ Every change MUST meet these requirements:
 4. **`cargo doc --no-deps`** — Builds without errors or warnings (CI adds
    `--document-private-items` with `RUSTDOCFLAGS=-Dwarnings`).
 5. **Test count verified** — `python3 -I scripts/check-docs.py` fails when a
-   documented test count, the list of DuckDB releases CI checks, a link or the
-   demo page disagrees with its source.
+   documented test count, the list of DuckDB releases CI checks, the pinned
+   `quack-rs` / `libduckdb-sys` version, a link or the demo page disagrees with
+   its source.
 6. **Documentation accurate** — All claims in CLAUDE.md, PERF.md, docs/ are
    verifiable and match current code state.
 
 ### Current Metrics
 
 - **Zero clippy warnings** with pedantic, nursery, and cargo lint groups enabled
-- **541 unit tests** covering all functions, edge cases, combine associativity,
+- **544 unit tests** covering all functions, edge cases, combine associativity,
   property-based testing (proptest), mutation-testing-guided coverage,
   ClickHouse mode combinations, and `AggregateTestHarness` combine
   config-propagation tests for all 8 aggregate functions (across 7 FFI test
@@ -371,10 +391,10 @@ Every change MUST meet these requirements:
   alternative branch returns the same value. The other six modules have
   only the audit figures.
 - **MSRV 1.88**: `cargo +1.88.0 check --all-targets --locked` passes with
-  quack-rs 0.19.0 (which declares 1.86.0) and libduckdb-sys / duckdb 1.20000.1
+  quack-rs 0.20.0 (which declares 1.86.0) and libduckdb-sys / duckdb 1.20000.1
   (1.88, the crates.io `rust_version`). Edition 2024 needs 1.85 and let chains
   1.88, so the MSRV is not lowerable. `rust-toolchain.toml` pins the toolchain
-  CI and releases use (1.97.0); the `setup-rust` action exports
+  CI and releases use (1.99.1); the `setup-rust` action exports
   `RUSTUP_TOOLCHAIN`, which outranks the file, so the `msrv` job really runs 1.88.
   Bump the pin when `scheduled.yml`'s stable and beta jobs pass.
 - All public items have documentation
@@ -571,7 +591,7 @@ Tests are organized as `#[cfg(test)] mod tests` within each module.
   and range rebasing in the byte arena
 
 Run with `cargo test --lib` (unit tests) or `DUCKDB_DOWNLOAD_LIB=1 cargo test
---all-features` (everything). The 541 unit tests take a few
+--all-features` (everything). The 544 unit tests take a few
 seconds (the doc-test about 1 s). The 34 in-process integration tests add
 20–35 s when the release `cdylib` must be rebuilt (they build and `LOAD` it)
 and about 5 s once it is cached. CI runs the same tests with
@@ -582,7 +602,7 @@ full scale).
 **In-process integration tests** (`tests/extension_load.rs`, run by `cargo test --all-features`):
 - Build the release `cdylib`, append the DuckDB metadata footer (a Rust port of
   `append_extension_metadata.py`), and `LOAD` it via
-  `quack_rs::testing::InMemoryDb::open_unsigned()` (quack-rs 0.19.0), with
+  `quack_rs::testing::InMemoryDb::open_unsigned()` (quack-rs 0.20.0), with
   `allow_extensions_metadata_mismatch` left off so a wrong stamp fails
 - Assert all 8 functions register and return correct results through live SQL —
   catching the load/registration/wrong-result class of FFI bugs that unit tests
@@ -679,6 +699,29 @@ stamped for the stable C API, v1.2.0). To build against the new headers:
    v1.2.0`) into the new DuckDB CLI and at least one older one, and verify all
    8 functions
 
+### Updating quack-rs
+
+quack-rs validates the DuckDB releases its own CI lists; this extension loads
+into 1.3.2 through 2.0.0, so its matrix is the one that counts.
+
+1. Read the release's CHANGELOG (Breaking, Changed, Security) and `diff -r` the
+   old and new `.crate` files (`https://static.crates.io/crates/quack-rs/`),
+   each unpacked into its own scratch directory, over the modules this crate
+   calls: `aggregate`, `vector`, `entry_point`, `scalar`, `abi`, `types`.
+2. Set `quack-rs = "=X"` in `Cargo.toml`, run `cargo update -p quack-rs --precise
+   X`, and check that the checksum in `Cargo.lock` equals `sha256sum` of the
+   downloaded `.crate`.
+3. `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features`, `cargo clippy
+   --all-targets --all-features -- -D warnings`, and
+   `cargo +1.88.0 check --all-targets --locked`.
+4. `make configure release`, then `scripts/compat-check.sh` against every CLI
+   in the `e2e.yml` matrix (`scripts/install-duckdb-cli.sh` fetches them).
+5. An interleaved before/after `scripts/bench-sql.sh` on one machine (build the
+   old tree in a `git worktree` with its own `CARGO_TARGET_DIR`). No speed
+   claim without it.
+6. `python3 -I scripts/check-docs.py` fails on a document that still names the
+   old `quack-rs` or `libduckdb-sys` version.
+
 ### Performance optimization session
 
 Follow the protocol in [`PERF.md`](PERF.md):
@@ -711,13 +754,16 @@ Hard-won knowledge from developing this extension. Consult before making changes
   automatically.
 
 - **Stable C API (`C_STRUCT`, `-dv v1.2.0`)**: the extension dereferences only
-  stable-prefix slots of `duckdb_ext_api_v1` (76 of 548 slots, highest 306;
+  stable-prefix slots of `duckdb_ext_api_v1` (77 of 548 slots, highest 306;
   the stable prefix is 357 slots). `scripts/check-stable-api.py` measures it
   by disassembling an unstripped release build (`cargo build --profile
   profiling --lib`) and collecting the `___DUCKDB_*` statics that are *loaded*
   (every one is stored at init); CI runs it on Linux (`e2e.yml`) and
   `scripts/check.sh` runs it too. The FFI-view refactor left the figures
-  unchanged (76, 306). A slot at or above
+  unchanged (76, 306); quack-rs 0.20.0 moved the count to 77 (it dropped
+  `validity_row_is_valid` for an inline bit test and added `query` and
+  `rows_changed` for its `BEGIN`/`COMMIT`), highest still 306, found by diffing
+  the two builds' slot names. A slot at or above
   357 cannot be called from a `C_STRUCT -dv v1.2.0` binary. Slots 357-403 are
   APIs deprecated since v1.0.0; slots 404-547 became stable only in v1.5.6, so
   using one means stamping `-dv v1.5.6`, which refuses 1.3.2 to 1.5.5.
@@ -793,7 +839,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
   function docs/examples, variadic and named parameters, and order/distinct
   flags (`duckdb_v2_*`), but all 620 of its functions are `unstable: v2.0.0` and
   DuckDB 2.0.0 loads a V2 extension only on the exact release it was built for
-  (`extension.cpp`: "no V2 function is stable yet"). quack-rs 0.19.0 does not
+  (`extension.cpp`: "no V2 function is stable yet"). quack-rs 0.20.0 does not
   generate the `<name>_init_c_api_v2` entry point either. The bind callback
   would not have refused the crash shapes anyway: it sees argument types and
   constants, not `ORDER BY` or `OVER`. V2 has no "stable prefix"; stability is
@@ -909,7 +955,7 @@ Hard-won knowledge from developing this extension. Consult before making changes
 
 - **WASM compiles but is not yet shipped**: since quack-rs 0.14.0 the crate
   compiles for `wasm32-unknown-emscripten` (DuckDB-WASM), enforced by the
-  `wasm-check` CI job. `description.yml` still excludes the wasm platforms:
+  `cross-check` CI job. `description.yml` still excludes the wasm platforms:
   flipping them on requires verifying the emscripten link + DuckDB-WASM load,
   which the community-extensions CI can serve as the test bed for in a
   dedicated submission.

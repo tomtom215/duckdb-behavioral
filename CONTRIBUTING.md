@@ -15,8 +15,8 @@ cargo build
 ./scripts/check.sh
 
 # Or run checks individually
-cargo test --lib                                     # 541 unit tests, no libduckdb needed
-DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features      # 541 unit + 34 integration + 1 doc-test
+cargo test --lib                                     # 544 unit tests, no libduckdb needed
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features      # 544 unit + 34 integration + 1 doc-test
 cargo clippy --all-targets --all-features            # Zero warnings required
 cargo fmt -- --check                                 # Format check
 ```
@@ -98,11 +98,11 @@ All checks must pass before submitting a PR:
 
 | Check | Command | What it validates |
 |---|---|---|
-| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features` | 541 unit tests + 34 in-process integration tests + 1 doc-test |
+| Tests | `DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features` | 544 unit tests + 34 in-process integration tests + 1 doc-test |
 | Lints | `cargo clippy --all-targets --all-features` | Zero warnings (pedantic + nursery + cargo) |
 | Format | `cargo fmt -- --check` | Code formatting |
 | Docs | `cargo doc --no-deps` | Documentation builds without warnings |
-| Docs agree with the repo | `python3 -I scripts/check-docs.py` | Test counts, the DuckDB releases CI checks, links and anchors, and the demo page's results match their sources. Adding a test means updating every count it names |
+| Docs agree with the repo | `python3 -I scripts/check-docs.py` | Test counts, the DuckDB releases CI checks, the pinned `quack-rs` and `libduckdb-sys` versions, links and anchors, and the demo page's results match their sources. Adding a test means updating every count it names |
 
 Run all at once with `./scripts/check.sh`, or add
 `--quick` to skip doc and benchmark compilation checks.

@@ -186,7 +186,7 @@ combinations. Takes a base condition plus 1–32 event conditions.
 ### behavioral_version — Which build is loaded?
 
 ```sql
-behavioral_version() → VARCHAR   -- e.g. '0.10.1'
+behavioral_version() → VARCHAR   -- e.g. '0.11.0'
 ```
 
 **Key facts:** Diagnostic scalar; useful when the community channel, a pinned
@@ -198,7 +198,7 @@ install, and a local build could serve different versions.
 |---|---|
 | Boolean conditions | `window_funnel`, `window_funnel_events`: 1 – 32; `retention`, `sequence_match`, `sequence_count`, `sequence_match_events`: 2 – 32; `sequence_next_node`: base condition + 1 – 32 |
 | Interval type | No month-based intervals (days, hours, minutes, seconds only) |
-| Timestamp type | `TIMESTAMP` or `TIMESTAMPTZ` (`*_events` then return `TIMESTAMPTZ[]`); `TIMESTAMP_NS` is converted to microseconds by DuckDB's cast (truncated up to 1.5.6, rounded in 2.0.0) |
+| Timestamp type | `TIMESTAMP` or `TIMESTAMPTZ` (`*_events` then return `TIMESTAMPTZ[]`); `TIMESTAMP_NS` is converted to microseconds by DuckDB's cast (truncated up to 1.5.6, rounded in 2.0.0); `TIMESTAMPTZ_NS` (2.0.0) needs `::TIMESTAMPTZ` |
 | Pattern length | At most 1024 steps |
 | Configuration arguments | Pattern, window, mode, direction and base must be the same for every row of a group |
 | `sessionize` | Aggregate used with `OVER (... ORDER BY ...)` for per-row session IDs |

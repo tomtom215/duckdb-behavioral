@@ -5,7 +5,7 @@
 # release-notes.sh — print the CHANGELOG.md section of one version.
 #
 # Usage:
-#   scripts/release-notes.sh <version>      # e.g. 0.10.1 (a leading v is fine)
+#   scripts/release-notes.sh <version>      # e.g. 0.11.0 (a leading v is fine)
 #
 # Prints the lines between `## [<version>]` and the next `## [` heading.
 # Exits non-zero if the version has no section or the section is empty, so a

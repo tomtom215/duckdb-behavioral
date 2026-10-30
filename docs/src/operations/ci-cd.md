@@ -23,7 +23,7 @@ later one; a pull request's superseded run is.
 |-----|---------|------|
 | **fmt** | Formatting verification | `cargo fmt --all -- --check` |
 | **clippy** | Zero-warning lint enforcement, including the unsafe-code lints; also type-checks every target, benchmarks included | `cargo clippy --all-targets --all-features -- -D warnings` |
-| **test** | 541 unit tests + 34 in-process integration tests, then the doc-test, on Linux and macOS (`--lib --tests`, not `--all-targets`, which would run the Criterion benchmarks as tests at full scale) | `cargo nextest run --lib --tests --all-features --profile ci`, then `cargo test --doc` |
+| **test** | 544 unit tests + 34 in-process integration tests, then the doc-test, on Linux and macOS (`--lib --tests`, not `--all-targets`, which would run the Criterion benchmarks as tests at full scale) | `cargo nextest run --lib --tests --all-features --profile ci`, then `cargo test --doc` |
 | **doc** | Documentation builds without warnings | `cargo doc --no-deps --document-private-items` with `-Dwarnings` |
 | **msrv** | Minimum Supported Rust Version (1.88) | the `setup-rust` action with `toolchain: "1.88"`, then `cargo check --all-targets --all-features` |
 | **cross-check** | The library compiles for platforms CI does not execute: DuckDB-WASM (not shipped), Windows x86_64 (served by the community channel), macOS x86_64 and Linux ARM64 (built, not run, by the release workflow) | `cargo check --target <target> --lib` for `wasm32-unknown-emscripten`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu` |
@@ -39,7 +39,7 @@ and the exact overload counts are asserted in `tests/extension_load.rs` and
 `scripts/compat-check.sh`.
 
 **One compiler everywhere.** `rust-toolchain.toml` pins the toolchain
-(1.97.0 at the time of writing). The `setup-rust` action installs exactly that
+(1.99.1 at the time of writing). The `setup-rust` action installs exactly that
 and exports `RUSTUP_TOOLCHAIN`, which outranks the toolchain file, so the MSRV
 job really runs 1.88. (Before that, a bare `cargo check` after installing 1.87
 silently ran the pinned toolchain; see `LESSONS.md`, lesson 19.) Only pushes to
@@ -55,7 +55,7 @@ community-extensions CI does, then asserts results.
 |------|----------------|
 | `make configure release` | The extension builds and is stamped for the stable C API (`C_STRUCT`, C API v1.2.0) |
 | `make test_release` | The SQL logic tests in `test/sql/` pass in DuckDB 2.0.0 |
-| `scripts/check-stable-api.py` (Linux) | The unstripped library calls only C API functions inside the stable prefix of `duckdb_ext_api_v1` (76 of 548 slots, highest 306, limit 357), so the C API v1.2.0 stamp stays true |
+| `scripts/check-stable-api.py` (Linux) | The unstripped library calls only C API functions inside the stable prefix of `duckdb_ext_api_v1` (77 of 548 slots, highest 306, limit 357), so the C API v1.2.0 stamp stays true |
 | `scripts/compat-check.sh` | 21 asserted queries (25 on DuckDB 2.x, where the crash shapes of duckdb/duckdb#26109 also run) covering all 8 functions, `TIMESTAMPTZ`, NULLs, error messages, the exact overload count (540), and one `GROUP BY` run at 1 and 4 threads that must give identical rows |
 
 `build` runs these on Linux x86_64 and macOS ARM64. The `compat` job then loads
@@ -156,8 +156,8 @@ version" in `CLAUDE.md`.
 ./scripts/check.sh
 
 # Or one at a time
-cargo test --lib --locked                                  # 541 unit tests, no libduckdb
-DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features --locked   # 541 unit + 34 integration + 1 doc-test
+cargo test --lib --locked                                  # 544 unit tests, no libduckdb
+DUCKDB_DOWNLOAD_LIB=1 cargo test --all-features --locked   # 544 unit + 34 integration + 1 doc-test
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo fmt --all -- --check
 RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --document-private-items --locked
