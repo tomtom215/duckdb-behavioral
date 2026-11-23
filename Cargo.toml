@@ -25,7 +25,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 quack-rs = "=0.20.0"
-libduckdb-sys = { version = "=1.20000.1", features = ["loadable-extension"] }
+libduckdb-sys = { version = "=1.20000.2", features = ["loadable-extension"] }
 smallvec = { version = "1", features = ["const_new"] }
 
 [features]
